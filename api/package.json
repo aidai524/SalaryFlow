@@ -1,0 +1,23 @@
+{
+  "name": "salaryflow-api",
+  "private": true,
+  "version": "0.2.0",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --port 8787 --local",
+    "build": "tsc -b --pretty false",
+    "check": "tsc -b --pretty false",
+    "deploy": "wrangler deploy",
+    "db:migrate": "wrangler d1 migrations apply salaryflow --local",
+    "db:migrate:prod": "wrangler d1 migrations apply salaryflow --remote"
+  },
+  "dependencies": {
+    "hono": "^4.6.0",
+    "jose": "^5.9.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240821.0",
+    "typescript": "^5.9.2",
+    "wrangler": "^3.80.0"
+  }
+}

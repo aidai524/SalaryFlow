@@ -1,0 +1,20 @@
+name = "salaryflow-api"
+main = "src/index.ts"
+compatibility_date = "2024-11-01"
+
+# Local dev defaults (override with --vars or .dev.vars)
+[vars]
+APP_URL = "http://127.0.0.1:5173"
+API_URL = "http://127.0.0.1:8787"
+COOKIE_DOMAIN = ""
+INTENTS_API_URL = "https://1click.chaindefuser.com"
+MOCK_EMAIL = "true"
+
+# Secrets (set via `wrangler secret put`):
+# RESEND_API_KEY, INTENTS_API_KEY, JWT_SECRET
+
+[[d1_databases]]
+binding = "DB"
+database_name = "salaryflow"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"

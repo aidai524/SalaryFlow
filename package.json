@@ -1,0 +1,33 @@
+{
+  "name": "salaryflow",
+  "private": true,
+  "version": "0.2.0",
+  "type": "module",
+  "workspaces": [
+    "api"
+  ],
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "dev:api": "npm run dev -w api",
+    "build": "tsc -b && vite build",
+    "build:api": "npm run build -w api",
+    "check": "tsc -b --pretty false",
+    "check:api": "npm run check -w api",
+    "db:migrate": "npm run db:migrate -w api"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.101.4",
+    "lucide-react": "^0.468.0",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "viem": "^2.55.11",
+    "wagmi": "^2.19.5"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.9",
+    "@types/react-dom": "^19.1.7",
+    "@vitejs/plugin-react": "^4.6.0",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.0"
+  }
+}

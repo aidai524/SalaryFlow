@@ -1,0 +1,15 @@
+# Dependencies
+node_modules/
+dist/
+
+# Cloudflare / wrangler
+api/.wrangler/
+api/.dev.vars
+api/wrangler.local.toml
+
+# Local state
+.wrangler/
+*.tsbuildinfo
+
+# OS / editor
+.DS_Store
