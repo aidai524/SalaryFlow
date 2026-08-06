@@ -6,6 +6,7 @@ dist/
 api/.wrangler/
 api/.dev.vars
 api/wrangler.local.toml
+_worker.bundle
 
 # Local state
 .wrangler/
