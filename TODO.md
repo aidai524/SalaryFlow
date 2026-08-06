@@ -14,9 +14,10 @@
       → 生产 `wrangler secret put RESEND_API_KEY`
 - [ ] **NEAR Intents Partner API Key**：到 https://partners.near-intents.org 申请 →
       `wrangler secret put INTENTS_API_KEY`（未配置时真实支付 quote 会失败）
-- [ ] **Cloudflare 生产部署**：`wrangler d1 create salaryflow` + 远程迁移 +
-      `wrangler secret put JWT_SECRET` + `npm run deploy`（API）+ Pages 部署（Web）
-- [ ] **Cookie 域配置**：生产设 `APP_URL` / `COOKIE_DOMAIN`（如 `.salaryflow.dev`）保证同域会话
+- [x] **Cloudflare 生产部署**：已创建 `salaryflow` D1 并应用 0001-0007 迁移，
+      `salaryflow-api` Worker 已安装 `JWT_SECRET`，Pages 正式环境已通过 Service Binding 同源接入 `/api`
+- [x] **Cookie 域配置**：当前 `APP_URL=https://salaryflow-payroll-prototype.pages.dev`、
+      `COOKIE_DOMAIN` 为空，由 Pages Function 同源代理承载会话；启用自定义域时需同步更新 `APP_URL`
 
 ## 已知限制 / 决策记录
 
@@ -28,6 +29,8 @@
 - [ ] **合规 / KYC**：按用户决策暂不考虑；页面保留隐私边界说明（交换金额对公众隐藏，存款/收款公开）
 - [ ] **员工收款流程主网验收**：状态机已按 Confidential Intents 签名执行并以员工 EVM 地址作为目标，
       但尚未用真实余额验证各网络的 assetId、提现费用、失败退款和最终到账体验
+- [ ] **钱包依赖安全升级**：`npm audit --omit=dev` 仍报告钱包连接依赖链中的 `axios` 与
+      `ws` 高危项，完整自动修复要求升级 Wagmi 3；需单独完成破坏性升级与钱包回归测试，当前真实支付保持禁用
 
 ## 已修复（2026-08-05）
 
@@ -54,3 +57,5 @@
 - 本地开发：`api/.dev.vars` 已建立安全骨架并被 gitignore；填入 Resend Key 后由该文件设置
   `MOCK_EMAIL=false`，未填 Key 时仍自动回退到 Mock，不会误发邮件
 - 当前运行：API :8787（wrangler dev），Web :5173（vite，/api 代理）
+- 生产运行：Web `https://salaryflow-payroll-prototype.pages.dev`，Worker
+  `https://salaryflow-api.aidai524.workers.dev`；线上支付仍为 `dry-run`
