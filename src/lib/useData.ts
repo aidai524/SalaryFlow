@@ -30,8 +30,18 @@ export function useApi<T>(fetcher: () => Promise<T>, deps: unknown[] = []) {
   return { data, error, loading, refresh };
 }
 
-export function formatMoney(value: number): string {
-  return new Intl.NumberFormat("en-US", { minimumFractionDigits: 2 }).format(value);
+const TOKEN_MINOR_SCALE = 1_000_000;
+const TOKEN_INPUT_PATTERN = /^(0|[1-9]\d*)(?:\.\d{1,6})?$/;
+
+export function formatTokenAmount(valueMinor: number): string {
+  return new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 6,
+  }).format(valueMinor / TOKEN_MINOR_SCALE);
+}
+
+export function isValidTokenAmount(value: string): boolean {
+  return TOKEN_INPUT_PATTERN.test(value.trim()) && Number(value) > 0;
 }
 
 export function initials(name: string): string {

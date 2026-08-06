@@ -1,99 +1,462 @@
-// Payment flow: 1Click proxy (quote / generate-intent / submit-intent / status)
-// The browser only sends wallet signatures; the Partner API key stays server-side.
+// Payment preflight and stateful 1Click execution. External execution requires
+// PAYMENTS_MODE=live plus an explicit environment acknowledgement; local
+// defaults remain dry-run and cannot contact the provider.
 
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
+import { verifyMessage, type Address, type Hex } from "viem";
+import { encodeErc191Signature } from "../erc191";
+import { generateIntent, getSupportedTokens, requestQuote, submitIntent, verifyOneClickQuote, type QuoteRequest } from "../intents";
 import { requireRole, type AppEnv } from "../middleware";
-import { checkSwapStatus, generateIntent, requestQuote, submitIntent } from "../intents";
+import { getPaymentAttempt, reconcileOpenPayments, reconcilePaymentAttempt, type PaymentAttemptRow } from "../payment-execution";
+import { executionGate, resolvePaymentAssets, tokenMinorToAssetAmount, validatePaymentAssetMapping } from "../payment-state";
+import { EVM_PAYOUT_NETWORKS, PAYOUT_TOKENS } from "../payout";
 import { nowIso, uuid, type AuthUser } from "../types";
 
 export const paymentRoutes = new Hono<AppEnv>();
 
-// Quote (dry or live). Admin triggers per batch/employee.
+const liveExecutionDisabled = {
+  error: "Live payment execution is disabled; SalaryFlow currently supports local dry-run preflight only",
+  code: "LIVE_PAYMENTS_DISABLED",
+};
+
+interface PayableItem extends Record<string, unknown> {
+  id: string;
+  run_id: string;
+  employee_id: string | null;
+  employee_name: string;
+  amount_minor: number;
+  token: string;
+  network: string;
+  status: string;
+  org_id: string;
+  payout_endpoint: string | null;
+  employee_status: string | null;
+  payout_token: string | null;
+  payout_network: string | null;
+  payout_verified_at: string | null;
+}
+
+type PaymentIssue = { itemId: string; employeeName: string; code: string; message: string };
+
+function validatePayableItem(item: PayableItem): PaymentIssue[] {
+  const issues: PaymentIssue[] = [];
+  const add = (code: string, message: string) => issues.push({ itemId: String(item.id), employeeName: String(item.employee_name), code, message });
+  if (!item.employee_id) add("UNLINKED_EMPLOYEE", "Payment must be linked to an employee profile");
+  if (item.employee_status !== "ready") add("PAYOUT_NOT_READY", "Employee payout method is not verified");
+  if (!item.payout_verified_at) add("PAYOUT_NOT_VERIFIED", "Employee wallet ownership has not been verified");
+  if (!/^0x[a-fA-F0-9]{40}$/.test(String(item.payout_endpoint || ""))) add("INVALID_PAYOUT_ADDRESS", "A verified EVM payout address is required");
+  if (item.token !== item.payout_token || item.network !== item.payout_network) add("PAYOUT_DETAILS_CHANGED", "Payroll token or network no longer matches the employee payout method");
+  if (!PAYOUT_TOKENS.has(String(item.token))) add("UNSUPPORTED_TOKEN", "Only USDC and USDT are supported");
+  if (!EVM_PAYOUT_NETWORKS.has(String(item.network))) add("UNSUPPORTED_NETWORK", "The payout network is not enabled");
+  if (!Number.isSafeInteger(Number(item.amount_minor)) || Number(item.amount_minor) <= 0) add("INVALID_AMOUNT", "Amount must be a positive integer in token minor units");
+  return issues;
+}
+
+async function loadPayableItem(db: D1Database, orgId: string | null, itemId: string): Promise<PayableItem | null> {
+  return db.prepare(
+    `SELECT pi.*, pr.org_id,
+            e.endpoint AS payout_endpoint, e.status AS employee_status,
+            e.token AS payout_token, e.network AS payout_network,
+            e.payout_verified_at
+     FROM payrun_items pi
+     JOIN payroll_runs pr ON pr.id = pi.run_id
+     LEFT JOIN employees e ON e.id = pi.employee_id AND e.org_id = pr.org_id
+     WHERE pi.id = ? AND pr.org_id = ?`,
+  ).bind(itemId, orgId).first<PayableItem>();
+}
+
+function providerError(error: unknown): string {
+  return error instanceof Error ? error.message.slice(0, 1000) : "Unknown payment provider error";
+}
+
+function liveGateResponse(c: Context<AppEnv>) {
+  const gate = executionGate(c.env);
+  if (!gate.allowed) return c.json({ error: gate.message, code: gate.code }, gate.code === "LIVE_PAYMENTS_DISABLED" ? 409 : 503);
+  if (!c.env.INTENTS_API_KEY) return c.json({ error: "INTENTS_API_KEY is required for live payments", code: "PAYMENT_PROVIDER_NOT_CONFIGURED" }, 503);
+  return null;
+}
+
+// Local readiness validation. It never contacts 1Click or creates payment attempts.
 paymentRoutes.post("/quote", requireRole("admin"), async (c) => {
   const user = c.get("user") as AuthUser;
   const body = await c.req.json().catch(() => null);
   const runId = String(body?.runId || "");
-  const dry = body?.dry !== false;
 
+  if (!c.env.PAYMENTS_MODE || c.env.PAYMENTS_MODE === "disabled") {
+    return c.json({ error: "Payment validation is disabled", code: "PAYMENTS_DISABLED" }, 503);
+  }
+  if (body?.dry !== true) return c.json(liveExecutionDisabled, 409);
   if (!runId) return c.json({ error: "runId is required" }, 400);
-  const run = await c.env.DB.prepare("SELECT id, org_id FROM payroll_runs WHERE id = ? AND org_id = ?").bind(runId, user.org_id).first<{ id: string }>();
+  const run = await c.env.DB.prepare("SELECT id FROM payroll_runs WHERE id = ? AND org_id = ?").bind(runId, user.org_id).first<{ id: string }>();
   if (!run) return c.json({ error: "Run not found" }, 404);
 
-  const items = await c.env.DB.prepare("SELECT * FROM payrun_items WHERE run_id = ? AND status = 'pending'").bind(runId).all<Record<string, unknown>>();
+  const items = await c.env.DB.prepare(
+    `SELECT pi.*, pr.org_id,
+            e.endpoint AS payout_endpoint, e.status AS employee_status,
+            e.token AS payout_token, e.network AS payout_network,
+            e.payout_verified_at
+     FROM payrun_items pi
+     JOIN payroll_runs pr ON pr.id = pi.run_id
+     LEFT JOIN employees e ON e.id = pi.employee_id AND e.org_id = pr.org_id
+     WHERE pi.run_id = ? AND pr.org_id = ? AND pi.status = 'pending'`,
+  ).bind(runId, user.org_id).all<PayableItem>();
   if (items.results.length === 0) return c.json({ error: "No pending items in this run" }, 400);
 
-  // In production this loops per item and requests individual quotes.
-  // The prototype proxies a single representative quote for the batch.
-  const first = items.results[0];
-  const tokenAsset = first.token === "USDT"
-    ? "nep141:usdt.tether-near" // placeholder asset id — replaced by live mapping
-    : "nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1"; // USDC on NEAR
-  const org = await c.env.DB.prepare("SELECT id FROM organizations WHERE id = ?").bind(user.org_id).first<{ id: string }>();
-  void org;
+  const issues = items.results.flatMap(validatePayableItem);
+  if (issues.length > 0) {
+    return c.json({
+      error: `Dry-run validation failed: ${issues[0].employeeName} — ${issues[0].message}`,
+      code: "DRY_RUN_VALIDATION_FAILED",
+      issues,
+      itemCount: items.results.length,
+    }, 422);
+  }
 
-  const quote = await requestQuote(c.env, {
-    dry,
+  const totals = items.results.reduce<{ usdc: number; usdt: number }>((sum, item) => {
+    const token: "usdc" | "usdt" = item.token === "USDT" ? "usdt" : "usdc";
+    sum[token] += Number(item.amount_minor);
+    return sum;
+  }, { usdc: 0, usdt: 0 });
+
+  await c.env.DB.prepare(
+    "INSERT INTO audit_log (id, org_id, actor_id, action, detail) VALUES (?, ?, ?, 'payment.dry_run', ?)",
+  ).bind(uuid(), user.org_id, user.id, `Validated ${items.results.length} pending items in run ${runId}`).run();
+
+  return c.json({
+    dry: true,
+    mode: "dry-run",
+    executionAllowed: false,
+    itemCount: items.results.length,
+    validatedItemCount: items.results.length,
+    checkedAt: nowIso(),
+    totals: { usdcMinor: totals.usdc, usdtMinor: totals.usdt },
+  });
+});
+
+// Reserve an idempotent attempt and request one live quote for one payroll item.
+paymentRoutes.post("/items/:itemId/quote", requireRole("admin"), async (c) => {
+  const blocked = liveGateResponse(c);
+  if (blocked) return blocked;
+  const user = c.get("user") as AuthUser;
+  if (!user.wallet_address || !user.wallet_verified) {
+    return c.json({ error: "A signature-verified admin payment wallet is required", code: "PAYMENT_WALLET_NOT_VERIFIED" }, 422);
+  }
+  const body = await c.req.json().catch(() => null);
+  const idempotencyKey = String(body?.idempotencyKey || "").trim();
+  if (!/^[A-Za-z0-9._:-]{16,128}$/.test(idempotencyKey)) {
+    return c.json({ error: "idempotencyKey must be 16-128 safe characters" }, 400);
+  }
+  const itemId = c.req.param("itemId");
+  const existing = await c.env.DB.prepare(
+    "SELECT * FROM payment_attempts WHERE org_id = ? AND idempotency_key = ?",
+  ).bind(user.org_id, idempotencyKey).first<PaymentAttemptRow>();
+  if (existing) {
+    if (existing.item_id !== itemId) return c.json({ error: "Idempotency key belongs to another payment item", code: "IDEMPOTENCY_KEY_CONFLICT" }, 409);
+    return c.json({ attempt: existing, reused: true });
+  }
+
+  const item = await loadPayableItem(c.env.DB, user.org_id, itemId);
+  if (!item) return c.json({ error: "Payment item not found" }, 404);
+  if (item.status !== "pending") return c.json({ error: "Only pending payment items can be quoted", code: "ITEM_NOT_PENDING" }, 409);
+  const issues = validatePayableItem(item);
+  if (issues.length > 0) return c.json({ error: issues[0].message, code: issues[0].code, issues }, 422);
+  const assets = resolvePaymentAssets(c.env, item.token, item.network);
+  if (!assets) return c.json({ error: `No live asset mapping for ${item.token} on ${item.network}`, code: "ASSET_MAP_MISSING" }, 503);
+  let supportedTokens;
+  try {
+    supportedTokens = await getSupportedTokens(c.env);
+  } catch (error) {
+    return c.json({ error: "Could not validate the live asset mapping", code: "PAYMENT_PROVIDER_ERROR", detail: providerError(error) }, 502);
+  }
+  const assetIssue = validatePaymentAssetMapping(assets, item.token, item.network, supportedTokens);
+  if (assetIssue) return c.json({ error: assetIssue.message, code: assetIssue.code }, 503);
+  const providerAmount = tokenMinorToAssetAmount(Number(item.amount_minor), assets.destination.decimals);
+  if (!providerAmount) {
+    return c.json({ error: `Amount cannot be represented with ${assets.destination.decimals} destination decimals`, code: "AMOUNT_PRECISION_UNSUPPORTED" }, 422);
+  }
+
+  const timestamp = nowIso();
+  const attemptId = uuid();
+  const quoteRequest: QuoteRequest = {
+    dry: false,
     swapType: "EXACT_OUTPUT",
-    originAsset: tokenAsset,
+    originAsset: assets.origin.assetId,
     depositType: "CONFIDENTIAL_INTENTS",
-    destinationAsset: tokenAsset,
-    amount: String(Number(first.amount) * 100), // cents → base units (illustrative; real conversion uses token decimals)
-    recipient: user.id, // placeholder: org intents account
-    recipientType: "CONFIDENTIAL_INTENTS",
-    refundTo: user.id,
+    destinationAsset: assets.destination.assetId,
+    amount: providerAmount,
+    recipient: String(item.payout_endpoint),
+    recipientType: "DESTINATION_CHAIN",
+    refundTo: user.wallet_address,
     refundType: "CONFIDENTIAL_INTENTS",
     confidentiality: "advanced",
-    deadline: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-  });
-
-  // store chain record per item
-  const recordId = uuid();
-  await c.env.DB.prepare(
-    "INSERT INTO chain_records (id, item_id, org_id, employee_name, token, network, amount, origin_chain, dest_chain, confidentiality, status, quote_at, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'advanced', 'pending', ?, ?)",
-  ).bind(recordId, first.id, user.org_id, first.employee_name, first.token, first.network, Number(first.amount), "confidential", first.network, nowIso(), dry ? "dry quote" : null).run();
-
-  return c.json({ quote, recordId, dry, itemCount: items.results.length });
-});
-
-// Generate an unsigned intent for the wallet to sign
-paymentRoutes.post("/generate-intent", requireRole("admin"), async (c) => {
-  const body = await c.req.json().catch(() => null);
-  const depositAddress = String(body?.depositAddress || "");
-  const signerId = String(body?.signerId || "");
-  const standard = (body?.standard || "erc191") as "nep413" | "erc191";
-  if (!depositAddress || !signerId) return c.json({ error: "depositAddress and signerId are required" }, 400);
-  const result = await generateIntent(c.env, { type: "swap_transfer", standard, signerId, depositAddress });
-  return c.json(result);
-});
-
-// Submit the wallet-signed intent
-paymentRoutes.post("/submit-intent", requireRole("admin"), async (c) => {
-  const user = c.get("user") as AuthUser;
-  const body = await c.req.json().catch(() => null);
-  const signedData = body?.signedData;
-  const recordId = String(body?.recordId || "");
-  if (!signedData) return c.json({ error: "signedData is required" }, 400);
-  const result = await submitIntent(c.env, { type: "swap_transfer", signedData });
-  if (recordId) {
-    await c.env.DB.prepare(
-      "UPDATE chain_records SET intent_hash = ?, status = 'pending', signed_at = ?, submitted_at = ? WHERE id = ?",
-    ).bind(result.intentHash, nowIso(), nowIso(), recordId).run();
-    // mark item pending-paid once submitted
-    const rec = await c.env.DB.prepare("SELECT item_id FROM chain_records WHERE id = ?").bind(recordId).first<{ item_id: string | null }>();
-    if (rec?.item_id) {
-      await c.env.DB.prepare("UPDATE payrun_items SET intent_hash = ?, submitted_at = ? WHERE id = ?").bind(result.intentHash, nowIso(), rec.item_id).run();
+    deadline: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+    slippageTolerance: 100,
+  };
+  const inserted = await c.env.DB.prepare(
+    `INSERT OR IGNORE INTO payment_attempts
+     (id, org_id, run_id, item_id, idempotency_key, state, token, network,
+      amount_minor, recipient, signer_id, quote_request, created_by, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, 'created', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).bind(
+    attemptId,
+    user.org_id,
+    item.run_id,
+    item.id,
+    idempotencyKey,
+    item.token,
+    item.network,
+    item.amount_minor,
+    item.payout_endpoint,
+    user.wallet_address,
+    JSON.stringify(quoteRequest),
+    user.id,
+    timestamp,
+    timestamp,
+  ).run();
+  if (Number(inserted.meta.changes || 0) !== 1) {
+    const concurrent = await c.env.DB.prepare(
+      "SELECT * FROM payment_attempts WHERE org_id = ? AND idempotency_key = ?",
+    ).bind(user.org_id, idempotencyKey).first<PaymentAttemptRow>();
+    if (concurrent) {
+      if (concurrent.item_id !== itemId) return c.json({ error: "Idempotency key belongs to another payment item", code: "IDEMPOTENCY_KEY_CONFLICT" }, 409);
+      return c.json({ attempt: concurrent, reused: true });
     }
+    const active = await c.env.DB.prepare(
+      `SELECT * FROM payment_attempts WHERE item_id = ?
+       AND state IN ('created', 'quoting', 'quoted', 'generating', 'awaiting_signature', 'submitting', 'submitted', 'processing')
+       ORDER BY created_at DESC LIMIT 1`,
+    ).bind(item.id).first<PaymentAttemptRow>();
+    return c.json({ error: "This payment item already has an active attempt", code: "ACTIVE_ATTEMPT_EXISTS", attempt: active }, 409);
   }
-  await c.env.DB.prepare("INSERT INTO audit_log (id, org_id, actor_id, action, detail) VALUES (?, ?, ?, 'payment.submitted', ?)").bind(uuid(), user.org_id, user.id, `Intent submitted ${result.intentHash}`).run();
-  return c.json(result);
+  await c.env.DB.prepare("UPDATE payment_attempts SET state = 'quoting', updated_at = ? WHERE id = ? AND state = 'created'")
+    .bind(nowIso(), attemptId).run();
+
+  try {
+    const quote = await requestQuote(c.env, quoteRequest);
+    const verifiedQuoteHash = verifyOneClickQuote(c.env, quoteRequest, quote);
+    const depositAddress = quote.quote?.depositAddress;
+    if (!depositAddress) throw new Error("1Click quote did not include a deposit address");
+    if (!/^\d+$/.test(String(quote.quote.amountIn || "")) || BigInt(quote.quote.amountIn) <= 0n) {
+      throw new Error("1Click quote input amount is invalid");
+    }
+    if (String(quote.quote.amountOut || "") !== providerAmount) {
+      throw new Error("1Click exact-output quote does not match the payroll amount");
+    }
+    const quoteExpiresAt = String(quote.quote.deadline || "");
+    if (!quoteExpiresAt || !Number.isFinite(Date.parse(quoteExpiresAt)) || Date.parse(quoteExpiresAt) <= Date.now()) {
+      throw new Error("1Click quote is missing a valid future deadline");
+    }
+    const quotedAt = nowIso();
+    await c.env.DB.batch([
+      c.env.DB.prepare(
+        `UPDATE payment_attempts
+         SET state = 'quoted', quote_response = ?, quote_hash = ?, correlation_id = ?,
+             deposit_address = ?, deposit_memo = ?, quote_expires_at = ?,
+             last_error = NULL, updated_at = ? WHERE id = ? AND state = 'quoting'`,
+      ).bind(
+        JSON.stringify(quote),
+        verifiedQuoteHash,
+        quote.correlationId || null,
+        depositAddress,
+        quote.quote.depositMemo || null,
+        quoteExpiresAt,
+        quotedAt,
+        attemptId,
+      ),
+      c.env.DB.prepare(
+        `INSERT INTO chain_records
+         (id, attempt_id, item_id, org_id, employee_name, token, network, amount_minor,
+          origin_chain, dest_chain, confidentiality, status, quote_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'confidential-intents', ?, 'advanced', 'quoted', ?)`,
+      ).bind(uuid(), attemptId, item.id, user.org_id, item.employee_name, item.token, item.network, item.amount_minor, item.network, quotedAt),
+      c.env.DB.prepare(
+        "UPDATE payrun_items SET status = 'processing', deposit_address = ?, error = NULL WHERE id = ? AND status = 'pending'",
+      ).bind(depositAddress, item.id),
+      c.env.DB.prepare("UPDATE payroll_runs SET status = 'processing', updated_at = ? WHERE id = ? AND org_id = ?")
+        .bind(quotedAt, item.run_id, user.org_id),
+      c.env.DB.prepare(
+        "INSERT INTO audit_log (id, org_id, actor_id, action, detail) VALUES (?, ?, ?, 'payment.quoted', ?)",
+      ).bind(uuid(), user.org_id, user.id, `Quoted item ${item.id} as attempt ${attemptId}`),
+    ]);
+  } catch (error) {
+    const failedAt = nowIso();
+    await c.env.DB.prepare(
+      "UPDATE payment_attempts SET state = 'failed', last_error = ?, failed_at = ?, updated_at = ? WHERE id = ?",
+    ).bind(providerError(error), failedAt, failedAt, attemptId).run();
+    return c.json({ error: "Live quote failed", code: "PAYMENT_PROVIDER_ERROR", detail: providerError(error) }, 502);
+  }
+
+  return c.json({ attempt: await getPaymentAttempt(c.env.DB, attemptId, user.org_id), reused: false }, 201);
 });
 
-// Poll swap status
-paymentRoutes.post("/status", requireRole("admin"), async (c) => {
-  const body = await c.req.json().catch(() => null);
-  const depositAddress = String(body?.depositAddress || "");
-  const depositMemo = body?.depositMemo ? String(body.depositMemo) : undefined;
-  if (!depositAddress) return c.json({ error: "depositAddress is required" }, 400);
-  const status = await checkSwapStatus(c.env, depositAddress, depositMemo);
-  return c.json(status);
+paymentRoutes.post("/attempts/:attemptId/intent", requireRole("admin"), async (c) => {
+  const blocked = liveGateResponse(c);
+  if (blocked) return blocked;
+  const user = c.get("user") as AuthUser;
+  const attemptId = c.req.param("attemptId");
+  let attempt = await getPaymentAttempt(c.env.DB, attemptId, user.org_id);
+  if (!attempt) return c.json({ error: "Payment attempt not found" }, 404);
+  if (!user.wallet_address || !user.wallet_verified || user.wallet_address.toLowerCase() !== attempt.signer_id.toLowerCase()) {
+    return c.json({ error: "The verified payment wallet no longer matches this attempt", code: "PAYMENT_WALLET_CHANGED" }, 409);
+  }
+  if (attempt.intent_payload && ["awaiting_signature", "submitting", "submitted", "processing", "confirmed"].includes(attempt.state)) {
+    return c.json({ attempt, intent: JSON.parse(attempt.intent_payload), reused: true });
+  }
+  if (attempt.state !== "quoted") return c.json({ error: `Cannot generate an intent from state ${attempt.state}` }, 409);
+  if (attempt.quote_expires_at && new Date(String(attempt.quote_expires_at)).getTime() <= Date.now()) {
+    return c.json({ error: "Payment quote has expired; create a new attempt", code: "QUOTE_EXPIRED" }, 409);
+  }
+  const claimed = await c.env.DB.prepare(
+    "UPDATE payment_attempts SET state = 'generating', updated_at = ? WHERE id = ? AND state = 'quoted'",
+  ).bind(nowIso(), attempt.id).run();
+  if (Number(claimed.meta.changes || 0) !== 1) {
+    attempt = await getPaymentAttempt(c.env.DB, attempt.id, user.org_id);
+    return c.json({ error: "Payment attempt changed while generating the intent", code: "ATTEMPT_STATE_CONFLICT", attempt }, 409);
+  }
+
+  try {
+    const generated = await generateIntent(c.env, {
+      type: "swap_transfer",
+      standard: "erc191",
+      signerId: attempt.signer_id,
+      depositAddress: String(attempt.deposit_address),
+    });
+    if (generated.intent.standard !== "erc191" || typeof generated.intent.payload !== "string") {
+      throw new Error("1Click returned an unsupported intent payload");
+    }
+    const payload = JSON.parse(generated.intent.payload) as { signer_id?: string };
+    if (String(payload.signer_id || "").toLowerCase() !== attempt.signer_id.toLowerCase()) {
+      throw new Error("1Click intent signer does not match the verified payment wallet");
+    }
+    const storedIntent = JSON.stringify(generated.intent);
+    await c.env.DB.prepare(
+      `UPDATE payment_attempts SET state = 'awaiting_signature', intent_payload = ?,
+       correlation_id = COALESCE(?, correlation_id), last_error = NULL, updated_at = ?
+       WHERE id = ? AND state = 'generating'`,
+    ).bind(storedIntent, generated.correlationId || null, nowIso(), attempt.id).run();
+  } catch (error) {
+    await c.env.DB.prepare(
+      "UPDATE payment_attempts SET state = 'quoted', last_error = ?, updated_at = ? WHERE id = ? AND state = 'generating'",
+    ).bind(providerError(error), nowIso(), attempt.id).run();
+    return c.json({ error: "Intent generation failed", code: "PAYMENT_PROVIDER_ERROR", detail: providerError(error) }, 502);
+  }
+
+  attempt = await getPaymentAttempt(c.env.DB, attempt.id, user.org_id);
+  return c.json({ attempt, intent: attempt?.intent_payload ? JSON.parse(attempt.intent_payload) : null, reused: false });
 });
+
+paymentRoutes.post("/attempts/:attemptId/submit", requireRole("admin"), async (c) => {
+  const blocked = liveGateResponse(c);
+  if (blocked) return blocked;
+  const user = c.get("user") as AuthUser;
+  const attemptId = c.req.param("attemptId");
+  let attempt = await getPaymentAttempt(c.env.DB, attemptId, user.org_id);
+  if (!attempt) return c.json({ error: "Payment attempt not found" }, 404);
+  if (["submitting", "submitted", "processing", "confirmed", "failed", "refunded"].includes(attempt.state)) {
+    return c.json({ attempt, reused: true });
+  }
+  if (attempt.state !== "awaiting_signature" || !attempt.intent_payload) {
+    return c.json({ error: `Cannot submit an attempt from state ${attempt.state}` }, 409);
+  }
+  if (!user.wallet_address || !user.wallet_verified || user.wallet_address.toLowerCase() !== attempt.signer_id.toLowerCase()) {
+    return c.json({ error: "The verified payment wallet no longer matches this attempt", code: "PAYMENT_WALLET_CHANGED" }, 409);
+  }
+  const body = await c.req.json().catch(() => null);
+  const signature = String(body?.signature || "");
+  if (!/^0x[a-fA-F0-9]{130}$/.test(signature)) return c.json({ error: "A valid 65-byte EVM signature is required" }, 400);
+  const intent = JSON.parse(attempt.intent_payload) as { standard?: string; payload?: unknown };
+  if (intent.standard !== "erc191" || typeof intent.payload !== "string") return c.json({ error: "Stored payment intent is invalid" }, 500);
+  let valid = false;
+  try {
+    valid = await verifyMessage({ address: attempt.signer_id as Address, message: intent.payload, signature: signature as Hex });
+  } catch {
+    valid = false;
+  }
+  if (!valid) return c.json({ error: "Payment signature does not match the verified admin wallet" }, 400);
+  const providerSignature = encodeErc191Signature(signature);
+  const claimed = await c.env.DB.prepare(
+    "UPDATE payment_attempts SET state = 'submitting', updated_at = ? WHERE id = ? AND state = 'awaiting_signature'",
+  ).bind(nowIso(), attempt.id).run();
+  if (Number(claimed.meta.changes || 0) !== 1) return c.json({ error: "Payment attempt changed while submitting", code: "ATTEMPT_STATE_CONFLICT" }, 409);
+
+  try {
+    const submitted = await submitIntent(c.env, {
+      type: "swap_transfer",
+      signedData: { standard: "erc191", payload: intent.payload, signature: providerSignature },
+    });
+    if (!submitted.intentHash) throw new Error("1Click did not return an intent hash");
+    const submittedAt = nowIso();
+    await c.env.DB.batch([
+      c.env.DB.prepare(
+        `UPDATE payment_attempts
+         SET state = 'submitted', intent_hash = ?, correlation_id = COALESCE(?, correlation_id),
+             provider_status = 'SUBMITTED', submitted_at = ?, next_reconcile_at = ?,
+             last_error = NULL, updated_at = ? WHERE id = ? AND state = 'submitting'`,
+      ).bind(submitted.intentHash, submitted.correlationId || null, submittedAt, submittedAt, submittedAt, attempt.id),
+      c.env.DB.prepare(
+        "UPDATE payrun_items SET status = 'processing', intent_hash = ?, signed_at = ?, submitted_at = ?, error = NULL WHERE id = ?",
+      ).bind(submitted.intentHash, submittedAt, submittedAt, attempt.item_id),
+      c.env.DB.prepare(
+        "UPDATE chain_records SET status = 'submitted', intent_hash = ?, signed_at = ?, submitted_at = ?, provider_status = 'SUBMITTED', error = NULL WHERE attempt_id = ?",
+      ).bind(submitted.intentHash, submittedAt, submittedAt, attempt.id),
+      c.env.DB.prepare(
+        "INSERT INTO audit_log (id, org_id, actor_id, action, detail) VALUES (?, ?, ?, 'payment.submitted', ?)",
+      ).bind(uuid(), user.org_id, user.id, `Submitted payment attempt ${attempt.id} as ${submitted.intentHash}`),
+    ]);
+  } catch (error) {
+    const unknownAt = nowIso();
+    await c.env.DB.batch([
+      c.env.DB.prepare(
+        `UPDATE payment_attempts
+         SET state = 'processing', provider_status = 'SUBMISSION_UNKNOWN', last_error = ?,
+             next_reconcile_at = ?, updated_at = ? WHERE id = ? AND state = 'submitting'`,
+      ).bind(providerError(error), unknownAt, unknownAt, attempt.id),
+      c.env.DB.prepare("UPDATE payrun_items SET status = 'processing', error = ? WHERE id = ?")
+        .bind("Submission outcome unknown; reconciliation scheduled", attempt.item_id),
+      c.env.DB.prepare("UPDATE chain_records SET status = 'processing', provider_status = 'SUBMISSION_UNKNOWN', error = ? WHERE attempt_id = ?")
+        .bind("Submission outcome unknown; reconciliation scheduled", attempt.id),
+    ]);
+    attempt = await getPaymentAttempt(c.env.DB, attempt.id, user.org_id);
+    return c.json({ attempt, outcome: "unknown", reused: false }, 202);
+  }
+
+  attempt = await getPaymentAttempt(c.env.DB, attempt.id, user.org_id);
+  return c.json({ attempt, reused: false });
+});
+
+paymentRoutes.post("/attempts/:attemptId/reconcile", requireRole("admin"), async (c) => {
+  const blocked = liveGateResponse(c);
+  if (blocked) return blocked;
+  const user = c.get("user") as AuthUser;
+  const attempt = await getPaymentAttempt(c.env.DB, c.req.param("attemptId"), user.org_id);
+  if (!attempt) return c.json({ error: "Payment attempt not found" }, 404);
+  if (["confirmed", "failed", "refunded"].includes(attempt.state)) return c.json({ attempt, reused: true });
+  if (!["submitting", "submitted", "processing"].includes(attempt.state)) {
+    return c.json({ error: `Attempt in state ${attempt.state} is not ready for reconciliation` }, 409);
+  }
+  const forceLocal = c.env.PAYMENTS_EXECUTION_ACK === "local-test";
+  return c.json({ attempt: await reconcilePaymentAttempt(c.env, attempt, { force: forceLocal }), reused: false });
+});
+
+paymentRoutes.post("/reconcile", requireRole("admin"), async (c) => {
+  const blocked = liveGateResponse(c);
+  if (blocked) return blocked;
+  return c.json(await reconcileOpenPayments(c.env, 1));
+});
+
+paymentRoutes.get("/runs/:runId/attempts", requireRole("admin"), async (c) => {
+  const user = c.get("user") as AuthUser;
+  const run = await c.env.DB.prepare("SELECT id FROM payroll_runs WHERE id = ? AND org_id = ?")
+    .bind(c.req.param("runId"), user.org_id).first();
+  if (!run) return c.json({ error: "Run not found" }, 404);
+  const attempts = await c.env.DB.prepare(
+    "SELECT * FROM payment_attempts WHERE run_id = ? AND org_id = ? ORDER BY created_at DESC",
+  ).bind(c.req.param("runId"), user.org_id).all<PaymentAttemptRow>();
+  return c.json({ attempts: attempts.results });
+});
+
+// Legacy untracked execution routes remain blocked. All live calls must carry a
+// persisted attempt id so retries and reconciliation are auditable.
+paymentRoutes.post("/generate-intent", requireRole("admin"), (c) => c.json(liveExecutionDisabled, 409));
+paymentRoutes.post("/submit-intent", requireRole("admin"), (c) => c.json(liveExecutionDisabled, 409));
+paymentRoutes.post("/status", requireRole("admin"), (c) => c.json(liveExecutionDisabled, 409));

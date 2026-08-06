@@ -44,7 +44,8 @@ let hmacKeyPromise: Promise<CryptoKey> | null = null;
 let hmacSecret = "";
 
 function hmacKey(env: Env): Promise<CryptoKey> {
-  const secretVal = env.JWT_SECRET || "dev-only-secret-change-me";
+  const secretVal = env.JWT_SECRET;
+  if (!secretVal) throw new Error("JWT_SECRET is not configured");
   if (!hmacKeyPromise || hmacSecret !== secretVal) {
     hmacSecret = secretVal;
     hmacKeyPromise = (async () => {

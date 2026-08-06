@@ -1,8 +1,8 @@
 // Invitations: admin creates (email + role), employee accepts (creates account or links existing)
 
 import { Hono } from "hono";
-import { hashPassword } from "../crypto";
-import { requireRole, type AppEnv } from "../middleware";
+import { hashPassword, signToken, verifyPassword } from "../crypto";
+import { requireRole, setAuthCookie, type AppEnv } from "../middleware";
 import { sendInviteEmail } from "../mail";
 import { nowIso, uuid, type AuthUser } from "../types";
 
@@ -25,9 +25,15 @@ inviteRoutes.post("/", requireRole("admin"), async (c) => {
   const role = body?.role === "admin" ? "admin" : "employee";
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return c.json({ error: "A valid email is required" }, 400);
 
-  // prevent inviting an existing member
-  const existingUser = await c.env.DB.prepare("SELECT id FROM users WHERE email = ? AND org_id = ?").bind(email, user.org_id).first();
-  if (existingUser) return c.json({ error: "This person is already a member" }, 409);
+  // The current data model supports one organization per account. Never silently
+  // move an account between organizations or carry a role across workspaces.
+  const existingUser = await c.env.DB.prepare(
+    "SELECT id, org_id FROM users WHERE email = ?",
+  ).bind(email).first<Record<string, unknown>>();
+  if (existingUser?.org_id === user.org_id) return c.json({ error: "This person is already a member" }, 409);
+  if (existingUser?.org_id && existingUser.org_id !== user.org_id) {
+    return c.json({ error: "This account already belongs to another organization" }, 409);
+  }
 
   // prevent duplicate pending invitations to the same email in this org
   const existingInvite = await c.env.DB.prepare(
@@ -58,6 +64,17 @@ inviteRoutes.post("/", requireRole("admin"), async (c) => {
     "INSERT INTO audit_log (id, org_id, actor_id, action, detail) VALUES (?, ?, ?, 'invite.created', ?)",
   ).bind(uuid(), user.org_id, user.id, `Invited ${email} (${role})`).run();
 
+  if (!mail.ok) {
+    await c.env.DB.prepare(
+      "INSERT INTO audit_log (id, org_id, actor_id, action, detail) VALUES (?, ?, ?, 'invite.email_failed', ?)",
+    ).bind(uuid(), user.org_id, user.id, `Email delivery failed for ${email}`).run();
+    return c.json({
+      error: `Invitation created, but email delivery failed. ${mail.error || "Check the email provider configuration and retry."}`,
+      code: "INVITE_EMAIL_FAILED",
+      invitation: { id, email, role, status: "pending", expires_at: expiresAt },
+    }, 502);
+  }
+
   return c.json({ invitation: { id, email, role, status: "pending", expires_at: expiresAt }, mail, inviteUrl: mail.mock ? inviteUrl : undefined }, 201);
 });
 
@@ -75,8 +92,9 @@ inviteRoutes.get("/resolve/:token", async (c) => {
     return c.json({ error: "This invitation has expired" }, 410);
   }
   const org = await c.env.DB.prepare("SELECT name FROM organizations WHERE id = ?").bind(row.org_id).first<{ name: string }>();
+  const existingAccount = await c.env.DB.prepare("SELECT id FROM users WHERE email = ?").bind(row.email).first();
   return c.json({
-    invitation: { email: row.email, role: row.role, orgName: org?.name || "" },
+    invitation: { email: row.email, role: row.role, orgName: org?.name || "", accountExists: !!existingAccount },
   });
 });
 
@@ -93,36 +111,81 @@ inviteRoutes.post("/accept", async (c) => {
   ).bind(token).first<Record<string, unknown>>();
   if (!invite) return c.json({ error: "Invitation not found" }, 404);
   if (invite.status !== "pending") return c.json({ error: "This invitation is no longer valid" }, 410);
-  if (new Date(String(invite.expires_at)).getTime() < Date.now()) return c.json({ error: "This invitation has expired" }, 410);
+  if (new Date(String(invite.expires_at)).getTime() < Date.now()) {
+    await c.env.DB.prepare("UPDATE invitations SET status = 'expired' WHERE id = ?").bind(invite.id).run();
+    return c.json({ error: "This invitation has expired" }, 410);
+  }
   if (email !== String(invite.email)) return c.json({ error: "Email does not match the invitation" }, 400);
   if (password.length < 8) return c.json({ error: "Password must be at least 8 characters" }, 400);
-  if (!name) return c.json({ error: "Name is required" }, 400);
+  const role = invite.role === "admin" ? "admin" : "employee";
+  const existing = await c.env.DB.prepare(
+    "SELECT id, name, password_hash, org_id, wallet_address, wallet_verified_at FROM users WHERE email = ?",
+  ).bind(email).first<Record<string, unknown>>();
 
-  let userId = "";
-  let existing = await c.env.DB.prepare("SELECT id, role, org_id FROM users WHERE email = ?").bind(email).first<Record<string, unknown>>();
+  if (existing?.org_id === invite.org_id) return c.json({ error: "This account is already a member" }, 409);
+  if (existing?.org_id && existing.org_id !== invite.org_id) {
+    return c.json({ error: "This account belongs to another organization; multi-workspace accounts are not supported yet" }, 409);
+  }
+  if (existing && !(await verifyPassword(password, String(existing.password_hash)))) {
+    return c.json({ error: "Invalid password for the existing account" }, 401);
+  }
+  if (!existing && !name) return c.json({ error: "Name is required" }, 400);
+
+  const userId = existing ? String(existing.id) : uuid();
+  const displayName = existing ? String(existing.name) : name;
+  const employee = role === "employee"
+    ? await c.env.DB.prepare(
+      "SELECT id, user_id FROM employees WHERE org_id = ? AND email = ?",
+    ).bind(invite.org_id, email).first<Record<string, unknown>>()
+    : null;
+  if (employee?.user_id && employee.user_id !== userId) {
+    return c.json({ error: "This employee profile is already linked to another account" }, 409);
+  }
+
+  const statements: D1PreparedStatement[] = [];
   if (existing) {
-    userId = String(existing.id);
-    // Link existing account to this org; keep their role if admin, else adopt invited role
-    const role = existing.role === "admin" ? "admin" : String(invite.role);
-    await c.env.DB.prepare("UPDATE users SET org_id = ?, role = ?, status = 'active', updated_at = ? WHERE id = ?").bind(invite.org_id, role, nowIso(), userId).run();
+    statements.push(c.env.DB.prepare(
+      "UPDATE users SET org_id = ?, role = ?, status = 'active', updated_at = ? WHERE id = ?",
+    ).bind(invite.org_id, role, nowIso(), userId));
   } else {
-    userId = uuid();
     const passwordHash = await hashPassword(password);
-    await c.env.DB.prepare(
+    statements.push(c.env.DB.prepare(
       "INSERT INTO users (id, email, name, password_hash, role, status, org_id, created_at) VALUES (?, ?, ?, ?, ?, 'active', ?, ?)",
-    ).bind(userId, email, name, passwordHash, String(invite.role), invite.org_id, nowIso()).run();
+    ).bind(userId, email, displayName, passwordHash, role, invite.org_id, nowIso()));
   }
 
-  await c.env.DB.prepare("UPDATE invitations SET status = 'accepted' WHERE id = ?").bind(invite.id).run();
-
-  // Link employee profile row if one exists for this org+email
-  const emp = await c.env.DB.prepare("SELECT id FROM employees WHERE org_id = ? AND name = ?").bind(invite.org_id, name).first<{ id: string }>();
-  if (emp) {
-    await c.env.DB.prepare("UPDATE employees SET user_id = ? WHERE id = ?").bind(userId, emp.id).run();
+  if (role === "employee") {
+    if (employee) {
+      statements.push(c.env.DB.prepare(
+        "UPDATE employees SET user_id = ?, name = ? WHERE id = ? AND org_id = ?",
+      ).bind(userId, displayName, employee.id, invite.org_id));
+    } else {
+      statements.push(c.env.DB.prepare(
+        "INSERT INTO employees (id, org_id, user_id, email, name, role_title, location, token, network, amount_minor, endpoint, status, created_at) VALUES (?, ?, ?, ?, ?, '', '', 'USDC', 'Base', 0, '', 'pending', ?)",
+      ).bind(uuid(), invite.org_id, userId, email, displayName, nowIso()));
+    }
   }
 
-  const role = existing && existing.role === "admin" ? "admin" : String(invite.role);
-  return c.json({ ok: true, user: { id: userId, email, name, role, org_id: invite.org_id } });
+  statements.push(
+    c.env.DB.prepare("UPDATE invitations SET status = 'accepted' WHERE id = ? AND status = 'pending'").bind(invite.id),
+    c.env.DB.prepare(
+      "INSERT INTO audit_log (id, org_id, actor_id, action, detail) VALUES (?, ?, ?, 'invite.accepted', ?)",
+    ).bind(uuid(), invite.org_id, userId, `Accepted invitation for ${email}`),
+  );
+  await c.env.DB.batch(statements);
+
+  const authUser = {
+    id: userId,
+    email,
+    name: displayName,
+    role,
+    org_id: String(invite.org_id),
+    wallet_address: existing?.wallet_address ? String(existing.wallet_address) : null,
+    wallet_verified: !!existing?.wallet_verified_at,
+  };
+  const sessionToken = await signToken({ sub: userId, org: authUser.org_id, role }, c.env);
+  setAuthCookie(c, sessionToken, c.env);
+  return c.json({ ok: true, user: authUser });
 });
 
 // Admin: resend / revoke
@@ -131,13 +194,27 @@ inviteRoutes.post("/:id/resend", requireRole("admin"), async (c) => {
   const id = c.req.param("id");
   const invite = await c.env.DB.prepare("SELECT * FROM invitations WHERE id = ? AND org_id = ?").bind(id, user.org_id).first<Record<string, unknown>>();
   if (!invite) return c.json({ error: "Invitation not found" }, 404);
+  if (invite.status === "accepted") return c.json({ error: "Accepted invitations cannot be resent" }, 409);
+  if (invite.status === "revoked") return c.json({ error: "Revoked invitations cannot be resent" }, 409);
   const token = uuid().replace(/-/g, "") + uuid().replace(/-/g, "");
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-  await c.env.DB.prepare("UPDATE invitations SET token = ?, status = 'pending', expires_at = ? WHERE id = ?").bind(token, expiresAt, id).run();
   const inviteUrl = `${c.env.APP_URL}/invite/${token}`;
   const org = await c.env.DB.prepare("SELECT name FROM organizations WHERE id = ?").bind(user.org_id).first<{ name: string }>();
   const mail = await sendInviteEmail(c.env, { to: String(invite.email), inviteUrl, orgName: org?.name || "", inviterName: user.name, role: String(invite.role) });
-  return c.json({ ok: true, inviteUrl: mail.mock ? inviteUrl : undefined });
+  if (!mail.ok) {
+    await c.env.DB.prepare(
+      "INSERT INTO audit_log (id, org_id, actor_id, action, detail) VALUES (?, ?, ?, 'invite.email_failed', ?)",
+    ).bind(uuid(), user.org_id, user.id, `Email delivery failed for ${String(invite.email)}`).run();
+    return c.json({
+      error: `Email delivery failed. ${mail.error || "Check the email provider configuration and retry."}`,
+      code: "INVITE_EMAIL_FAILED",
+    }, 502);
+  }
+  await c.env.DB.prepare("UPDATE invitations SET token = ?, status = 'pending', expires_at = ? WHERE id = ?").bind(token, expiresAt, id).run();
+  await c.env.DB.prepare(
+    "INSERT INTO audit_log (id, org_id, actor_id, action, detail) VALUES (?, ?, ?, 'invite.resent', ?)",
+  ).bind(uuid(), user.org_id, user.id, `Resent invitation to ${String(invite.email)}`).run();
+  return c.json({ ok: true, mail, inviteUrl: mail.mock ? inviteUrl : undefined });
 });
 
 inviteRoutes.post("/:id/revoke", requireRole("admin"), async (c) => {

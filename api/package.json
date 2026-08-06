@@ -12,12 +12,14 @@
     "db:migrate:prod": "wrangler d1 migrations apply salaryflow --remote"
   },
   "dependencies": {
+    "@defuse-protocol/one-click-sdk-typescript": "0.1.25",
     "hono": "^4.6.0",
-    "jose": "^5.9.0"
+    "jose": "^5.9.0",
+    "viem": "^2.55.11"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240821.0",
     "typescript": "^5.9.2",
-    "wrangler": "^3.80.0"
+    "wrangler": "^4.119.0"
   }
 }

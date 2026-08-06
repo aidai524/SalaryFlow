@@ -1,62 +1,144 @@
-// Employee portal pages: My pay, Payment history, Payout method, Documents & consent
-
 import { useEffect, useState } from "react";
-import { AlertCircle, CalendarDays, Check, CheckCircle2, Clock3, EyeOff, FileSignature, LockKeyhole, Save, WalletCards } from "lucide-react";
-import { api, type AuthUser } from "../../lib/api";
-import { useApi, formatMoney } from "../../lib/useData";
+import { useAccount, useConnect, useSignMessage } from "wagmi";
+import {
+  AlertCircle,
+  CalendarDays,
+  Check,
+  CheckCircle2,
+  Clock3,
+  EyeOff,
+  FileSignature,
+  LockKeyhole,
+  Save,
+  ShieldCheck,
+  WalletCards,
+} from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { EmptyPanel, MetricCard, PageHeader, StatusBadge, TokenCell } from "@/components/WorkspaceUI";
+import { api, ApiError, type AuthUser } from "@/lib/api";
+import { isValidEthereumAddress } from "@/lib/erc191";
+import { formatTokenAmount, useApi } from "@/lib/useData";
 
 function EmployeeFrame({ children }: { children: React.ReactNode }) {
-  return <div className="employee-page">{children}</div>;
+  return <div className="page-container">{children}</div>;
 }
 
-export function EmployeeHomePage({ user }: { user: AuthUser }) {
-  const { data: payout } = useApi(() => api.myPayout(), []);
-  const { data: records } = useApi(() => api.myRecords(), []);
+export function EmployeeHomePage({ user, orgName }: { user: AuthUser; orgName: string }) {
+  const { data: payout, loading: payoutLoading } = useApi(() => api.myPayout(), []);
+  const { data: records, loading: recordsLoading } = useApi(() => api.myRecords(), []);
+
   useEffect(() => {
     document.title = "SalaryFlow · My pay";
   }, []);
-  const emp = payout?.payout;
+
+  const employee = payout?.payout;
   const recent = records?.records[0];
 
   return (
     <EmployeeFrame>
-      <section className="employee-welcome">
-        <div><span className="eyebrow">My pay</span><h1>Hi, {user.name.split(" ")[0]}</h1><p>Your pay is being prepared. Review your payout method and records below.</p></div>
-        <span className="employee-company"><i>N</i><span><strong>Northstar Labs</strong><small>{emp?.role_title || "Team member"}</small></span></span>
+      <PageHeader
+        eyebrow="My pay"
+        title={`Hi, ${user.name.split(" ")[0]}`}
+        description="Review your next net payment, payout destination, and private payment history."
+        actions={<Badge variant="outline">{orgName || "Workspace"} · {employee?.role_title || "Team member"}</Badge>}
+      />
+
+      <section className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
+        <MetricCard label="Net amount" value={employee ? formatTokenAmount(employee.amount_minor) : "—"} helper={employee?.token ?? "USDC"} icon={<CalendarDays />} loading={payoutLoading} />
+        <MetricCard label="Stablecoin" value={employee?.token ?? "USDC"} helper="Your selected payout asset" icon={<WalletCards />} loading={payoutLoading} />
+        <MetricCard label="Network" value={employee?.network ?? "Base"} helper="Selected destination chain" icon={<ShieldCheck />} loading={payoutLoading} />
+        <MetricCard label="Payout status" value={employee?.status === "ready" ? "Ready" : "Pending"} helper={employee?.status === "ready" ? "Wallet ownership verified" : "Verification required"} icon={<CheckCircle2 />} loading={payoutLoading} />
       </section>
 
-      <section className="employee-pay-hero">
-        <div className="employee-pay-main">
-          <span className="employee-pay-label"><CalendarDays size={15} />Next payday · see payroll schedule</span>
-          <div className="employee-amount"><strong>{emp ? formatMoney(emp.amount) : "—"}</strong><span>{emp?.token ?? "USDC"}</span></div>
-          <p>This is your net amount. Your employer covers payment fees.</p>
-          <span className="employee-pay-state"><Clock3 size={14} />Waiting for payment</span>
-        </div>
-        <aside className="employee-destination">
-          <header><span>Payout method</span></header>
-          <div className="destination-token"><i>{emp?.token === "USDT" ? "₮" : "$"}</i><span><strong>{emp?.token ?? "USDC"}</strong><small>{emp?.network ?? "Base"} network</small></span></div>
-          <div className="destination-address"><span>Wallet address</span><strong className="mono-value">{emp?.endpoint ? `${emp.endpoint.slice(0, 6)}…${emp.endpoint.slice(-4)}` : "Not set"}</strong></div>
-          <div className="destination-check"><CheckCircle2 size={14} /><span>{emp?.status === "ready" ? "Ready to receive" : "Awaiting verification"}</span></div>
-        </aside>
+      <section className="grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(320px,0.7fr)]">
+        <Card>
+          <CardHeader>
+            <CardTitle>Where your pay is now</CardTitle>
+            <CardDescription>Status updates appear here as payroll progresses.</CardDescription>
+            <CardAction><StatusBadge status={recent?.status ?? "pending"} label={recent?.status === "paid" ? "Paid" : "Waiting"} /></CardAction>
+          </CardHeader>
+          <CardContent>
+            <ol className="grid gap-4 md:grid-cols-3">
+              <li className="relative rounded-lg border bg-emerald-50/60 p-4 dark:bg-emerald-950/20">
+                <span className="mb-3 grid size-7 place-items-center rounded-full bg-emerald-600 text-white"><Check className="size-3.5" /></span>
+                <strong className="block text-sm font-medium">Net pay confirmed</strong>
+                <small className="mt-1 block text-xs leading-5 text-muted-foreground">{recent ? `${formatTokenAmount(recent.amount_minor)} ${recent.token}` : "Amount set by payroll"}</small>
+              </li>
+              <li className="rounded-lg border border-primary/30 bg-primary/5 p-4">
+                <span className="mb-3 grid size-7 place-items-center rounded-full bg-primary text-xs font-semibold text-primary-foreground">2</span>
+                <strong className="block text-sm font-medium">Waiting for payment</strong>
+                <small className="mt-1 block text-xs leading-5 text-muted-foreground">Your employer completes the reviewed payment flow.</small>
+              </li>
+              <li className="rounded-lg border p-4">
+                <span className="mb-3 grid size-7 place-items-center rounded-full bg-muted text-xs font-semibold text-muted-foreground">3</span>
+                <strong className="block text-sm font-medium">Pay received</strong>
+                <small className="mt-1 block text-xs leading-5 text-muted-foreground">A private receipt appears after confirmation.</small>
+              </li>
+            </ol>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Payout destination</CardTitle>
+            <CardDescription>Your current verified receiving method.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <TokenCell token={employee?.token ?? "USDC"} network={employee?.network ?? "Base"} />
+            <div className="rounded-lg border bg-muted/20 p-3">
+              <p className="text-xs text-muted-foreground">Wallet address</p>
+              <p className="mono-value mt-1 text-sm">{employee?.endpoint ? `${employee.endpoint.slice(0, 8)}…${employee.endpoint.slice(-6)}` : "Not set"}</p>
+            </div>
+            <StatusBadge status={employee?.status ?? "pending"} label={employee?.status === "ready" ? "Ready to receive" : "Awaiting verification"} />
+          </CardContent>
+        </Card>
       </section>
 
-      <section className="employee-grid">
-        <article className="employee-progress-card">
-          <header><div><h2>Where your pay is now</h2><p>Updates appear here as the status changes.</p></div><span>Latest payment</span></header>
-          <ol>
-            <li className="is-done"><span><Check size={14} /></span><div><strong>Net pay confirmed</strong><small>{recent ? `${formatMoney(recent.amount)} ${recent.token}` : "Amount set on payroll run"}</small></div></li>
-            <li className="is-current"><span>2</span><div><strong>Waiting for payment</strong><small>Your employer pays via confidential swap</small></div></li>
-            <li><span>3</span><div><strong>Pay received</strong><small>A receipt will be available after confirmation</small></div></li>
-          </ol>
-        </article>
-        <article className="employee-privacy-card">
-          <span className="employee-card-icon"><EyeOff size={20} /></span>
-          <h2>Your pay is yours alone</h2>
-          <p>Coworkers cannot see your amount or wallet. Only authorized payroll staff receive the information needed for their work.</p>
-          <ul><li><Check size={13} />Hidden from coworkers</li><li><Check size={13} />Wallet address is masked</li><li><Check size={13} />Swap amounts hidden on-chain</li></ul>
-        </article>
-      </section>
-      <p className="employee-demo-note"><AlertCircle size={14} />Connected to the live SalaryFlow API. Payment records update as swaps confirm.</p>
+      <Card>
+        <CardContent className="flex flex-col gap-4 sm:flex-row sm:items-center">
+          <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary"><EyeOff className="size-5" /></span>
+          <div className="flex-1">
+            <h2 className="font-heading text-base font-medium">Your pay is yours alone</h2>
+            <p className="mt-1 text-sm leading-6 text-muted-foreground">Coworkers cannot see your amount or wallet. Employer views mask addresses, and each employee account is scoped to its own records.</p>
+          </div>
+          <Badge variant="secondary">Private by default</Badge>
+        </CardContent>
+      </Card>
+
+      <Alert>
+        <AlertCircle />
+        <AlertTitle>Payment execution remains disabled</AlertTitle>
+        <AlertDescription>SalaryFlow is connected to the local API, but live settlement stays locked while production reconciliation is completed.</AlertDescription>
+      </Alert>
+      {recordsLoading && <span className="sr-only">Loading payment history</span>}
     </EmployeeFrame>
   );
 }
@@ -64,31 +146,38 @@ export function EmployeeHomePage({ user }: { user: AuthUser }) {
 export function EmployeeHistoryPage() {
   const { data, loading } = useApi(() => api.myRecords(), []);
   const records = data?.records ?? [];
+
   return (
     <EmployeeFrame>
-      <section className="employee-heading"><div><span className="eyebrow">Payment history</span><h1>My pay history</h1><p>Review each amount, network, and status.</p></div></section>
-      {loading && <p className="page-empty">Loading…</p>}
-      {!loading && records.length === 0 && <section className="empty-state"><h2>No payments yet</h2><p>Your payments will appear here once payroll is sent.</p></section>}
-      {records.length > 0 && (
-        <section className="employee-history-card">
-          <header><div><h2>Payments</h2><p>Only you can view these records.</p></div></header>
-          <div className="table-scroll">
-            <table className="employee-history-table">
-              <thead><tr><th>Pay period</th><th>Net amount</th><th>Network</th><th>Status</th><th>Intent</th></tr></thead>
-              <tbody>
-                {records.map((r) => (
-                  <tr key={r.id}>
-                    <td><span className="month-cell"><strong>{r.employee_name}</strong></span></td>
-                    <td><strong>{formatMoney(r.amount)} {r.token}</strong></td>
-                    <td>{r.token} · {r.network}</td>
-                    <td><span className={`status-chip ${r.status === "paid" ? "status-paid" : "status-pending"}`}>{r.status === "paid" ? <CheckCircle2 size={14} /> : <Clock3 size={14} />}{r.status}</span></td>
-                    <td>{r.intent_hash ? <span className="mono-value">{r.intent_hash.slice(0, 14)}…</span> : "—"}</td>
-                  </tr>
+      <PageHeader eyebrow="Payment history" title="My pay history" description="Review each net amount, destination network, and settlement state." />
+      {loading ? (
+        <Card><CardContent className="grid h-40 place-items-center text-sm text-muted-foreground">Loading payment history…</CardContent></Card>
+      ) : records.length === 0 ? (
+        <EmptyPanel title="No payments yet" description="Your private payment records appear here once payroll is sent." />
+      ) : (
+        <Card>
+          <CardHeader>
+            <CardTitle>Payments</CardTitle>
+            <CardDescription>Only your account can view these records.</CardDescription>
+            <CardAction><Badge variant="secondary">{records.length} records</Badge></CardAction>
+          </CardHeader>
+          <CardContent className="px-0">
+            <Table>
+              <TableHeader><TableRow><TableHead className="pl-4">Pay period</TableHead><TableHead>Net amount</TableHead><TableHead>Network</TableHead><TableHead>Status</TableHead><TableHead className="pr-4">Intent</TableHead></TableRow></TableHeader>
+              <TableBody>
+                {records.map((record) => (
+                  <TableRow key={record.id}>
+                    <TableCell className="pl-4 font-medium">{record.employee_name}</TableCell>
+                    <TableCell className="font-medium tabular-nums">{formatTokenAmount(record.amount_minor)} {record.token}</TableCell>
+                    <TableCell><TokenCell token={record.token} network={record.network} /></TableCell>
+                    <TableCell><StatusBadge status={record.status} /></TableCell>
+                    <TableCell className="mono-value pr-4 text-xs text-muted-foreground">{record.intent_hash ? `${record.intent_hash.slice(0, 14)}…` : "—"}</TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
       )}
     </EmployeeFrame>
   );
@@ -101,46 +190,156 @@ export function EmployeePayoutPage() {
   const [endpoint, setEndpoint] = useState("");
   const [saved, setSaved] = useState(false);
   const [notice, setNotice] = useState("");
+  const [error, setError] = useState("");
+  const [verifying, setVerifying] = useState(false);
+  const { address, isConnected } = useAccount();
+  const { connect, connectors } = useConnect();
+  const { signMessageAsync } = useSignMessage();
+  const employee = data?.payout;
 
-  const emp = data?.payout;
   useEffect(() => {
-    if (emp) {
-      setToken(emp.token);
-      setNetwork(emp.network);
-      setEndpoint(emp.endpoint || "");
+    if (employee) {
+      setToken(employee.token);
+      setNetwork(employee.network);
+      setEndpoint(employee.endpoint || "");
     }
-  }, [emp?.id]);
+  }, [employee?.id, employee?.token, employee?.network, employee?.endpoint]);
 
-  const save = async (e: React.FormEvent) => {
-    e.preventDefault();
-    await api.updatePayout({ token, network, endpoint });
-    setSaved(true);
-    setNotice("Payout details updated — re-verification required before the next payment.");
-    refresh();
-    setTimeout(() => setSaved(false), 4000);
+  const save = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setError("");
+    try {
+      await api.updatePayout({ token, network, endpoint });
+      setSaved(true);
+      setNotice("Payout details updated. Verify wallet ownership before the next payment.");
+      await refresh();
+      setTimeout(() => setSaved(false), 4000);
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : "Unable to save payout details");
+    }
+  };
+
+  const connectedAddressMatches = Boolean(address && address.toLowerCase() === endpoint.trim().toLowerCase());
+
+  const verifyWallet = async () => {
+    setError("");
+    setNotice("");
+    if (!isValidEthereumAddress(endpoint.trim())) {
+      setError("Enter a valid EVM payout address first.");
+      return;
+    }
+    if (!address || !connectedAddressMatches) {
+      setError("Connect the same wallet address entered above before verifying.");
+      return;
+    }
+
+    setVerifying(true);
+    try {
+      const challenge = await api.createPayoutChallenge({ token, network, endpoint: endpoint.trim() });
+      const signature = await signMessageAsync({ message: challenge.message });
+      const result = await api.verifyPayout({ challengeId: challenge.challengeId, signature });
+      setEndpoint(result.payout.endpoint);
+      setNotice("Wallet ownership verified. This payout method is ready.");
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : cause instanceof Error ? cause.message : "Wallet verification failed");
+    } finally {
+      setVerifying(false);
+    }
   };
 
   return (
     <EmployeeFrame>
-      <section className="employee-heading"><div><span className="eyebrow">Payout method</span><h1>Where your pay goes</h1><p>Choose your stablecoin, network, and wallet.</p></div></section>
-      <section className="payout-settings-layout">
-        <form className="employee-payout-form" onSubmit={save}>
-          <header><div><h2>Current payout method</h2><p>Changes apply to payroll runs that have not been sent.</p></div><span className="status-chip status-ready"><CheckCircle2 size={14} />{emp?.status === "ready" ? "Ready" : "Needs verification"}</span></header>
-          <div className="employee-form-row"><label>Stablecoin<span>The currency you receive</span></label><div className="token-choice">{(["USDC", "USDT"] as const).map((item) => <button type="button" key={item} className={token === item ? "is-active" : ""} onClick={() => { setToken(item); setSaved(false); }}><i>{item === "USDC" ? "$" : "₮"}</i><span><strong>{item}</strong><small>{item === "USDC" ? "USD Coin" : "Tether"}</small></span></button>)}</div></div>
-          <div className="employee-form-row"><label htmlFor="employee-network">Payout network<span>Your wallet must support it</span></label><select id="employee-network" value={network} onChange={(e) => setNetwork(e.target.value)}><option>Base</option><option>Arbitrum</option><option>Polygon</option><option>Optimism</option><option>Ethereum</option></select></div>
-          <div className="employee-form-row address-row"><label htmlFor="employee-address">Wallet address<span>Changes require reverification</span></label><div><input id="employee-address" value={endpoint} onChange={(e) => setEndpoint(e.target.value)} placeholder="0x…" /><small className="address-preview"><LockKeyhole size={12} />Employer views show only {endpoint.slice(0, 6) || "…"}…{endpoint.slice(-4) || "…"}</small></div></div>
-          <footer>
-            <span className={saved ? "save-result is-visible" : "save-result"}><Check size={14} />Saved</span>
-            <button className="button button-primary" type="submit"><Save size={16} />Save payout method</button>
-          </footer>
+      <PageHeader eyebrow="Payout method" title="Where your pay goes" description="Choose your stablecoin, destination network, and verified wallet." />
+      <section className="grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(300px,0.6fr)]">
+        <form onSubmit={save}>
+          <Card>
+            <CardHeader>
+              <CardTitle>Current payout method</CardTitle>
+              <CardDescription>Changes apply only to payroll runs that have not been sent.</CardDescription>
+              <CardAction><StatusBadge status={employee?.status ?? "pending"} label={employee?.status === "ready" ? "Ready" : "Needs verification"} /></CardAction>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <Field>
+                <FieldLabel>Stablecoin</FieldLabel>
+                <div className="grid grid-cols-2 gap-2">
+                  {["USDC", "USDT"].map((value) => (
+                    <Button key={value} type="button" variant={token === value ? "default" : "outline"} className="h-11 justify-start" onClick={() => { setToken(value); setSaved(false); setNotice(""); }}>
+                      <span className="grid size-6 place-items-center rounded-full bg-background/15 text-xs">{value === "USDC" ? "$" : "₮"}</span>
+                      {value}
+                    </Button>
+                  ))}
+                </div>
+                <FieldDescription>The stablecoin deposited to your wallet.</FieldDescription>
+              </Field>
+
+              <Field>
+                <FieldLabel>Destination network</FieldLabel>
+                <Select value={network} onValueChange={(value) => { setNetwork(value); setNotice(""); }}>
+                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                  <SelectContent>{["Base", "Arbitrum", "Polygon", "Optimism", "Ethereum", "BNB Chain"].map((value) => <SelectItem key={value} value={value}>{value}</SelectItem>)}</SelectContent>
+                </Select>
+                <FieldDescription>Your wallet must support both the asset and network.</FieldDescription>
+              </Field>
+
+              <Field>
+                <FieldLabel htmlFor="employee-address">Wallet address</FieldLabel>
+                <Input id="employee-address" value={endpoint} onChange={(event) => { setEndpoint(event.target.value); setNotice(""); }} placeholder="0x…" autoComplete="off" />
+                <FieldDescription className="flex items-center gap-1"><LockKeyhole className="size-3" />Employer views show only {endpoint.slice(0, 6) || "…"}…{endpoint.slice(-4) || "…"}</FieldDescription>
+              </Field>
+
+              <div className="rounded-lg border bg-muted/20 p-4">
+                <div className="flex items-start gap-3">
+                  <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary"><ShieldCheck className="size-4" /></span>
+                  <div className="flex-1">
+                    <strong className="block text-sm font-medium">Verify wallet ownership</strong>
+                    <small className="mt-1 block text-xs leading-5 text-muted-foreground">Sign a one-time message. It cannot move funds or authorize payment.</small>
+                  </div>
+                </div>
+                <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center">
+                  {!isConnected ? connectors.map((connector) => (
+                    <Button variant="outline" type="button" key={connector.uid} onClick={() => connect({ connector })}>Connect {connector.name}</Button>
+                  )) : (
+                    <>
+                      <span className={`mono-value min-w-0 flex-1 truncate text-xs ${connectedAddressMatches ? "text-emerald-700" : "text-amber-700"}`}>
+                        {address?.slice(0, 10)}…{address?.slice(-8)} · {connectedAddressMatches ? "address matches" : "does not match"}
+                      </span>
+                      <Button variant="outline" type="button" disabled={verifying || !connectedAddressMatches} onClick={verifyWallet}>
+                        <ShieldCheck data-icon="inline-start" />{verifying ? "Waiting…" : "Verify ownership"}
+                      </Button>
+                    </>
+                  )}
+                </div>
+              </div>
+            </CardContent>
+            <CardFooter className="justify-between">
+              <span className={`flex items-center gap-1 text-xs text-emerald-700 transition-opacity ${saved ? "opacity-100" : "opacity-0"}`}><Check className="size-3.5" />Saved</span>
+              <Button type="submit" disabled={verifying}><Save data-icon="inline-start" />Save payout method</Button>
+            </CardFooter>
+          </Card>
         </form>
-        <aside className="payout-guidance">
-          <span className="employee-card-icon"><WalletCards size={20} /></span>
-          <h2>Check before you save</h2>
-          <ul><li><span>01</span><p>Your wallet supports the selected asset and network.</p></li><li><span>02</span><p>You control this address.</p></li><li><span>03</span><p>Incorrect addresses can delay or lose funds.</p></li></ul>
-        </aside>
+
+        <Card className="h-fit">
+          <CardHeader>
+            <span className="mb-2 grid size-10 place-items-center rounded-xl bg-primary/10 text-primary"><WalletCards className="size-5" /></span>
+            <CardTitle>Check before you save</CardTitle>
+            <CardDescription>A wrong chain or address can delay or permanently lose funds.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ol className="space-y-4">
+              {["Your wallet supports the selected asset and network.", "You connect the exact same address and sign the ownership challenge.", "You re-check the masked destination before the next payroll."].map((item, index) => (
+                <li key={item} className="flex gap-3 text-sm leading-6">
+                  <span className="grid size-6 shrink-0 place-items-center rounded-full bg-muted text-xs font-medium">{index + 1}</span>
+                  <span className="text-muted-foreground">{item}</span>
+                </li>
+              ))}
+            </ol>
+          </CardContent>
+        </Card>
       </section>
-      {notice && <p className="employee-demo-note"><AlertCircle size={14} />{notice}</p>}
+
+      {notice && <Alert className="border-emerald-200 bg-emerald-50 text-emerald-900"><CheckCircle2 /><AlertTitle>Payout method updated</AlertTitle><AlertDescription className="text-emerald-800">{notice}</AlertDescription></Alert>}
+      {error && <Alert variant="destructive"><AlertCircle /><AlertTitle>Unable to update payout method</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
     </EmployeeFrame>
   );
 }
@@ -152,25 +351,37 @@ export function EmployeeDocumentsPage({ user }: { user: AuthUser }) {
   const sign = async () => {
     await api.signConsent({ consent: "stablecoin-payout", version: "1", acceptedAt: new Date().toISOString(), employeeId: user.id });
     setNotice("Consent recorded for this session.");
-    refresh();
+    await refresh();
   };
 
   return (
     <EmployeeFrame>
-      <section className="employee-heading"><div><span className="eyebrow">Documents and proof</span><h1>My payroll documents</h1><p>Consent and payslips live here in one private place.</p></div><span className="employee-verified"><CheckCircle2 size={15} />Private to you</span></section>
-      <section className="data-card">
-        <header className="card-header"><div><h2>Stablecoin payout consent</h2><p>Authorizes SalaryFlow to deliver net pay in your selected stablecoin.</p></div><span className={`status-chip ${data?.signed ? "status-ready" : "status-pending"}`}>{data?.signed ? <CheckCircle2 size={14} /> : <Clock3 size={14} />}{data?.signed ? "Signed" : "Unsigned"}</span></header>
-        <div className="consent-body">
-          <p>Your employment agreement remains denominated in USD. This consent authorizes the delivery of net amounts in USDC or USDT to your verified wallet. Swap execution happens on a private chain; deposit and withdrawal transactions on public chains remain visible to parties that need them.</p>
-          {data?.signed ? (
-            <p className="consent-signed"><Check size={14} />Signed {data.signedAt ? new Date(data.signedAt).toLocaleString() : ""}</p>
-          ) : (
-            <button className="button button-primary" type="button" onClick={sign}><FileSignature size={16} />Review and sign consent</button>
-          )}
-          {notice && <p className="employee-demo-note"><AlertCircle size={14} />{notice}</p>}
-        </div>
-      </section>
-      <p className="employee-demo-note"><AlertCircle size={14} />Records are stored in SalaryFlow. Production integrates a compliant e-signature provider and trusted timestamps.</p>
+      <PageHeader eyebrow="Documents and proof" title="My payroll documents" description="Consent and payout evidence live together in this private workspace." actions={<Badge variant="outline"><EyeOff data-icon="inline-start" />Private to you</Badge>} />
+      <Card>
+        <CardHeader>
+          <CardTitle>Stablecoin payout consent</CardTitle>
+          <CardDescription>Authorizes SalaryFlow to deliver your net pay in the selected stablecoin.</CardDescription>
+          <CardAction><StatusBadge status={data?.signed ? "signed" : "pending"} label={data?.signed ? "Signed" : "Unsigned"} /></CardAction>
+        </CardHeader>
+        <CardContent>
+          <div className="rounded-lg border bg-muted/20 p-5 text-sm leading-7 text-muted-foreground">
+            Your employment agreement remains denominated in USD. This consent authorizes delivery of net amounts in USDC or USDT to your verified wallet. Deposit and withdrawal activity on public chains remains visible where required by those networks.
+          </div>
+        </CardContent>
+        <CardFooter className="justify-between">
+          <span className="text-xs text-muted-foreground">
+            {data?.signed && data.signedAt ? `Signed ${new Date(data.signedAt).toLocaleString()}` : "A signature is still required."}
+          </span>
+          {!data?.signed && <Button type="button" onClick={sign}><FileSignature data-icon="inline-start" />Review and sign consent</Button>}
+        </CardFooter>
+      </Card>
+
+      {notice && <Alert className="border-emerald-200 bg-emerald-50 text-emerald-900"><CheckCircle2 /><AlertTitle>Consent recorded</AlertTitle><AlertDescription className="text-emerald-800">{notice}</AlertDescription></Alert>}
+      <Alert>
+        <AlertCircle />
+        <AlertTitle>Local evidence baseline</AlertTitle>
+        <AlertDescription>Production rollout will integrate a compliant e-signature provider and trusted timestamps.</AlertDescription>
+      </Alert>
     </EmployeeFrame>
   );
 }

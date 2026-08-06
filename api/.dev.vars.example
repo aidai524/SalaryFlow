@@ -1,0 +1,9 @@
+# Copy this file to .dev.vars for local development.
+# Never commit .dev.vars, production secrets, or a real Resend API key.
+APP_URL="http://127.0.0.1:5173"
+API_URL="http://127.0.0.1:8787"
+COOKIE_DOMAIN=""
+JWT_SECRET="local-development-only-change-me"
+RESEND_API_KEY=""
+SENDER_EMAIL="SalaryFlow <onboarding@resend.dev>"
+MOCK_EMAIL="false"

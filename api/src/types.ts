@@ -11,6 +11,10 @@ export interface Env {
   MOCK_EMAIL?: string;
   INTENTS_API_URL: string;
   INTENTS_API_KEY?: string;
+  INTENTS_ASSET_MAP?: string;
+  INTENTS_QUOTE_PUBLIC_KEY?: string;
+  PAYMENTS_MODE?: "disabled" | "dry-run" | "live";
+  PAYMENTS_EXECUTION_ACK?: "local-test" | "mainnet-live";
 }
 
 export type Role = "admin" | "employee";

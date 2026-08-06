@@ -2,9 +2,25 @@
 
 import { Hono } from "hono";
 import { requireRole, type AppEnv } from "../middleware";
+import { parseTokenAmount } from "../money";
+import { normalizePayoutAddress, normalizePayoutNetwork, normalizePayoutToken } from "../payout";
 import { nowIso, uuid, type AuthUser } from "../types";
 
 export const orgRoutes = new Hono<AppEnv>();
+
+// Minimal workspace context shared by admins and employees. It intentionally
+// excludes the member directory and other admin-only organization data.
+orgRoutes.get("/context", requireRole("admin", "employee"), async (c) => {
+  const user = c.get("user") as AuthUser;
+  const org = await c.env.DB.prepare(
+    "SELECT id, name, country FROM organizations WHERE id = ?",
+  ).bind(user.org_id).first();
+  if (!org) return c.json({ error: "Organization not found" }, 404);
+  const memberCount = await c.env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM users WHERE org_id = ? AND status = 'active'",
+  ).bind(user.org_id).first<{ n: number }>();
+  return c.json({ org, memberCount: Number(memberCount?.n || 0) });
+});
 
 orgRoutes.get("/", requireRole("admin"), async (c) => {
   const user = c.get("user") as AuthUser;
@@ -43,7 +59,7 @@ orgRoutes.patch("/", requireRole("admin"), async (c) => {
 orgRoutes.get("/employees", requireRole("admin"), async (c) => {
   const user = c.get("user") as AuthUser;
   const rows = await c.env.DB.prepare(
-    "SELECT id, user_id, name, role_title, location, token, network, amount, endpoint, status, last_paid_at, created_at FROM employees WHERE org_id = ? ORDER BY created_at",
+    "SELECT id, user_id, email, name, role_title, location, token, network, amount_minor, endpoint, status, payout_verified_at, last_paid_at, created_at FROM employees WHERE org_id = ? ORDER BY created_at",
   ).bind(user.org_id).all<Record<string, unknown>>();
   return c.json({ employees: rows.results });
 });
@@ -52,18 +68,29 @@ orgRoutes.post("/employees", requireRole("admin"), async (c) => {
   const user = c.get("user") as AuthUser;
   const body = await c.req.json().catch(() => null);
   const name = String(body?.name || "").trim();
+  const email = String(body?.email || "").trim().toLowerCase();
   if (!name) return c.json({ error: "Name is required" }, 400);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return c.json({ error: "A valid email is required" }, 400);
+  const existing = await c.env.DB.prepare(
+    "SELECT id FROM employees WHERE org_id = ? AND email = ?",
+  ).bind(user.org_id, email).first();
+  if (existing) return c.json({ error: "An employee with this email already exists" }, 409);
   const id = uuid();
-  const token = body?.token === "USDT" ? "USDT" : "USDC";
-  const network = String(body?.network || "Base");
-  const amount = Number(body?.amount || 0);
+  const token = normalizePayoutToken(body?.token ?? "USDC");
+  const network = normalizePayoutNetwork(body?.network ?? "Base");
+  if (!token || !network) return c.json({ error: "Unsupported payout token or network" }, 400);
+  const endpointInput = String(body?.endpoint || "").trim();
+  const endpoint = endpointInput ? normalizePayoutAddress(endpointInput) : "";
+  if (endpoint === null) return c.json({ error: "A valid EVM payout address is required" }, 400);
+  const amountMinor = body?.amount === undefined ? 0 : parseTokenAmount(body.amount, { allowZero: true });
+  if (amountMinor === null) return c.json({ error: "Amount must have at most 6 decimal places" }, 400);
   await c.env.DB.prepare(
-    "INSERT INTO employees (id, org_id, name, role_title, location, token, network, amount, endpoint, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
-  ).bind(id, user.org_id, name, String(body?.role_title || ""), String(body?.location || ""), token, network, amount, String(body?.endpoint || ""), nowIso()).run();
+    "INSERT INTO employees (id, org_id, email, name, role_title, location, token, network, amount_minor, endpoint, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
+  ).bind(id, user.org_id, email, name, String(body?.role_title || ""), String(body?.location || ""), token, network, amountMinor, endpoint, nowIso()).run();
   await c.env.DB.prepare(
     "INSERT INTO audit_log (id, org_id, actor_id, action, detail) VALUES (?, ?, ?, 'employee.created', ?)",
   ).bind(uuid(), user.org_id, user.id, `Added employee ${name}`).run();
-  const row = await c.env.DB.prepare("SELECT * FROM employees WHERE id = ?").bind(id).first();
+  const row = await c.env.DB.prepare("SELECT * FROM employees WHERE id = ? AND org_id = ?").bind(id, user.org_id).first();
   return c.json({ employee: row }, 201);
 });
 
@@ -73,20 +100,61 @@ orgRoutes.patch("/employees/:id", requireRole("admin"), async (c) => {
   const body = await c.req.json().catch(() => null);
   const fields: string[] = [];
   const values: unknown[] = [];
-  for (const key of ["name", "role_title", "location", "token", "network", "endpoint", "status"] as const) {
+  if (body?.status !== undefined) {
+    return c.json({ error: "Payout readiness is managed by wallet signature verification" }, 400);
+  }
+  if (body?.email !== undefined) {
+    const email = String(body.email).trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return c.json({ error: "A valid email is required" }, 400);
+    const existing = await c.env.DB.prepare(
+      "SELECT id FROM employees WHERE org_id = ? AND email = ? AND id != ?",
+    ).bind(user.org_id, email, id).first();
+    if (existing) return c.json({ error: "An employee with this email already exists" }, 409);
+    fields.push("email = ?");
+    values.push(email);
+  }
+  for (const key of ["name", "role_title", "location"] as const) {
     if (body?.[key] !== undefined) {
       fields.push(`${key} = ?`);
       values.push(body[key]);
     }
   }
+  let payoutChanged = false;
+  if (body?.token !== undefined) {
+    const token = normalizePayoutToken(body.token);
+    if (!token) return c.json({ error: "Only USDC and USDT are supported" }, 400);
+    fields.push("token = ?");
+    values.push(token);
+    payoutChanged = true;
+  }
+  if (body?.network !== undefined) {
+    const network = normalizePayoutNetwork(body.network);
+    if (!network) return c.json({ error: "Unsupported EVM payout network" }, 400);
+    fields.push("network = ?");
+    values.push(network);
+    payoutChanged = true;
+  }
+  if (body?.endpoint !== undefined) {
+    const endpointInput = String(body.endpoint).trim();
+    const endpoint = endpointInput ? normalizePayoutAddress(endpointInput) : "";
+    if (endpoint === null) return c.json({ error: "A valid EVM payout address is required" }, 400);
+    fields.push("endpoint = ?");
+    values.push(endpoint);
+    payoutChanged = true;
+  }
+  if (payoutChanged) {
+    fields.push("status = 'update_required'", "payout_verified_at = NULL");
+  }
   if (body?.amount !== undefined) {
-    fields.push("amount = ?");
-    values.push(Number(body.amount));
+    const amountMinor = parseTokenAmount(body.amount, { allowZero: true });
+    if (amountMinor === null) return c.json({ error: "Amount must have at most 6 decimal places" }, 400);
+    fields.push("amount_minor = ?");
+    values.push(amountMinor);
   }
   if (fields.length === 0) return c.json({ error: "Nothing to update" }, 400);
   values.push(id);
   await c.env.DB.prepare(`UPDATE employees SET ${fields.join(", ")} WHERE id = ? AND org_id = ?`).bind(...values, user.org_id).run();
-  const row = await c.env.DB.prepare("SELECT * FROM employees WHERE id = ?").bind(id).first();
+  const row = await c.env.DB.prepare("SELECT * FROM employees WHERE id = ? AND org_id = ?").bind(id, user.org_id).first();
   return c.json({ employee: row });
 });
 

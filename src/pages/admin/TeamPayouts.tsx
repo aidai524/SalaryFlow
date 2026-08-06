@@ -1,143 +1,347 @@
-// Admin: Team payouts — employee directory, invitation management, pre-payment reminders
-
 import { useState } from "react";
-import { AlertCircle, CheckCircle2, Clock3, Copy, EyeOff, Link2, Plus, Send } from "lucide-react";
-import { api, type Employee } from "../../lib/api";
-import { useApi, formatMoney, initials } from "../../lib/useData";
+import {
+  AlertCircle,
+  CheckCircle2,
+  EyeOff,
+  Link2,
+  MailPlus,
+  Plus,
+  RotateCw,
+  Send,
+  Trash2,
+  UsersRound,
+} from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Field, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { MetricCard, PageHeader, StatusBadge, TokenCell } from "@/components/WorkspaceUI";
+import { api, type Employee, type Invitation } from "@/lib/api";
+import { formatTokenAmount, initials, useApi } from "@/lib/useData";
 
-export function TeamPayoutsPage({ onRequireWallet, onNavigate }: { onRequireWallet: () => void; onNavigate: (s: string) => void }) {
-  const { data, refresh } = useApi(() => api.listEmployees(), []);
+export function TeamPayoutsPage({ onNavigate }: { onNavigate: (screen: string) => void }) {
+  const { data, loading, refresh } = useApi(() => api.listEmployees(), []);
   const { data: invites, refresh: refreshInvites } = useApi(() => api.listInvites(), []);
   const employees = data?.employees ?? [];
-  const attention = employees.filter((e) => e.status !== "ready");
-  const readyCount = employees.filter((e) => e.status === "ready").length;
+  const attention = employees.filter((employee) => employee.status !== "ready");
+  const readyCount = employees.filter((employee) => employee.status === "ready").length;
+
+  const refreshAll = () => {
+    void Promise.all([refresh(), refreshInvites()]);
+  };
 
   return (
-    <div className="secondary-page">
-      <section className="secondary-heading">
-        <div><span className="eyebrow">Team payouts</span><h1>Employees and payout methods</h1><p>Employees choose their stablecoin and network. Check the status, then pay the batch directly.</p></div>
-        <button className="button button-primary" type="button" onClick={onRequireWallet}><Send size={17} />Pay now</button>
-      </section>
+    <div className="page-container">
+      <PageHeader
+        eyebrow="Team payouts"
+        title="Employees and payout methods"
+        description="Employees choose their stablecoin and network. Check ownership and payout readiness before payroll preflight."
+        actions={(
+          <Button type="button" onClick={() => onNavigate("payroll")}>
+            <Send data-icon="inline-start" />
+            Review payroll
+          </Button>
+        )}
+      />
 
-      <section className="people-summary">
-        <div><strong>{employees.length}</strong><span>Team members</span></div>
-        <div><strong>{readyCount}</strong><span>Ready to pay</span></div>
-        <div><strong>{attention.length}</strong><span>Need attention</span></div>
-        <div className="summary-protection"><EyeOff size={19} /><span><strong>Data separation enabled</strong><small>Employees can only see their own payout details</small></span></div>
+      <section className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
+        <MetricCard label="Team members" value={employees.length} helper="Employees on file" icon={<UsersRound />} loading={loading} />
+        <MetricCard label="Ready to pay" value={readyCount} helper="Verified payout methods" icon={<CheckCircle2 />} loading={loading} />
+        <MetricCard label="Need attention" value={attention.length} helper="Verification or address updates" icon={<AlertCircle />} loading={loading} />
+        <MetricCard label="Data separation" value="Enabled" helper="Employees see only their own details" icon={<EyeOff />} loading={loading} />
       </section>
 
       {attention.length > 0 && (
-        <section className="attention-card">
-          <header><div><span className="task-icon task-warn"><AlertCircle size={18} /></span><div><h2>Review before payment</h2><p>{attention.length} employees need updates. Resolve these before paying the batch.</p></div></div></header>
-          <div className="attention-list">
-            {attention.map((e) => (
-              <div key={e.id}>
-                <span className="person-avatar">{initials(e.name)}</span>
-                <span><strong>{e.name}</strong><small>{e.role_title || e.location || e.network}</small></span>
-                <span className={`status-chip ${e.status === "pending" ? "status-pending" : "status-update_required"}`}>{e.status === "pending" ? <Clock3 size={14} /> : <AlertCircle size={14} />}{e.status === "pending" ? "Verification pending" : "Update required"}</span>
-                <button type="button" onClick={() => onNavigate("payroll")}>Review →</button>
+        <Card className="border-amber-200 bg-amber-50/50 dark:border-amber-900 dark:bg-amber-950/20">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-amber-900 dark:text-amber-200">
+              <AlertCircle className="size-4" />
+              Review before payment
+            </CardTitle>
+            <CardDescription className="text-amber-800/80 dark:text-amber-300/80">
+              {attention.length} {attention.length === 1 ? "employee needs" : "employees need"} an update before the batch is ready.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+            {attention.map((employee) => (
+              <div key={employee.id} className="flex items-center gap-3 rounded-lg border border-amber-200 bg-background p-3 dark:border-amber-900">
+                <span className="grid size-9 shrink-0 place-items-center rounded-full bg-amber-100 text-xs font-medium text-amber-800 dark:bg-amber-950 dark:text-amber-200">
+                  {initials(employee.name)}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <strong className="block truncate text-sm font-medium">{employee.name}</strong>
+                  <small className="block truncate text-xs text-muted-foreground">{employee.role_title || employee.location || employee.network}</small>
+                </span>
+                <StatusBadge status={employee.status} label={employee.status === "pending" ? "Pending" : "Update"} />
               </div>
             ))}
-          </div>
-        </section>
+          </CardContent>
+        </Card>
       )}
 
-      <EmployeeTable employees={employees} />
+      <EmployeeTable employees={employees} onChanged={() => { void refresh(); }} />
+      <InviteManager pendingInvites={invites?.invitations ?? []} onChanged={refreshAll} />
 
-      <InviteManager pendingInvites={invites?.invitations ?? []} onChanged={() => { refresh(); refreshInvites(); }} />
-
-      <div className="prototype-inline-note"><AlertCircle size={15} /><span>Invitations are sent by email (Resend). Wallet addresses are masked in the UI; full addresses live in the secure employee record.</span></div>
+      <Alert>
+        <EyeOff />
+        <AlertTitle>Private employee records</AlertTitle>
+        <AlertDescription>
+          Invitations are delivered by email. Wallet addresses are masked in the interface; full addresses stay in the secure employee record.
+        </AlertDescription>
+      </Alert>
     </div>
   );
 }
 
-function EmployeeTable({ employees }: { employees: Employee[] }) {
+function EmployeeTable({ employees, onChanged }: { employees: Employee[]; onChanged: () => void }) {
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
   const [roleTitle, setRoleTitle] = useState("");
   const [location, setLocation] = useState("");
-  const [token, setToken] = useState("USDC");
+  const [token, setToken] = useState<"USDC" | "USDT">("USDC");
   const [network, setNetwork] = useState("Base");
 
   const add = async () => {
-    if (!name) return;
-    await api.createEmployee({ name, role_title: roleTitle, location, token: token as "USDC" | "USDT", network });
-    setName(""); setRoleTitle(""); setLocation("");
+    if (!name.trim() || !email.trim()) return;
+    await api.createEmployee({
+      name: name.trim(),
+      email: email.trim(),
+      role_title: roleTitle.trim(),
+      location: location.trim(),
+      token,
+      network,
+    });
+    setName("");
+    setEmail("");
+    setRoleTitle("");
+    setLocation("");
     setAdding(false);
-    window.location.reload();
+    onChanged();
   };
 
   return (
-    <section className="data-card" style={{ marginBottom: 18 }}>
-      <header className="card-header">
-        <div><h2>Team directory</h2><p>{employees.length} employees on file.</p></div>
-        <button className="button button-secondary" type="button" onClick={() => setAdding((v) => !v)}><Plus size={15} />Add employee</button>
-      </header>
+    <Card>
+      <CardHeader>
+        <CardTitle>Team directory</CardTitle>
+        <CardDescription>{employees.length} employees on file.</CardDescription>
+        <CardAction>
+          <Button variant="outline" size="sm" type="button" onClick={() => setAdding((current) => !current)}>
+            <Plus data-icon="inline-start" />
+            Add employee
+          </Button>
+        </CardAction>
+      </CardHeader>
+
       {adding && (
-        <div className="add-item-row">
-          <input placeholder="Full name" value={name} onChange={(e) => setName(e.target.value)} />
-          <input placeholder="Role" value={roleTitle} onChange={(e) => setRoleTitle(e.target.value)} />
-          <input placeholder="Location" value={location} onChange={(e) => setLocation(e.target.value)} />
-          <select value={token} onChange={(e) => setToken(e.target.value)}><option>USDC</option><option>USDT</option></select>
-          <select value={network} onChange={(e) => setNetwork(e.target.value)}><option>Base</option><option>Arbitrum</option><option>Polygon</option><option>Optimism</option></select>
-          <button className="button button-primary" type="button" onClick={add}>Add</button>
-        </div>
+        <CardContent className="border-y bg-muted/20 py-4">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[1fr_1.2fr_1fr_1fr_120px_150px_auto] xl:items-end">
+            <Field><FieldLabel htmlFor="employee-name">Full name</FieldLabel><Input id="employee-name" value={name} onChange={(event) => setName(event.target.value)} /></Field>
+            <Field><FieldLabel htmlFor="employee-email">Email</FieldLabel><Input id="employee-email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} /></Field>
+            <Field><FieldLabel htmlFor="employee-role">Role</FieldLabel><Input id="employee-role" value={roleTitle} onChange={(event) => setRoleTitle(event.target.value)} /></Field>
+            <Field><FieldLabel htmlFor="employee-location">Location</FieldLabel><Input id="employee-location" value={location} onChange={(event) => setLocation(event.target.value)} /></Field>
+            <Field>
+              <FieldLabel>Token</FieldLabel>
+              <Select value={token} onValueChange={(value) => setToken(value as "USDC" | "USDT")}>
+                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectItem value="USDC">USDC</SelectItem><SelectItem value="USDT">USDT</SelectItem></SelectContent>
+              </Select>
+            </Field>
+            <Field>
+              <FieldLabel>Network</FieldLabel>
+              <Select value={network} onValueChange={setNetwork}>
+                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>{["Base", "Arbitrum", "Polygon", "Optimism"].map((value) => <SelectItem key={value} value={value}>{value}</SelectItem>)}</SelectContent>
+              </Select>
+            </Field>
+            <Button type="button" onClick={add} disabled={!name.trim() || !email.trim()}><Plus data-icon="inline-start" />Add</Button>
+          </div>
+        </CardContent>
       )}
-      <div className="table-scroll">
-        <table className="people-table">
-          <thead><tr><th>Employee</th><th>Payout method</th><th>Wallet</th><th>Net amount</th><th>Status</th></tr></thead>
-          <tbody>
-            {employees.map((e) => (
-              <tr key={e.id}>
-                <td><span className="person-cell static-person"><span className={`person-avatar avatar-${e.id.slice(0, 8)}`}>{initials(e.name)}</span><span><strong>{e.name}</strong><small>{e.role_title} · {e.location || "—"}</small></span></span></td>
-                <td><span className="network-cell"><i>{e.token === "USDC" ? "$" : "₮"}</i><span><strong>{e.token}</strong><small>{e.network}</small></span></span></td>
-                <td><span className="mono-value address-cell">{e.endpoint ? `${e.endpoint.slice(0, 6)}…${e.endpoint.slice(-4)}` : "—"}<Copy size={12} /></span></td>
-                <td><strong className="amount-value">{formatMoney(e.amount)}</strong></td>
-                <td><span className={`status-chip ${e.status === "ready" ? "status-ready" : e.status === "pending" ? "status-pending" : "status-update_required"}`}>{e.status === "ready" ? <CheckCircle2 size={14} /> : e.status === "pending" ? <Clock3 size={14} /> : <AlertCircle size={14} />}{e.status === "ready" ? "Ready" : e.status === "pending" ? "Pending" : "Update required"}</span></td>
-              </tr>
+
+      <CardContent className="px-0">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="pl-4">Employee</TableHead>
+              <TableHead>Payout method</TableHead>
+              <TableHead>Wallet</TableHead>
+              <TableHead>Net amount</TableHead>
+              <TableHead className="pr-4">Status</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {employees.map((employee) => (
+              <TableRow key={employee.id}>
+                <TableCell className="pl-4">
+                  <span className="flex items-center gap-2.5">
+                    <span className="grid size-8 shrink-0 place-items-center rounded-full bg-muted text-xs font-medium">{initials(employee.name)}</span>
+                    <span className="min-w-0">
+                      <strong className="block font-medium">{employee.name}</strong>
+                      <small className="block max-w-56 truncate text-xs text-muted-foreground">{employee.email || "No email"} · {employee.role_title || employee.location || "—"}</small>
+                    </span>
+                  </span>
+                </TableCell>
+                <TableCell><TokenCell token={employee.token} network={employee.network} /></TableCell>
+                <TableCell><span className="mono-value text-xs text-muted-foreground">{employee.endpoint ? `${employee.endpoint.slice(0, 6)}…${employee.endpoint.slice(-4)}` : "—"}</span></TableCell>
+                <TableCell className="font-medium tabular-nums">{formatTokenAmount(employee.amount_minor)}</TableCell>
+                <TableCell className="pr-4"><StatusBadge status={employee.status} /></TableCell>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
-      </div>
-    </section>
+            {employees.length === 0 && (
+              <TableRow><TableCell colSpan={5} className="h-28 text-center text-muted-foreground">No employees yet.</TableCell></TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
   );
 }
 
-function InviteManager({ pendingInvites, onChanged }: { pendingInvites: Array<{ id: string; email: string; role: string; status: string; created_at: string }>; onChanged: () => void }) {
+function InviteManager({ pendingInvites, onChanged }: { pendingInvites: Invitation[]; onChanged: () => void }) {
   const [email, setEmail] = useState("");
-  const [role, setRole] = useState("employee");
+  const [role, setRole] = useState<"employee" | "admin">("employee");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  const [sending, setSending] = useState(false);
+  const [busyInviteId, setBusyInviteId] = useState<string | null>(null);
 
   const send = async () => {
-    setNotice(""); setError("");
+    setNotice("");
+    setError("");
+    setSending(true);
     try {
-      const res = await api.createInvite({ email, role });
+      const result = await api.createInvite({ email: email.trim(), role });
+      const recipient = email.trim();
       setEmail("");
-      setNotice(res.inviteUrl ? `Invitation created (mock email). Link: ${res.inviteUrl}` : `Invitation sent to ${email}.`);
+      setNotice(result.inviteUrl ? `Invitation created in local email mode: ${result.inviteUrl}` : `Invitation sent to ${recipient}.`);
       onChanged();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to send");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Failed to send invitation");
+      onChanged();
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const resend = async (invite: Invitation) => {
+    setNotice("");
+    setError("");
+    setBusyInviteId(invite.id);
+    try {
+      const result = await api.resendInvite(invite.id);
+      setNotice(result.inviteUrl ? `Invitation recreated in local email mode: ${result.inviteUrl}` : `Invitation resent to ${invite.email}.`);
+      onChanged();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Failed to resend invitation");
+    } finally {
+      setBusyInviteId(null);
+    }
+  };
+
+  const revoke = async (invite: Invitation) => {
+    setNotice("");
+    setError("");
+    setBusyInviteId(invite.id);
+    try {
+      await api.revokeInvite(invite.id);
+      setNotice(`Invitation to ${invite.email} revoked.`);
+      onChanged();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Failed to revoke invitation");
+    } finally {
+      setBusyInviteId(null);
     }
   };
 
   return (
-    <section className="invite-card">
-      <header><div><span className="section-icon"><Link2 size={18} /></span><div><h2>Invitations</h2><p>Send an email invitation — the person creates their own account on acceptance.</p></div></div></header>
-      <div className="add-item-row">
-        <input placeholder="colleague@company.com" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
-        <select value={role} onChange={(e) => setRole(e.target.value)}><option value="employee">Employee</option><option value="admin">Administrator</option></select>
-        <button className="button button-primary" type="button" onClick={send}>Send invitation</button>
-      </div>
-      {notice && <p className="invite-notice ok">{notice}</p>}
-      {error && <p className="invite-notice err">{error}</p>}
-      {pendingInvites.length > 0 && (
-        <div className="invite-list">
-          {pendingInvites.map((inv) => (
-            <div key={inv.id}><span><strong>{inv.email}</strong><small>{inv.role} · {inv.status} · {new Date(inv.created_at).toLocaleDateString()}</small></span><span className={`status-chip ${inv.status === "pending" ? "status-pending" : "status-ready"}`}>{inv.status}</span></div>
-          ))}
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2"><Link2 className="size-4" />Invitations</CardTitle>
+        <CardDescription>Invite a colleague to create their own SalaryFlow account.</CardDescription>
+        <CardAction><Badge variant="secondary">{pendingInvites.filter((invite) => invite.status === "pending").length} pending</Badge></CardAction>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_180px_auto] md:items-end">
+          <Field>
+            <FieldLabel htmlFor="invite-email">Email</FieldLabel>
+            <Input id="invite-email" type="email" placeholder="colleague@company.com" value={email} onChange={(event) => setEmail(event.target.value)} />
+          </Field>
+          <Field>
+            <FieldLabel>Role</FieldLabel>
+            <Select value={role} onValueChange={(value) => setRole(value as "employee" | "admin")}>
+              <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+              <SelectContent><SelectItem value="employee">Employee</SelectItem><SelectItem value="admin">Administrator</SelectItem></SelectContent>
+            </Select>
+          </Field>
+          <Button type="button" onClick={send} disabled={!email.trim() || sending}><MailPlus data-icon="inline-start" />{sending ? "Sending…" : "Send invitation"}</Button>
         </div>
-      )}
-    </section>
+
+        {notice && (
+          <Alert className="border-emerald-200 bg-emerald-50 text-emerald-900">
+            <CheckCircle2 />
+            <AlertTitle>Invitation ready</AlertTitle>
+            <AlertDescription className="break-all text-emerald-800">{notice}</AlertDescription>
+          </Alert>
+        )}
+        {error && (
+          <Alert variant="destructive"><AlertCircle /><AlertTitle>Invitation failed</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>
+        )}
+
+        {pendingInvites.length > 0 && (
+          <div className="overflow-hidden rounded-lg border">
+            <Table>
+              <TableHeader><TableRow><TableHead>Email</TableHead><TableHead>Role</TableHead><TableHead>Created</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader>
+              <TableBody>
+                {pendingInvites.map((invite) => (
+                  <TableRow key={invite.id}>
+                    <TableCell className="font-medium">{invite.email}</TableCell>
+                    <TableCell className="capitalize text-muted-foreground">{invite.role}</TableCell>
+                    <TableCell className="text-muted-foreground">{new Date(invite.created_at).toLocaleDateString()}</TableCell>
+                    <TableCell><StatusBadge status={invite.status} /></TableCell>
+                    <TableCell className="text-right">
+                      {invite.status === "pending" && (
+                        <span className="inline-flex gap-1">
+                          <Button type="button" variant="ghost" size="icon-sm" aria-label={`Resend invitation to ${invite.email}`} disabled={busyInviteId === invite.id} onClick={() => { void resend(invite); }}>
+                            <RotateCw />
+                          </Button>
+                          <Button type="button" variant="ghost" size="icon-sm" aria-label={`Revoke invitation to ${invite.email}`} disabled={busyInviteId === invite.id} onClick={() => { void revoke(invite); }}>
+                            <Trash2 />
+                          </Button>
+                        </span>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }

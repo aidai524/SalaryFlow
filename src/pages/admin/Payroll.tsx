@@ -1,12 +1,72 @@
-// Admin: Payroll — run list, creation, items, and the direct-pay entry point
-
 import { useState } from "react";
-import { ArrowRight, CheckCircle2, ChevronRight, CircleAlert, Clock3, Plus, Send, X } from "lucide-react";
-import { api, type AuthUser, type PayrollRun } from "../../lib/api";
-import { useApi, formatMoney } from "../../lib/useData";
-import { PayDialog } from "../../components/PayDialog";
+import { ChevronRight, CircleDollarSign, Plus, ShieldCheck } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { EmptyPanel, PageHeader, StatusBadge, TokenCell } from "@/components/WorkspaceUI";
+import { PayDialog } from "@/components/PayDialog";
+import { api, type PayrollRun, type PayrunItem } from "@/lib/api";
+import { formatTokenAmount, isValidTokenAmount, useApi } from "@/lib/useData";
 
-export function PayrollPage({ user, onRequireWallet }: { user: AuthUser; onRequireWallet: () => void }) {
+const PAYMENT_STATE_LABELS: Record<string, string> = {
+  created: "Preparing",
+  quoting: "Quoting",
+  quoted: "Quoted",
+  generating: "Generating intent",
+  awaiting_signature: "Awaiting signature",
+  submitting: "Submitting",
+  submitted: "Submitted",
+  processing: "Processing",
+  confirmed: "Paid",
+  failed: "Failed",
+  refunded: "Refunded",
+};
+
+function runStatusLabel(status: PayrollRun["status"]): string {
+  return status.charAt(0).toUpperCase() + status.slice(1);
+}
+
+function itemDisplayState(item: PayrunItem): { status: string; label: string } {
+  const status = item.payment_state || item.status;
+  return {
+    status,
+    label: status === "confirmed" || status === "paid" ? "Paid" : PAYMENT_STATE_LABELS[status] || status,
+  };
+}
+
+export function PayrollPage() {
   const { data, loading, refresh } = useApi(() => api.listRuns(), []);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
@@ -15,120 +75,234 @@ export function PayrollPage({ user, onRequireWallet }: { user: AuthUser; onRequi
   const [showPay, setShowPay] = useState(false);
 
   const runs = data?.runs ?? [];
-  const selected = runs.find((r) => r.id === selectedId) ?? null;
+  const selected = runs.find((run) => run.id === selectedId) ?? runs[0] ?? null;
 
   const create = async () => {
-    if (!label) return;
-    const { run } = await api.createRun({ label, payDate: payDate || new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10) });
+    if (!label.trim()) return;
+    const { run } = await api.createRun({
+      label: label.trim(),
+      payDate: payDate || new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10),
+    });
     setLabel("");
     setPayDate("");
     setShowCreate(false);
     setSelectedId(run.id);
-    refresh();
+    await refresh();
   };
 
   return (
-    <div className="secondary-page">
-      <section className="secondary-heading">
-        <div><span className="eyebrow">Payroll</span><h1>Payroll runs</h1><p>Enter net amounts per employee, review status, then pay directly with your wallet.</p></div>
-        <div className="head-actions">
-          <button className="button button-secondary" type="button" onClick={() => setShowCreate((v) => !v)}><Plus size={17} />New run</button>
-          {selected && <button className="button button-primary" type="button" disabled={selected.itemCount === 0} onClick={() => setShowPay(true)}><Send size={17} />Pay now</button>}
-        </div>
-      </section>
+    <div className="page-container">
+      <PageHeader
+        eyebrow="Payroll"
+        title="Payroll runs"
+        description="Enter net amounts per employee, review payout status, then run a non-executing payment readiness check."
+        actions={(
+          <>
+            <Button variant="outline" type="button" onClick={() => setShowCreate(true)}>
+              <Plus data-icon="inline-start" />
+              New run
+            </Button>
+            {selected && (
+              <Button type="button" disabled={selected.itemCount === 0} onClick={() => setShowPay(true)}>
+                <ShieldCheck data-icon="inline-start" />
+                Dry-run check
+              </Button>
+            )}
+          </>
+        )}
+      />
 
-      {showCreate && (
-        <section className="create-run-card">
-          <div className="form-grid">
-            <label className="full-field">Run label<input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. September 2026" autoFocus /></label>
-            <label>Pay date<input type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} /></label>
-            <div className="create-actions"><button className="button button-primary" type="button" onClick={create} disabled={!label}>Create run</button><button className="button button-secondary" type="button" onClick={() => setShowCreate(false)}>Cancel</button></div>
-          </div>
-        </section>
-      )}
-
-      {loading && <p className="page-empty">Loading…</p>}
-
-      {!loading && runs.length === 0 && (
-        <section className="empty-state"><h2>No payroll runs yet</h2><p>Create your first run, then add employee payments from the Team payouts directory.</p></section>
-      )}
-
-      {runs.length > 0 && (
-        <div className="run-grid">
-          {runs.map((run: PayrollRun) => (
-            <article key={run.id} className={`run-card${selectedId === run.id ? " is-selected" : ""}`} onClick={() => setSelectedId(run.id)}>
-              <header>
-                <div><h2>{run.label}</h2><p>{run.pay_date} · {run.itemCount} payments</p></div>
-                <span className={`large-state state-${run.status === "paid" ? "paid" : "ready"}`}>{run.status === "paid" ? "Paid" : run.status === "draft" ? "Draft" : run.status}</span>
-              </header>
-              <div className="run-amounts"><div><span>USDC</span><strong>{formatMoney(run.usdc)}</strong></div><div><span>USDT</span><strong>{formatMoney(run.usdt)}</strong></div></div>
-            </article>
-          ))}
-        </div>
-      )}
+      <Card>
+        <CardHeader>
+          <CardTitle>All payroll runs</CardTitle>
+          <CardDescription>Select a run to review its payment list.</CardDescription>
+          <CardAction><Badge variant="secondary">{runs.length} total</Badge></CardAction>
+        </CardHeader>
+        <CardContent className="px-0">
+          {loading ? (
+            <div className="grid h-32 place-items-center text-sm text-muted-foreground">Loading payroll runs…</div>
+          ) : runs.length === 0 ? (
+            <div className="px-4 pb-4"><EmptyPanel title="No payroll runs yet" description="Create your first run, then add employee payments to it." /></div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="pl-4">Run</TableHead>
+                  <TableHead>Pay date</TableHead>
+                  <TableHead>Payments</TableHead>
+                  <TableHead>USDC</TableHead>
+                  <TableHead>USDT</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="w-16 pr-4" />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {runs.map((run) => (
+                  <TableRow key={run.id} data-state={selected?.id === run.id ? "selected" : undefined}>
+                    <TableCell className="pl-4">
+                      <button type="button" className="font-medium hover:underline" onClick={() => setSelectedId(run.id)}>
+                        {run.label}
+                      </button>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">{run.pay_date}</TableCell>
+                    <TableCell>{run.itemCount}</TableCell>
+                    <TableCell className="tabular-nums">{formatTokenAmount(run.usdcMinor)}</TableCell>
+                    <TableCell className="tabular-nums">{formatTokenAmount(run.usdtMinor)}</TableCell>
+                    <TableCell><StatusBadge status={run.status} label={runStatusLabel(run.status)} /></TableCell>
+                    <TableCell className="pr-4 text-right">
+                      <Button variant="ghost" size="icon-sm" type="button" onClick={() => setSelectedId(run.id)} aria-label={`Open ${run.label}`}>
+                        <ChevronRight />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
 
       {selected && <RunDetail runId={selected.id} onChanged={refresh} />}
 
-      {showPay && selected && (
-        <PayDialog user={user} run={selected} onClose={() => setShowPay(false)} onPaid={refresh} onRequireWallet={onRequireWallet} />
-      )}
+      <Dialog open={showCreate} onOpenChange={setShowCreate}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Create payroll run</DialogTitle>
+            <DialogDescription>Set a label and pay date. Payments can be added after creation.</DialogDescription>
+          </DialogHeader>
+          <FieldGroup>
+            <Field>
+              <FieldLabel htmlFor="run-label">Run label</FieldLabel>
+              <Input id="run-label" value={label} onChange={(event) => setLabel(event.target.value)} placeholder="e.g. September 2026" autoFocus />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="run-pay-date">Pay date</FieldLabel>
+              <Input id="run-pay-date" type="date" value={payDate} onChange={(event) => setPayDate(event.target.value)} />
+            </Field>
+          </FieldGroup>
+          <DialogFooter>
+            <Button variant="outline" type="button" onClick={() => setShowCreate(false)}>Cancel</Button>
+            <Button type="button" onClick={create} disabled={!label.trim()}>Create run</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {showPay && selected && <PayDialog run={selected} onClose={() => setShowPay(false)} />}
     </div>
   );
 }
 
-function RunDetail({ runId, onChanged }: { runId: string; onChanged: () => void }) {
-  const { data } = useApi(() => api.getRun(runId), [runId]);
+function RunDetail({ runId, onChanged }: { runId: string; onChanged: () => Promise<void> }) {
+  const { data, loading, refresh } = useApi(() => api.getRun(runId), [runId]);
   const [showAdd, setShowAdd] = useState(false);
   const [employeeName, setEmployeeName] = useState("");
   const [amount, setAmount] = useState("");
   const [token, setToken] = useState("USDC");
   const [network, setNetwork] = useState("Base");
 
+  if (loading && !data) {
+    return <Card><CardContent className="grid h-40 place-items-center text-sm text-muted-foreground">Loading payment list…</CardContent></Card>;
+  }
   if (!data) return null;
   const { run, items } = data;
 
   const addItem = async () => {
-    const amt = Number(amount);
-    if (!employeeName || !Number.isFinite(amt) || amt <= 0) return;
-    await api.addItem(runId, { employeeName, amount: amt, token, network });
-    setEmployeeName(""); setAmount("");
+    if (!employeeName.trim() || !isValidTokenAmount(amount)) return;
+    await api.addItem(runId, { employeeName: employeeName.trim(), amount: amount.trim(), token, network });
+    setEmployeeName("");
+    setAmount("");
     setShowAdd(false);
-    onChanged();
+    await Promise.all([refresh(), onChanged()]);
   };
 
   return (
-    <section className="data-card run-detail">
-      <header className="card-header">
-        <div><h2>{run.label} — payment list</h2><p>Net amounts are locked as entered. {items.length} of {run.itemCount} payments shown.</p></div>
-        <button className="button button-secondary" type="button" onClick={() => setShowAdd((v) => !v)}><Plus size={15} />Add payment</button>
-      </header>
+    <Card>
+      <CardHeader>
+        <CardTitle>{run.label} · payment list</CardTitle>
+        <CardDescription>Net amounts are kept exactly as entered. {items.length} payments shown.</CardDescription>
+        <CardAction>
+          <Button variant="outline" size="sm" type="button" onClick={() => setShowAdd((current) => !current)}>
+            <Plus data-icon="inline-start" />
+            Add payment
+          </Button>
+        </CardAction>
+      </CardHeader>
 
       {showAdd && (
-        <div className="add-item-row">
-          <input placeholder="Employee name" value={employeeName} onChange={(e) => setEmployeeName(e.target.value)} />
-          <input type="number" placeholder="Net amount" value={amount} onChange={(e) => setAmount(e.target.value)} />
-          <select value={token} onChange={(e) => setToken(e.target.value)}><option>USDC</option><option>USDT</option></select>
-          <select value={network} onChange={(e) => setNetwork(e.target.value)}><option>Base</option><option>Arbitrum</option><option>Polygon</option><option>Optimism</option><option>Ethereum</option></select>
-          <button className="button button-primary" type="button" onClick={addItem}>Add</button>
-        </div>
+        <CardContent className="border-y bg-muted/20 py-4">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(180px,1fr)_150px_130px_160px_auto] xl:items-end">
+            <Field>
+              <FieldLabel htmlFor="payment-employee">Employee name</FieldLabel>
+              <Input id="payment-employee" value={employeeName} onChange={(event) => setEmployeeName(event.target.value)} placeholder="Full name" />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="payment-amount">Net amount</FieldLabel>
+              <Input id="payment-amount" type="number" min="0" step="0.000001" inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="0.000000" />
+            </Field>
+            <Field>
+              <FieldLabel>Token</FieldLabel>
+              <Select value={token} onValueChange={setToken}>
+                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectItem value="USDC">USDC</SelectItem><SelectItem value="USDT">USDT</SelectItem></SelectContent>
+              </Select>
+            </Field>
+            <Field>
+              <FieldLabel>Network</FieldLabel>
+              <Select value={network} onValueChange={setNetwork}>
+                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {["Base", "Arbitrum", "Polygon", "Optimism", "Ethereum"].map((value) => <SelectItem key={value} value={value}>{value}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </Field>
+            <Button type="button" onClick={addItem} disabled={!employeeName.trim() || !isValidTokenAmount(amount)}>
+              <Plus data-icon="inline-start" />Add
+            </Button>
+          </div>
+        </CardContent>
       )}
 
-      <div className="table-scroll">
-        <table className="payroll-table">
-          <thead><tr><th>Employee</th><th>Net amount</th><th>Token & network</th><th>Status</th><th /></tr></thead>
-          <tbody>
-            {items.map((item) => (
-              <tr key={item.id}>
-                <td><span className="person-cell static-person"><span className="person-avatar">{item.employee_name.slice(0, 2).toUpperCase()}</span><span><strong>{item.employee_name}</strong></span></span></td>
-                <td><strong className="amount-value">{formatMoney(item.amount)} <small>{item.token}</small></strong></td>
-                <td><span className="network-cell"><i>{item.token === "USDC" ? "$" : "₮"}</i><span><strong>{item.token}</strong><small>{item.network}</small></span></span></td>
-                <td><span className={`status-chip ${item.status === "paid" ? "status-paid" : item.status === "failed" ? "status-update_required" : "status-pending"}`}>{item.status === "paid" ? <CheckCircle2 size={14} /> : item.status === "failed" ? <CircleAlert size={14} /> : <Clock3 size={14} />}{item.status}</span></td>
-                <td>{item.intent_hash ? <span className="mono-value tx-hash">{item.intent_hash.slice(0, 14)}…</span> : <ChevronRight size={16} />}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <CardContent className="px-0">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="pl-4">Employee</TableHead>
+              <TableHead>Net amount</TableHead>
+              <TableHead>Token & network</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead className="pr-4 text-right">Intent</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {items.map((item) => {
+              const displayState = itemDisplayState(item);
+              return (
+                <TableRow key={item.id}>
+                  <TableCell className="pl-4">
+                    <span className="flex items-center gap-2.5">
+                      <span className="grid size-8 place-items-center rounded-full bg-muted text-xs font-medium">{item.employee_name.slice(0, 2).toUpperCase()}</span>
+                      <strong className="font-medium">{item.employee_name}</strong>
+                    </span>
+                  </TableCell>
+                  <TableCell className="font-medium tabular-nums">{formatTokenAmount(item.amount_minor)} <small className="font-normal text-muted-foreground">{item.token}</small></TableCell>
+                  <TableCell><TokenCell token={item.token} network={item.network} /></TableCell>
+                  <TableCell><StatusBadge status={displayState.status} label={displayState.label} /></TableCell>
+                  <TableCell className="pr-4 text-right">
+                    {item.intent_hash ? <span className="mono-value text-xs text-muted-foreground">{item.intent_hash.slice(0, 14)}…</span> : <span className="text-muted-foreground">—</span>}
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+            {items.length === 0 && (
+              <TableRow><TableCell colSpan={5} className="h-28 text-center text-muted-foreground">No payments in this run yet.</TableCell></TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </CardContent>
+      <div className="flex items-center gap-2 border-t bg-muted/20 px-4 py-3 text-xs text-muted-foreground">
+        <CircleDollarSign className="size-3.5" />
+        Token amounts support up to six decimal places.
       </div>
-    </section>
+    </Card>
   );
 }

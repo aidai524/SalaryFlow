@@ -11,7 +11,22 @@ export interface InviteMailInput {
   role: string;
 }
 
-export async function sendInviteEmail(env: Env, input: InviteMailInput): Promise<{ ok: boolean; mock?: boolean; error?: string }> {
+export interface InviteMailResult {
+  ok: boolean;
+  mock?: boolean;
+  error?: string;
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+export async function sendInviteEmail(env: Env, input: InviteMailInput): Promise<InviteMailResult> {
   const apiKey = env.RESEND_API_KEY;
   const mock = env.MOCK_EMAIL === "true" || !apiKey;
   if (mock) {
@@ -19,6 +34,10 @@ export async function sendInviteEmail(env: Env, input: InviteMailInput): Promise
   }
   try {
     const from = env.SENDER_EMAIL || "SalaryFlow <onboarding@resend.dev>";
+    const orgName = escapeHtml(input.orgName);
+    const inviterName = escapeHtml(input.inviterName);
+    const inviteUrl = escapeHtml(input.inviteUrl);
+    const roleLabel = input.role === "admin" ? "team administrator" : "team member";
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: {
@@ -29,10 +48,19 @@ export async function sendInviteEmail(env: Env, input: InviteMailInput): Promise
         from,
         to: [input.to],
         subject: `${input.inviterName} invited you to join ${input.orgName} on SalaryFlow`,
+        text: [
+          "Hi,",
+          "",
+          `${input.inviterName} invited you to join ${input.orgName} on SalaryFlow as a ${roleLabel}.`,
+          "",
+          `Accept the invitation: ${input.inviteUrl}`,
+          "",
+          "This link expires in 7 days. If you did not expect this invitation, you can ignore this email.",
+        ].join("\n"),
         html: `
           <p>Hi,</p>
-          <p><strong>${input.inviterName}</strong> invited you to join <strong>${input.orgName}</strong> on SalaryFlow as a ${input.role === "admin" ? "team administrator" : "team member"}.</p>
-          <p><a href="${input.inviteUrl}">Accept the invitation</a></p>
+          <p><strong>${inviterName}</strong> invited you to join <strong>${orgName}</strong> on SalaryFlow as a ${roleLabel}.</p>
+          <p><a href="${inviteUrl}">Accept the invitation</a></p>
           <p>This link expires in 7 days. If you did not expect this invitation, you can ignore this email.</p>
         `,
       }),

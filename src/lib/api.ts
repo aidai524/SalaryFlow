@@ -13,14 +13,16 @@ export interface AuthUser {
 export interface Employee {
   id: string;
   user_id: string | null;
+  email: string | null;
   name: string;
   role_title: string;
   location: string;
   token: "USDC" | "USDT";
   network: string;
-  amount: number;
+  amount_minor: number;
   endpoint: string;
   status: "ready" | "pending" | "update_required";
+  payout_verified_at: string | null;
   last_paid_at: string | null;
   created_at: string;
 }
@@ -29,12 +31,12 @@ export interface PayrollRun {
   id: string;
   label: string;
   pay_date: string;
-  status: "draft" | "ready" | "paid" | "failed" | "partial";
+  status: "draft" | "ready" | "processing" | "paid" | "failed" | "partial";
   created_by: string;
   created_at: string;
   itemCount: number;
-  usdc: number;
-  usdt: number;
+  usdcMinor: number;
+  usdtMinor: number;
 }
 
 export interface PayrunItem {
@@ -42,10 +44,13 @@ export interface PayrunItem {
   run_id: string;
   employee_id: string | null;
   employee_name: string;
-  amount: number;
+  amount_minor: number;
   token: "USDC" | "USDT";
   network: string;
-  status: "pending" | "paid" | "failed" | "refunded";
+  status: "pending" | "processing" | "paid" | "failed" | "refunded";
+  payment_attempt_id?: string | null;
+  payment_state?: PaymentAttemptState | null;
+  provider_status?: string | null;
   intent_hash: string | null;
   deposit_address: string | null;
   signed_at: string | null;
@@ -61,7 +66,7 @@ export interface ChainRecord {
   employee_name: string;
   token: string;
   network: string;
-  amount: number;
+  amount_minor: number;
   origin_chain: string | null;
   dest_chain: string | null;
   confidentiality: string;
@@ -72,6 +77,31 @@ export interface ChainRecord {
   submitted_at: string | null;
   confirmed_at: string | null;
   error: string | null;
+  attempt_id?: string | null;
+  provider_status?: string | null;
+}
+
+export type PaymentAttemptState = "created" | "quoting" | "quoted" | "generating" | "awaiting_signature" | "submitting" | "submitted" | "processing" | "confirmed" | "failed" | "refunded";
+
+export interface PaymentAttempt {
+  id: string;
+  org_id: string;
+  run_id: string;
+  item_id: string;
+  idempotency_key: string;
+  state: PaymentAttemptState;
+  token: "USDC" | "USDT";
+  network: string;
+  amount_minor: number;
+  recipient: string;
+  signer_id: string;
+  deposit_address: string | null;
+  deposit_memo: string | null;
+  intent_hash: string | null;
+  provider_status: string | null;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface Invitation {
@@ -81,6 +111,11 @@ export interface Invitation {
   status: string;
   expires_at: string;
   created_at: string;
+}
+
+export interface InviteMailResult {
+  ok: boolean;
+  mock?: boolean;
 }
 
 export interface OrgInfo {
@@ -136,19 +171,20 @@ export const api = {
   // invites
   listInvites: () => request<{ invitations: Invitation[] }>("/invites"),
   createInvite: (body: { email: string; role: string }) =>
-    request<{ invitation: Invitation; inviteUrl?: string }>("/invites", { method: "POST", body: JSON.stringify(body) }),
-  resolveInvite: (token: string) => request<{ invitation: { email: string; role: string; orgName: string } }>(`/invites/resolve/${token}`),
+    request<{ invitation: Invitation; mail: InviteMailResult; inviteUrl?: string }>("/invites", { method: "POST", body: JSON.stringify(body) }),
+  resolveInvite: (token: string) => request<{ invitation: { email: string; role: string; orgName: string; accountExists: boolean } }>(`/invites/resolve/${token}`),
   acceptInvite: (body: { token: string; email: string; name: string; password: string }) =>
     request<{ ok: boolean; user: AuthUser }>("/invites/accept", { method: "POST", body: JSON.stringify(body) }),
-  resendInvite: (id: string) => request<{ ok: boolean; inviteUrl?: string }>(`/invites/${id}/resend`, { method: "POST" }),
+  resendInvite: (id: string) => request<{ ok: boolean; mail: InviteMailResult; inviteUrl?: string }>(`/invites/${id}/resend`, { method: "POST" }),
   revokeInvite: (id: string) => request<{ ok: boolean }>(`/invites/${id}/revoke`, { method: "POST" }),
 
   // org + employees
+  orgContext: () => request<{ org: { id: string; name: string; country: string | null }; memberCount: number }>("/org/context"),
   org: () => request<OrgInfo>("/org"),
   updateOrg: (body: { name?: string; country?: string }) => request<{ org: { id: string; name: string; country: string | null } }>("/org", { method: "PATCH", body: JSON.stringify(body) }),
   listEmployees: () => request<{ employees: Employee[] }>("/org/employees"),
-  createEmployee: (body: Partial<Employee>) => request<{ employee: Employee }>("/org/employees", { method: "POST", body: JSON.stringify(body) }),
-  updateEmployee: (id: string, body: Partial<Employee>) =>
+  createEmployee: (body: Partial<Employee> & { amount?: string }) => request<{ employee: Employee }>("/org/employees", { method: "POST", body: JSON.stringify(body) }),
+  updateEmployee: (id: string, body: Partial<Employee> & { amount?: string }) =>
     request<{ employee: Employee }>(`/org/employees/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   deleteEmployee: (id: string) => request<{ ok: boolean }>(`/org/employees/${id}`, { method: "DELETE" }),
 
@@ -156,7 +192,7 @@ export const api = {
   listRuns: () => request<{ runs: PayrollRun[] }>("/payroll"),
   createRun: (body: { label: string; payDate: string }) => request<{ run: PayrollRun }>("/payroll", { method: "POST", body: JSON.stringify(body) }),
   getRun: (id: string) => request<{ run: PayrollRun; items: PayrunItem[] }>(`/payroll/${id}`),
-  addItem: (runId: string, body: { employeeId?: string; employeeName?: string; amount: number; token?: string; network?: string }) =>
+  addItem: (runId: string, body: { employeeId?: string; employeeName?: string; amount: string; token?: string; network?: string }) =>
     request<{ item: PayrunItem }>(`/payroll/${runId}/items`, { method: "POST", body: JSON.stringify(body) }),
   setRunStatus: (id: string, status: string) =>
     request<{ ok: boolean }>(`/payroll/${id}`, { method: "PATCH", body: JSON.stringify({ status }) }),
@@ -167,17 +203,27 @@ export const api = {
   myPayout: () => request<{ payout: Employee | null }>("/records/me/payout"),
   updatePayout: (body: { token: string; network: string; endpoint: string }) =>
     request<{ ok: boolean }>("/records/me/payout", { method: "PUT", body: JSON.stringify(body) }),
+  createPayoutChallenge: (body: { token: string; network: string; endpoint: string }) =>
+    request<{ challengeId: string; message: string; address: string; expiresAt: string }>("/records/me/payout/challenge", { method: "POST", body: JSON.stringify(body) }),
+  verifyPayout: (body: { challengeId: string; signature: string }) =>
+    request<{ ok: boolean; payout: Employee }>("/records/me/payout/verify", { method: "POST", body: JSON.stringify(body) }),
   signConsent: (payload: unknown) => request<{ ok: boolean; signedAt: string }>("/records/consents", { method: "POST", body: JSON.stringify(payload) }),
   myConsent: () => request<{ signed: boolean; signedAt: string | null }>("/records/consents/me"),
-  bindWallet: (address: string) => request<{ ok: boolean }>("/records/wallet", { method: "PUT", body: JSON.stringify({ address }) }),
+  createPaymentWalletChallenge: (address: string) =>
+    request<{ challengeId: string; message: string; address: string; expiresAt: string }>("/records/wallet/challenge", { method: "POST", body: JSON.stringify({ address }) }),
+  verifyPaymentWallet: (body: { challengeId: string; signature: string }) =>
+    request<{ ok: boolean; wallet_address: string; wallet_verified_at: string }>("/records/wallet/verify", { method: "POST", body: JSON.stringify(body) }),
   unbindWallet: () => request<{ ok: boolean }>("/records/wallet", { method: "DELETE" }),
 
-  // payments (1Click proxy)
-  quote: (body: { runId: string; dry?: boolean }) => request<{ quote: unknown; recordId: string; dry: boolean; itemCount: number }>("/payments/quote", { method: "POST", body: JSON.stringify(body) }),
-  generateIntent: (body: { depositAddress: string; signerId: string; standard: string }) =>
-    request<{ intent: { standard: string; payload: unknown }; correlationId: string }>("/payments/generate-intent", { method: "POST", body: JSON.stringify(body) }),
-  submitIntent: (body: { signedData: unknown; recordId?: string }) =>
-    request<{ intentHash: string }>("/payments/submit-intent", { method: "POST", body: JSON.stringify(body) }),
-  swapStatus: (body: { depositAddress: string; depositMemo?: string }) =>
-    request<{ status: string }>("/payments/status", { method: "POST", body: JSON.stringify(body) }),
+  // payment safety preflight (live 1Click execution is disabled)
+  quote: (body: { runId: string; dry: true }) => request<{ dry: true; mode: "dry-run"; executionAllowed: false; itemCount: number; validatedItemCount: number; checkedAt: string; totals: { usdcMinor: number; usdtMinor: number } }>("/payments/quote", { method: "POST", body: JSON.stringify(body) }),
+  listPaymentAttempts: (runId: string) => request<{ attempts: PaymentAttempt[] }>(`/payments/runs/${runId}/attempts`),
+  quotePaymentItem: (itemId: string, idempotencyKey: string) =>
+    request<{ attempt: PaymentAttempt; reused: boolean }>(`/payments/items/${itemId}/quote`, { method: "POST", body: JSON.stringify({ idempotencyKey }) }),
+  generatePaymentIntent: (attemptId: string) =>
+    request<{ attempt: PaymentAttempt; intent: { standard: "erc191"; payload: string }; reused: boolean }>(`/payments/attempts/${attemptId}/intent`, { method: "POST" }),
+  submitPaymentAttempt: (attemptId: string, signature: string) =>
+    request<{ attempt: PaymentAttempt; reused: boolean; outcome?: "unknown" }>(`/payments/attempts/${attemptId}/submit`, { method: "POST", body: JSON.stringify({ signature }) }),
+  reconcilePaymentAttempt: (attemptId: string) =>
+    request<{ attempt: PaymentAttempt; reused: boolean }>(`/payments/attempts/${attemptId}/reconcile`, { method: "POST" }),
 };

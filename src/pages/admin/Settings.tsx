@@ -1,28 +1,51 @@
-// Admin: Settings — organization, payment wallet, security basics
-
 import { useEffect, useState } from "react";
-import { AlertCircle, EyeOff, KeyRound, WalletCards, Settings2 } from "lucide-react";
-import { api, type AuthUser } from "../../lib/api";
-import { useApi } from "../../lib/useData";
-import { WalletConnectDialog } from "../../components/WalletConnect";
+import { AlertCircle, EyeOff, KeyRound, Settings2, ShieldCheck, UserRound, WalletCards } from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { PageHeader, StatusBadge } from "@/components/WorkspaceUI";
+import { WalletConnectDialog } from "@/components/WalletConnect";
+import { api, type AuthUser } from "@/lib/api";
+import { useApi } from "@/lib/useData";
 
-export function SettingsPage({ user, onUserChange, onOrgChange }: { user: AuthUser; onUserChange: (u: AuthUser) => void; onOrgChange: (name: string, memberCount: number) => void }) {
+export function SettingsPage({
+  user,
+  onUserChange,
+  onOrgChange,
+}: {
+  user: AuthUser;
+  onUserChange: (user: AuthUser) => void;
+  onOrgChange: (name: string, memberCount: number) => void;
+}) {
   const { data: org, refresh: refreshOrg } = useApi(() => api.org(), []);
   const [showWallet, setShowWallet] = useState(false);
   const [name, setName] = useState(user.name);
   const [orgName, setOrgName] = useState("");
   const [country, setCountry] = useState("");
   const [savedOrg, setSavedOrg] = useState(false);
+  const paymentWalletReady = Boolean(user.wallet_address && user.wallet_verified);
 
   useEffect(() => {
     if (org?.org) {
       setOrgName(org.org.name);
       setCountry(org.org.country || "");
     }
-  }, [org?.org?.id]);
+  }, [org?.org?.name, org?.org?.country]);
 
   const saveName = async () => {
-    if (!name.trim() || name === user.name) return;
+    if (!name.trim() || name.trim() === user.name) return;
     await api.updateMe({ name: name.trim() });
     onUserChange({ ...user, name: name.trim() });
   };
@@ -31,49 +54,143 @@ export function SettingsPage({ user, onUserChange, onOrgChange }: { user: AuthUs
     await api.updateOrg({ name: orgName.trim() || undefined, country: country.trim() || undefined });
     setSavedOrg(true);
     setTimeout(() => setSavedOrg(false), 3000);
-    refreshOrg();
+    await refreshOrg();
     if (orgName.trim()) onOrgChange(orgName.trim(), org?.members.length ?? 0);
   };
 
   return (
-    <div className="secondary-page">
-      <section className="secondary-heading"><div><span className="eyebrow">Settings</span><h1>Payroll preferences</h1><p>Organization, payment wallet, and security.</p></div><span className="settings-local"><Settings2 size={15} />Live API</span></section>
+    <div className="page-container">
+      <PageHeader
+        eyebrow="Settings"
+        title="Workspace preferences"
+        description="Manage organization details, your profile, payment authorization wallet, and security boundaries."
+        actions={<Badge variant="outline" className="gap-1.5"><span className="size-1.5 rounded-full bg-emerald-500" />Live API</Badge>}
+      />
 
-      <section className="settings-layout">
-        <div className="settings-nav" aria-label="Settings categories"><span className="is-active"><WalletCards size={16} />Organization & wallet</span><span><EyeOff size={16} />Data protection</span><span><KeyRound size={16} />Security</span></div>
-        <div className="settings-panels">
-          <section className="settings-card">
-            <header><div><h2>Organization</h2><p>Shown in the workspace switcher and invitation emails.</p></div></header>
-            <div className="settings-field"><label htmlFor="org-name">Organization name<span>Visible to all members</span></label><div className="inline-edit"><input id="org-name" value={orgName} onChange={(e) => setOrgName(e.target.value)} /></div></div>
-            <div className="settings-field"><label htmlFor="org-country">Country<span>Optional headquarters location</span></label><div className="inline-edit"><input id="org-country" value={country} onChange={(e) => setCountry(e.target.value)} placeholder="e.g. Singapore" /></div></div>
-            <div className="settings-actions"><button className="button button-primary" type="button" onClick={saveOrg} disabled={!orgName.trim()}>{savedOrg ? "Saved ✓" : "Save organization"}</button></div>
-          </section>
+      <Tabs defaultValue="workspace" orientation="vertical" className="flex-col gap-6 lg:grid lg:grid-cols-[190px_minmax(0,1fr)]">
+        <TabsList variant="line" className="h-auto w-full justify-start overflow-x-auto p-0 lg:flex-col lg:items-stretch">
+          <TabsTrigger value="workspace" className="justify-start px-3 py-2 lg:w-full"><Settings2 data-icon="inline-start" />Workspace</TabsTrigger>
+          <TabsTrigger value="privacy" className="justify-start px-3 py-2 lg:w-full"><EyeOff data-icon="inline-start" />Privacy & security</TabsTrigger>
+        </TabsList>
 
-          <section className="settings-card">
-            <header><div><h2>Profile</h2><p>Your name as shown to your team.</p></div></header>
-            <div className="settings-field"><label htmlFor="profile-name">Your name<span>Shown to your team</span></label><div className="inline-edit"><input id="profile-name" value={name} onChange={(e) => setName(e.target.value)} /><button className="button button-secondary" type="button" onClick={saveName}>Save</button></div></div>
-          </section>
+        <TabsContent value="workspace" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Organization</CardTitle>
+              <CardDescription>Shown in the workspace switcher and invitation messages.</CardDescription>
+              <CardAction><span className="grid size-8 place-items-center rounded-lg bg-muted"><Settings2 className="size-4 text-muted-foreground" /></span></CardAction>
+            </CardHeader>
+            <CardContent>
+              <FieldGroup className="grid gap-4 md:grid-cols-2">
+                <Field>
+                  <FieldLabel htmlFor="org-name">Organization name</FieldLabel>
+                  <Input id="org-name" value={orgName} onChange={(event) => setOrgName(event.target.value)} />
+                  <FieldDescription>Visible to all workspace members.</FieldDescription>
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="org-country">Country</FieldLabel>
+                  <Input id="org-country" value={country} onChange={(event) => setCountry(event.target.value)} placeholder="e.g. Singapore" />
+                  <FieldDescription>Optional headquarters location.</FieldDescription>
+                </Field>
+              </FieldGroup>
+            </CardContent>
+            <CardFooter className="justify-end">
+              <Button type="button" onClick={saveOrg} disabled={!orgName.trim()}>{savedOrg ? "Saved ✓" : "Save organization"}</Button>
+            </CardFooter>
+          </Card>
 
-          <section className="settings-card">
-            <header><div><h2>Payment wallet</h2><p>Used to sign payroll payment intents (NEAR Intents confidential swaps).</p></div></header>
-            <div className="connection-row">
-              <span className="setting-symbol"><WalletCards size={17} /></span>
-              <span><strong>EVM wallet</strong><small>{user.wallet_address ? `${user.wallet_address.slice(0, 8)}…${user.wallet_address.slice(-6)}` : "Not connected"}</small></span>
-              <span className="connection-state" style={user.wallet_address ? { color: "var(--green)", background: "var(--green-soft)" } : undefined}>{user.wallet_address ? "Bound" : "Not connected"}</span>
-            </div>
-            <div className="settings-actions"><button className="button button-primary" type="button" onClick={() => setShowWallet(true)}><WalletCards size={16} />{user.wallet_address ? "Change wallet" : "Connect wallet"}</button></div>
-          </section>
+          <Card>
+            <CardHeader>
+              <CardTitle>Profile</CardTitle>
+              <CardDescription>Your name as shown to the team.</CardDescription>
+              <CardAction><span className="grid size-8 place-items-center rounded-lg bg-muted"><UserRound className="size-4 text-muted-foreground" /></span></CardAction>
+            </CardHeader>
+            <CardContent>
+              <Field>
+                <FieldLabel htmlFor="profile-name">Your name</FieldLabel>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <Input id="profile-name" value={name} onChange={(event) => setName(event.target.value)} />
+                  <Button variant="outline" type="button" onClick={saveName} disabled={!name.trim() || name.trim() === user.name}>Save profile</Button>
+                </div>
+              </Field>
+            </CardContent>
+          </Card>
 
-          <section className="settings-card">
-            <header><div><h2>Security</h2><p>Authentication is email + password. Passwords are stored as PBKDF2 hashes.</p></div></header>
-            <div className="settings-field"><label htmlFor="pass-hint">Password policy<span>Min 8 characters · PBKDF2 150k iterations</span></label><span className="connection-state" style={{ color: "var(--green)", background: "var(--green-soft)" }}>Configured</span></div>
-          </section>
-        </div>
-      </section>
+          <Card>
+            <CardHeader>
+              <CardTitle>Payment authorization wallet</CardTitle>
+              <CardDescription>Used only to sign payroll payment intents after explicit review.</CardDescription>
+              <CardAction><StatusBadge status={paymentWalletReady ? "ready" : "pending"} label={paymentWalletReady ? "Ownership verified" : "Not verified"} /></CardAction>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center gap-3 rounded-lg border bg-muted/20 p-4">
+                <span className="grid size-10 place-items-center rounded-lg bg-primary/10 text-primary"><WalletCards className="size-5" /></span>
+                <span className="min-w-0 flex-1">
+                  <strong className="block text-sm font-medium">EVM wallet</strong>
+                  <small className="mono-value block truncate text-xs text-muted-foreground">
+                    {user.wallet_address ? `${user.wallet_address.slice(0, 10)}…${user.wallet_address.slice(-8)}` : "Not connected"}
+                  </small>
+                </span>
+                <Button type="button" onClick={() => setShowWallet(true)}>
+                  <WalletCards data-icon="inline-start" />
+                  {paymentWalletReady ? "Change wallet" : "Verify wallet"}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
 
-      <div className="prototype-inline-note"><AlertCircle size={15} /><span>Production adds TOTP 2FA, session rotation, and audit-grade logging. Wallet connection never exposes private keys to SalaryFlow.</span></div>
+        <TabsContent value="privacy" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Authentication security</CardTitle>
+              <CardDescription>Current local baseline for account credentials.</CardDescription>
+              <CardAction><StatusBadge status="configured" /></CardAction>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="flex items-start gap-3 rounded-lg border p-4">
+                <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-muted"><KeyRound className="size-4 text-muted-foreground" /></span>
+                <span>
+                  <strong className="block text-sm font-medium">Password policy</strong>
+                  <small className="mt-1 block text-xs leading-5 text-muted-foreground">Minimum 8 characters · PBKDF2 with 150,000 iterations</small>
+                </span>
+              </div>
+              <div className="flex items-start gap-3 rounded-lg border p-4">
+                <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-muted"><EyeOff className="size-4 text-muted-foreground" /></span>
+                <span>
+                  <strong className="block text-sm font-medium">Role-scoped data access</strong>
+                  <small className="mt-1 block text-xs leading-5 text-muted-foreground">Employees can access only their own payout method, history, and consent records.</small>
+                </span>
+              </div>
+              <div className="flex items-start gap-3 rounded-lg border p-4">
+                <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-muted"><ShieldCheck className="size-4 text-muted-foreground" /></span>
+                <span>
+                  <strong className="block text-sm font-medium">Payment execution lock</strong>
+                  <small className="mt-1 block text-xs leading-5 text-muted-foreground">The current API permits dry-run validation only and rejects live execution.</small>
+                </span>
+              </div>
+            </CardContent>
+          </Card>
 
-      {showWallet && <WalletConnectDialog user={user} onClose={() => setShowWallet(false)} onBound={(address) => { setShowWallet(false); onUserChange({ ...user, wallet_address: address, wallet_verified: true }); }} />}
+          <Alert>
+            <AlertCircle />
+            <AlertTitle>Production hardening remains separate</AlertTitle>
+            <AlertDescription>Production rollout still requires TOTP 2FA, session rotation, audit-grade logging, and verified operational credentials.</AlertDescription>
+          </Alert>
+        </TabsContent>
+      </Tabs>
+
+      {showWallet && (
+        <WalletConnectDialog
+          user={user}
+          onClose={() => setShowWallet(false)}
+          onBound={(address) => {
+            setShowWallet(false);
+            onUserChange({ ...user, wallet_address: address, wallet_verified: true });
+          }}
+          onUnbound={() => onUserChange({ ...user, wallet_address: null, wallet_verified: false })}
+        />
+      )}
     </div>
   );
 }

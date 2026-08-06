@@ -2,19 +2,25 @@ name = "salaryflow-api"
 main = "src/index.ts"
 compatibility_date = "2024-11-01"
 
-# Local dev defaults (override with --vars or .dev.vars)
+# Production defaults. Local development overrides these values in .dev.vars.
 [vars]
-APP_URL = "http://127.0.0.1:5173"
-API_URL = "http://127.0.0.1:8787"
+APP_URL = "https://salaryflow-payroll-prototype.pages.dev"
+API_URL = "https://salaryflow-payroll-prototype.pages.dev/api"
 COOKIE_DOMAIN = ""
 INTENTS_API_URL = "https://1click.chaindefuser.com"
-MOCK_EMAIL = "true"
+MOCK_EMAIL = "false"
+PAYMENTS_MODE = "dry-run"
 
 # Secrets (set via `wrangler secret put`):
 # RESEND_API_KEY, INTENTS_API_KEY, JWT_SECRET
+# Live-payment config: INTENTS_ASSET_MAP. INTENTS_QUOTE_PUBLIC_KEY is only for
+# controlled provider key rotation or loopback tests; the SDK default is used otherwise.
 
 [[d1_databases]]
 binding = "DB"
 database_name = "salaryflow"
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "92d0f39e-c74c-40cc-a493-ede3642691ca"
 migrations_dir = "migrations"
+
+[triggers]
+crons = ["* * * * *"]

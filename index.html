@@ -7,7 +7,26 @@
       name="description"
       content="SalaryFlow: a USDC and USDT payroll prototype for global teams."
     />
-    <meta name="theme-color" content="#18201e" />
+    <meta name="theme-color" content="#f8fafc" />
+    <script>
+      (() => {
+        const storageKey = "salaryflow:theme:v1";
+        let theme = "light";
+        try {
+          const storedTheme = localStorage.getItem(storageKey);
+          if (storedTheme === "dark" || storedTheme === "light") theme = storedTheme;
+        } catch {
+          // Use the light default when storage is unavailable.
+        }
+
+        document.documentElement.classList.toggle("dark", theme === "dark");
+        document.documentElement.style.colorScheme = theme;
+        document.querySelector('meta[name="theme-color"]')?.setAttribute(
+          "content",
+          theme === "dark" ? "#171c26" : "#f8fafc",
+        );
+      })();
+    </script>
     <title>SalaryFlow · Global stablecoin payroll</title>
   </head>
   <body>

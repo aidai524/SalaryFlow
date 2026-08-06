@@ -1,131 +1,136 @@
-// Pay dialog: quote → generate intent → wallet signs (ERC-191) → submit → record
-
-import { useEffect, useState } from "react";
-import { useAccount, useSignMessage } from "wagmi";
-import { AlertCircle, Check, Send, WalletCards, X } from "lucide-react";
-import { api, type AuthUser } from "../lib/api";
-import { encodeErc191Signature } from "../lib/erc191";
-import { formatMoney } from "../lib/useData";
+import { useState } from "react";
+import { AlertCircle, CheckCircle2, LoaderCircle, ShieldCheck } from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { api } from "@/lib/api";
+import { formatTokenAmount } from "@/lib/useData";
 
 interface PayDialogProps {
-  user: AuthUser;
-  run: { id: string; label: string; itemCount: number; usdc: number; usdt: number };
+  run: { id: string; label: string; itemCount: number; usdcMinor: number; usdtMinor: number };
   onClose: () => void;
-  onPaid: () => void;
-  onRequireWallet: () => void;
 }
 
-type Step = "confirm" | "quoting" | "sign" | "submitting" | "done" | "error";
+type Step = "confirm" | "quoting" | "done" | "error";
 
-export function PayDialog({ user, run, onClose, onPaid, onRequireWallet }: PayDialogProps) {
+export function PayDialog({ run, onClose }: PayDialogProps) {
   const [step, setStep] = useState<Step>("confirm");
   const [confirmed, setConfirmed] = useState(false);
   const [error, setError] = useState("");
-  const [quoteInfo, setQuoteInfo] = useState<{ recordId: string; quote: { depositAddress?: string; amountIn?: string; amountOut?: string } } | null>(null);
-  const [intentInfo, setIntentInfo] = useState<{ payload: unknown; payloadString: string; correlationId: string } | null>(null);
-  const [intentHash, setIntentHash] = useState("");
-
-  const { address, isConnected } = useAccount();
-  const { signMessageAsync } = useSignMessage();
-
-  useEffect(() => {
-    if (!isConnected) {
-      onRequireWallet();
-    }
-  }, [isConnected, onRequireWallet]);
+  const [validation, setValidation] = useState<{ itemCount: number; validatedItemCount: number } | null>(null);
 
   const start = async () => {
     setStep("quoting");
     setError("");
     try {
-      const { quote, recordId } = await api.quote({ runId: run.id, dry: false });
-      const q = quote as { depositAddress?: string; amountIn?: string; amountOut?: string };
-      if (!q.depositAddress) throw new Error("No deposit address returned — payment service rejected the quote");
-      setQuoteInfo({ recordId, quote: q });
-      setStep("sign");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Quote failed");
-      setStep("error");
-    }
-  };
-
-  const signAndSubmit = async () => {
-    if (!quoteInfo || !address) return;
-    setStep("submitting");
-    setError("");
-    try {
-      // 1. generate unsigned intent (ERC-191 for EVM wallet)
-      const gen = await api.generateIntent({
-        depositAddress: quoteInfo.quote.depositAddress!,
-        signerId: address,
-        standard: "erc191",
-      });
-      const payloadString = typeof gen.intent.payload === "string"
-        ? gen.intent.payload
-        : JSON.stringify(gen.intent.payload);
-      // 2. wallet signs the payload string (personal_sign / EIP-191)
-      const sig = await signMessageAsync({ message: payloadString });
-      // 3. encode signature for NEAR Intents verifier
-      const encoded = encodeErc191Signature(sig);
-      // 4. submit
-      const res = await api.submitIntent({
-        recordId: quoteInfo.recordId,
-        signedData: { standard: "erc191", payload: payloadString, signature: encoded },
-      });
-      setIntentHash(res.intentHash);
+      const result = await api.quote({ runId: run.id, dry: true });
+      setValidation({ itemCount: result.itemCount, validatedItemCount: result.validatedItemCount });
       setStep("done");
-      onPaid();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Signing failed");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Quote failed");
       setStep("error");
     }
   };
 
   return (
-    <div className="dialog-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <section className="dialog" role="dialog" aria-modal="true" aria-labelledby="pay-title">
-        <header className="dialog-header"><strong>Send payroll</strong><button className="icon-button" type="button" onClick={onClose} aria-label="Close"><X size={19} /></button></header>
-        <div className="dialog-body">
-          <span className="dialog-symbol symbol-send"><Send size={22} /></span>
-          <h2 id="pay-title">{step === "done" ? "Payment submitted" : "Send this payroll batch?"}</h2>
-          <p>
-            {run.label} · {run.itemCount} payments · USDC {formatMoney(run.usdc)} + USDT {formatMoney(run.usdt)}.
-            The swap executes on NEAR Intents' private chain — amounts stay hidden from the public blockchain.
-          </p>
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="sm:max-w-[560px]">
+        <DialogHeader className="pr-8">
+          <span className="mb-1 grid size-10 place-items-center rounded-xl bg-primary/10 text-primary">
+            {step === "done" ? <CheckCircle2 className="size-5" /> : <ShieldCheck className="size-5" />}
+          </span>
+          <DialogTitle className="text-lg">{step === "done" ? "Dry-run completed" : "Validate this payroll batch?"}</DialogTitle>
+          <DialogDescription className="leading-6">
+            {run.label} · {run.itemCount} payments. This checks server-side readiness without contacting 1Click, signing, submitting, or moving funds.
+          </DialogDescription>
+        </DialogHeader>
 
-          <dl className="dialog-summary"><div><dt>Payments</dt><dd>{run.itemCount}</dd></div><div><dt>USDC</dt><dd>{formatMoney(run.usdc)}</dd></div><div><dt>USDT</dt><dd>{formatMoney(run.usdt)}</dd></div></dl>
-
-          {step === "confirm" && (
-            <>
-              <label className="confirmation-check"><input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} /><span>I reviewed the totals and understand this initiates a confidential payment via my connected wallet.</span></label>
-              <div className="dialog-note"><AlertCircle size={16} /><span>This opens your EVM wallet to sign a NEAR Intents payment intent. No funds leave your wallet except through the signed intent.</span></div>
-            </>
-          )}
-
-          {step === "quoting" && <p className="step-status">Requesting confidential quote…</p>}
-          {step === "sign" && quoteInfo && (
-            <div className="dialog-note"><Check size={16} /><span>Quote received. Reviewing {quoteInfo.quote.amountOut ? `~${formatMoney(Number(quoteInfo.quote.amountOut) / 1e6)} output` : "output"} — next, your wallet will be asked to sign the intent.</span></div>
-          )}
-          {step === "submitting" && <p className="step-status">Waiting for wallet signature…</p>}
-          {step === "done" && (
-            <div className="payment-done">
-              <Check size={20} /><span>Intent submitted. <span className="mono-value">{intentHash.slice(0, 18)}…</span></span>
-              <small>The payment record will update as the swap confirms.</small>
-            </div>
-          )}
-          {step === "error" && <div className="dialog-warning"><AlertCircle size={16} /><span>{error}</span></div>}
-
-          <div className="dialog-warning" style={{ marginTop: 12 }}>
-            <AlertCircle size={16} /><span>Payment status updates live. In production, employees receive their stablecoin on their chosen chain after the swap confirms.</span>
+        <dl className="grid grid-cols-3 divide-x rounded-lg border bg-muted/20">
+          <div className="p-3">
+            <dt className="text-xs text-muted-foreground">Payments</dt>
+            <dd className="mt-1 font-heading text-lg font-semibold tabular-nums">{run.itemCount}</dd>
           </div>
-        </div>
-        <div className="dialog-actions">
-          <button className="button button-secondary" type="button" onClick={onClose}>{step === "done" ? "Close" : "Cancel"}</button>
-          {step === "confirm" && <button className="button button-primary" type="button" disabled={!confirmed} onClick={start}><Send size={16} />Request quote</button>}
-          {step === "sign" && <button className="button button-primary" type="button" onClick={signAndSubmit}><WalletCards size={16} />Sign with wallet</button>}
-          {step === "error" && <button className="button button-primary" type="button" onClick={start}>Retry</button>}
-        </div>
-      </section>
-    </div>
+          <div className="p-3">
+            <dt className="text-xs text-muted-foreground">USDC</dt>
+            <dd className="mt-1 font-heading text-lg font-semibold tabular-nums">{formatTokenAmount(run.usdcMinor)}</dd>
+          </div>
+          <div className="p-3">
+            <dt className="text-xs text-muted-foreground">USDT</dt>
+            <dd className="mt-1 font-heading text-lg font-semibold tabular-nums">{formatTokenAmount(run.usdtMinor)}</dd>
+          </div>
+        </dl>
+
+        {step === "confirm" && (
+          <>
+            <div className="flex items-start gap-3 rounded-lg border p-3">
+              <Checkbox id="dry-run-confirmation" checked={confirmed} onCheckedChange={(checked) => setConfirmed(checked === true)} />
+              <Label htmlFor="dry-run-confirmation" className="items-start text-sm leading-5 font-normal">
+                I reviewed the totals and want to run a non-executing payment readiness check.
+              </Label>
+            </div>
+            <Alert className="border-emerald-200 bg-emerald-50 text-emerald-900">
+              <ShieldCheck />
+              <AlertTitle>Safety mode is enforced</AlertTitle>
+              <AlertDescription className="text-emerald-800">
+                Wallet signing and live submission remain disabled by the API.
+              </AlertDescription>
+            </Alert>
+          </>
+        )}
+
+        {step === "quoting" && (
+          <div className="flex items-center gap-3 rounded-lg border bg-muted/30 p-4 text-sm text-muted-foreground">
+            <LoaderCircle className="size-4 animate-spin" />
+            Checking employee and payout readiness…
+          </div>
+        )}
+
+        {step === "done" && validation && (
+          <Alert className="border-emerald-200 bg-emerald-50 text-emerald-900">
+            <CheckCircle2 />
+            <AlertTitle>Readiness validated for {validation.validatedItemCount} of {validation.itemCount} pending payments</AlertTitle>
+            <AlertDescription className="text-emerald-800">
+              No intent was generated, no signature was requested, and no payment record was created.
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {step === "error" && (
+          <Alert variant="destructive">
+            <AlertCircle />
+            <AlertTitle>Readiness check failed</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+
+        <Alert className="border-amber-200 bg-amber-50 text-amber-900">
+          <AlertCircle />
+          <AlertTitle>Local preflight only</AlertTitle>
+          <AlertDescription className="text-amber-800">
+            Mainnet execution stays locked until production asset mappings, partner credentials, and small-amount acceptance checks are complete.
+          </AlertDescription>
+        </Alert>
+
+        <DialogFooter>
+          <Button variant="outline" type="button" onClick={onClose}>{step === "done" ? "Close" : "Cancel"}</Button>
+          {step === "confirm" && (
+            <Button type="button" disabled={!confirmed} onClick={start}>
+              <ShieldCheck data-icon="inline-start" />
+              Run dry check
+            </Button>
+          )}
+          {step === "error" && <Button type="button" onClick={start}>Retry</Button>}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
