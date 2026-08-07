@@ -165,8 +165,8 @@ export function SettingsPage({
               <div className="flex items-start gap-3 rounded-lg border p-4">
                 <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-muted"><ShieldCheck className="size-4 text-muted-foreground" /></span>
                 <span>
-                  <strong className="block text-sm font-medium">Payment execution lock</strong>
-                  <small className="mt-1 block text-xs leading-5 text-muted-foreground">The current API permits dry-run validation only and rejects live execution.</small>
+                  <strong className="block text-sm font-medium">Payment authorization wallet</strong>
+                  <small className="mt-1 block text-xs leading-5 text-muted-foreground">Live confidential payments require a verified admin wallet and server `PAYMENTS_MODE=live`.</small>
                 </span>
               </div>
             </CardContent>

@@ -148,10 +148,10 @@ function AppSidebar({
           <div className="rounded-lg border bg-muted/30 p-3">
             <div className="flex items-center gap-2 text-xs font-medium">
               <ShieldCheck className="size-4 text-emerald-600" />
-              Payments are locked
+              Confidential payroll
             </div>
             <p className="mt-1.5 text-xs leading-5 text-muted-foreground">
-              Readiness checks are local dry-runs. No funds can move.
+              Dry-run validates readiness. Live mode signs NEAR Intents confidential payments.
             </p>
           </div>
         </SidebarGroup>
@@ -273,7 +273,7 @@ export function Shell({
               </div>
               <Badge variant="outline" className="hidden gap-1.5 border-emerald-200 bg-emerald-50 text-emerald-700 sm:inline-flex">
                 <span className="size-1.5 rounded-full bg-emerald-500" />
-                {text("Payments dry-run", "支付仅演练")}
+                {text("Confidential pay", "机密支付")}
               </Badge>
               <ThemeToggle />
               <Button variant="ghost" size="icon" disabled aria-label={text("Notifications unavailable", "通知功能暂不可用")}>

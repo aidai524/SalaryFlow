@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Archive, CalendarClock, ChevronRight, CircleDollarSign, FileUp, Pause, Pencil, Play, Plus, ShieldCheck, Trash2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Archive, CalendarClock, ChevronRight, CircleDollarSign, FileUp, Pause, Pencil, Play, Plus, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -39,7 +39,8 @@ import {
 import { EmptyPanel, PageHeader, StatusBadge, TokenCell } from "@/components/WorkspaceUI";
 import { PayDialog } from "@/components/PayDialog";
 import { PayrollImportDialog } from "@/components/PayrollImportDialog";
-import { api, type Employee, type PayrollCadence, type PayrollRun, type PayrollSchedule, type PayrunItem } from "@/lib/api";
+import { api, type AuthUser, type Employee, type PayrollCadence, type PayrollRun, type PayrollSchedule, type PayrunItem } from "@/lib/api";
+import { inFlightSubmittedAttempts, pollSubmittedAttemptsUntilSettled } from "@/lib/payment";
 import { minorAmountToCsv } from "@/lib/payroll-import";
 import { formatTokenAmount, isValidTokenAmount, useApi } from "@/lib/useData";
 
@@ -286,7 +287,7 @@ function ItemEditDialog({
   );
 }
 
-export function PayrollPage() {
+export function PayrollPage({ user }: { user: AuthUser }) {
   const { data, loading, refresh } = useApi(() => api.listRuns(), []);
   const { data: employeeData } = useApi(() => api.listEmployees(), []);
   const { data: scheduleData, refresh: refreshSchedules } = useApi(() => api.listPayrollSchedules(), []);
@@ -335,7 +336,7 @@ export function PayrollPage() {
       <PageHeader
         eyebrow="Payroll"
         title="Payroll runs"
-        description="Enter net amounts per employee, review payout status, then run a non-executing payment readiness check."
+        description="Enter net amounts per employee, validate payout readiness, then send confidential mainnet payments when the API is unlocked."
         actions={(
           <>
             <Button variant="outline" type="button" onClick={() => setShowCreate(true)}>
@@ -345,7 +346,7 @@ export function PayrollPage() {
             {selected && (
               <Button type="button" disabled={selected.itemCount === 0} onClick={() => setShowPay(true)}>
                 <ShieldCheck data-icon="inline-start" />
-                Dry-run check
+                Pay / validate
               </Button>
             )}
           </>
@@ -506,7 +507,14 @@ export function PayrollPage() {
         </DialogContent>
       </Dialog>
 
-      {showPay && selected && <PayDialog run={selected} onClose={() => setShowPay(false)} />}
+      {showPay && selected && (
+        <PayDialog
+          run={selected}
+          user={user}
+          onClose={() => setShowPay(false)}
+          onCompleted={() => { void refresh(); }}
+        />
+      )}
       <ScheduleEditDialog key={editingSchedule?.id ?? "closed-schedule"} schedule={editingSchedule} onOpenChange={(open) => { if (!open) setEditingSchedule(null); }} onSaved={refreshSchedules} />
       <ConfirmActionDialog
         open={!!archivingSchedule}
@@ -538,12 +546,52 @@ function RunDetail({ runId, employees, onChanged, onArchived }: { runId: string;
   const [archivingRun, setArchivingRun] = useState(false);
   const [editingItem, setEditingItem] = useState<PayrunItem | null>(null);
   const [removingItem, setRemovingItem] = useState<PayrunItem | null>(null);
+  const [refreshingSettlement, setRefreshingSettlement] = useState(false);
+  const [settlementError, setSettlementError] = useState<string | null>(null);
+
+  const refreshSettlement = async () => {
+    setRefreshingSettlement(true);
+    setSettlementError(null);
+    try {
+      const { attempts } = await api.listPaymentAttempts(runId);
+      const open = inFlightSubmittedAttempts(attempts);
+      if (open.length === 0) {
+        await Promise.all([refresh(), onChanged()]);
+        return;
+      }
+      await pollSubmittedAttemptsUntilSettled({
+        attemptIds: open.map((attempt) => attempt.id),
+        rounds: 8,
+      });
+      await Promise.all([refresh(), onChanged()]);
+    } catch (error) {
+      setSettlementError(error instanceof Error ? error.message : "Unable to refresh settlement");
+    } finally {
+      setRefreshingSettlement(false);
+    }
+  };
+
+  // Local wrangler cron does not reliably settle payments; auto-poll when opening a processing run.
+  useEffect(() => {
+    if (!data) return;
+    const processing = data.items.some((item) => item.status === "processing" || item.payment_state === "processing" || item.payment_state === "submitted");
+    if (!processing) return;
+    void refreshSettlement();
+    // Only when switching to this run / first load with processing rows.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runId, data?.run.status]);
 
   if (loading && !data) {
     return <Card><CardContent className="grid h-40 place-items-center text-sm text-muted-foreground">Loading payment list…</CardContent></Card>;
   }
   if (!data) return null;
   const { run, items } = data;
+  const hasInFlight = items.some((item) => (
+    item.status === "processing"
+    || item.payment_state === "processing"
+    || item.payment_state === "submitted"
+    || item.payment_state === "submitting"
+  ));
 
   const addItem = async () => {
     if (!employeeName.trim() || !isValidTokenAmount(amount)) return;
@@ -569,6 +617,12 @@ function RunDetail({ runId, employees, onChanged, onArchived }: { runId: string;
         <CardDescription>Net amounts are kept exactly as entered. {items.length} payments shown.{run.status !== "draft" ? " Editing is locked after the draft stage." : ""}</CardDescription>
         <CardAction>
           <div className="flex flex-wrap justify-end gap-2">
+            {hasInFlight && (
+              <Button variant="outline" size="sm" type="button" onClick={() => void refreshSettlement()} disabled={refreshingSettlement}>
+                <RefreshCw data-icon="inline-start" className={refreshingSettlement ? "animate-spin" : undefined} />
+                {refreshingSettlement ? "Refreshing…" : "Refresh settlement"}
+              </Button>
+            )}
             {run.status === "draft" && <Button variant="outline" size="sm" type="button" onClick={() => setEditingRun(run)}><Pencil data-icon="inline-start" />Edit run</Button>}
             {run.status === "draft" && <Button variant="outline" size="sm" type="button" onClick={() => setShowImport(true)}>
               <FileUp data-icon="inline-start" />Import CSV
@@ -580,6 +634,15 @@ function RunDetail({ runId, employees, onChanged, onArchived }: { runId: string;
           </div>
         </CardAction>
       </CardHeader>
+
+      {settlementError && (
+        <CardContent className="pb-0">
+          <Alert variant="destructive">
+            <AlertTitle>Settlement refresh failed</AlertTitle>
+            <AlertDescription>{settlementError}</AlertDescription>
+          </Alert>
+        </CardContent>
+      )}
 
       {showAdd && (
         <CardContent className="border-y bg-muted/20 py-4">

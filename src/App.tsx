@@ -116,7 +116,7 @@ function App() {
     <Shell user={user} orgName={orgName} memberCount={memberCount} attentionCount={attentionCount} screen={screen} onNavigate={setScreen} onLogout={logout}>
       {isAdmin ? (
         screen === "overview" ? <OverviewPage user={user} onNavigate={setScreen} />
-        : screen === "payroll" ? <PayrollPage />
+        : screen === "payroll" ? <PayrollPage user={user} />
         : screen === "people" ? <TeamPayoutsPage onNavigate={setScreen} />
         : screen === "records" ? <RecordsPage />
         : <SettingsPage user={user} onUserChange={setUser} onOrgChange={handleOrgChange} />

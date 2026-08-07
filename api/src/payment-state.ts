@@ -172,6 +172,26 @@ export function mapProviderStatus(status: string): PaymentAttemptState | null {
   return null;
 }
 
+/** Provider rejected the signed intent before accepting it — safe to fail and re-quote. */
+export function isDefinitiveSubmitFailure(message: string): boolean {
+  const text = message.toLowerCase();
+  return text.includes("quote has expired")
+    || text.includes("quote expired")
+    || text.includes("deadline has passed")
+    || text.includes("intent is expired");
+}
+
+export function quoteRequestDeadlinePassed(quoteRequestJson: string | null | undefined): boolean {
+  if (!quoteRequestJson) return false;
+  try {
+    const request = JSON.parse(quoteRequestJson) as { deadline?: string };
+    const deadline = Date.parse(String(request.deadline || ""));
+    return Number.isFinite(deadline) && deadline <= Date.now();
+  } catch {
+    return false;
+  }
+}
+
 export function itemStatusForAttempt(state: PaymentAttemptState): "pending" | "processing" | "paid" | "failed" | "refunded" {
   if (state === "confirmed") return "paid";
   if (state === "failed") return "failed";

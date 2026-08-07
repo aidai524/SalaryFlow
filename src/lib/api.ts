@@ -125,6 +125,7 @@ export interface PaymentAttempt {
   intent_hash: string | null;
   provider_status: string | null;
   last_error: string | null;
+  quote_request?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -169,17 +170,20 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     data = text;
   }
   if (!res.ok) {
-    const msg = (data as { error?: string } | null)?.error || `Request failed (${res.status})`;
-    throw new ApiError(msg, res.status);
+    const payload = data as { error?: string; code?: string } | null;
+    const msg = payload?.error || `Request failed (${res.status})`;
+    throw new ApiError(msg, res.status, payload?.code);
   }
   return data as T;
 }
 
 export class ApiError extends Error {
   status: number;
-  constructor(message: string, status: number) {
+  code?: string;
+  constructor(message: string, status: number, code?: string) {
     super(message);
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -253,7 +257,7 @@ export const api = {
     request<{ ok: boolean; wallet_address: string; wallet_verified_at: string }>("/records/wallet/verify", { method: "POST", body: JSON.stringify(body) }),
   unbindWallet: () => request<{ ok: boolean }>("/records/wallet", { method: "DELETE" }),
 
-  // payment safety preflight (live 1Click execution is disabled)
+  // payments: dry-run readiness + live confidential 1Click attempts
   quote: (body: { runId: string; dry: true }) => request<{ dry: true; mode: "dry-run"; executionAllowed: false; itemCount: number; validatedItemCount: number; checkedAt: string; totals: { usdcMinor: number; usdtMinor: number } }>("/payments/quote", { method: "POST", body: JSON.stringify(body) }),
   listPaymentAttempts: (runId: string) => request<{ attempts: PaymentAttempt[] }>(`/payments/runs/${runId}/attempts`),
   quotePaymentItem: (itemId: string, idempotencyKey: string) =>
@@ -264,4 +268,6 @@ export const api = {
     request<{ attempt: PaymentAttempt; reused: boolean; outcome?: "unknown" }>(`/payments/attempts/${attemptId}/submit`, { method: "POST", body: JSON.stringify({ signature }) }),
   reconcilePaymentAttempt: (attemptId: string) =>
     request<{ attempt: PaymentAttempt; reused: boolean }>(`/payments/attempts/${attemptId}/reconcile`, { method: "POST" }),
+  reopenFailedPayments: (runId: string) =>
+    request<{ ok: true; reopened: number }>(`/payments/runs/${runId}/reopen-failed`, { method: "POST" }),
 };

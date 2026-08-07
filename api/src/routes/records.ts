@@ -228,19 +228,21 @@ recordRoutes.post("/wallet/verify", requireRole("admin"), async (c) => {
   }
 
   const verifiedAt = nowIso();
+  // Persist the Intents-canonical form (lowercased EVM) so confidential refundTo/signerId match 1Click.
+  const walletAddress = String(challenge.address).toLowerCase();
   const results = await c.env.DB.batch([
     c.env.DB.prepare(
       "UPDATE payment_wallet_challenges SET used_at = ? WHERE id = ? AND used_at IS NULL",
     ).bind(verifiedAt, challengeId),
     c.env.DB.prepare(
       "UPDATE users SET wallet_address = ?, wallet_verified_at = ?, updated_at = ? WHERE id = ? AND org_id = ?",
-    ).bind(challenge.address, verifiedAt, verifiedAt, user.id, user.org_id),
+    ).bind(walletAddress, verifiedAt, verifiedAt, user.id, user.org_id),
     c.env.DB.prepare(
       "INSERT INTO audit_log (id, org_id, actor_id, action, detail) VALUES (?, ?, ?, 'payment_wallet.verified', ?)",
-    ).bind(uuid(), user.org_id, user.id, `Verified payment wallet ${String(challenge.address)}`),
+    ).bind(uuid(), user.org_id, user.id, `Verified payment wallet ${walletAddress}`),
   ]);
   if (Number(results[0].meta.changes || 0) !== 1) return c.json({ error: "Wallet challenge has already been used" }, 409);
-  return c.json({ ok: true, wallet_address: challenge.address, wallet_verified_at: verifiedAt });
+  return c.json({ ok: true, wallet_address: walletAddress, wallet_verified_at: verifiedAt });
 });
 
 recordRoutes.put("/wallet", requireRole("admin"), (c) => {

@@ -299,10 +299,21 @@ payrollRoutes.post("/:id/items", requireRole("admin"), async (c) => {
   if (duplicate) return c.json({ error: "This employee or manual recipient is already in the run" }, 409);
 
   const id = uuid();
-  await c.env.DB.prepare(
-    "INSERT INTO payrun_items (id, run_id, employee_id, employee_name, amount_minor, token, network, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
-  ).bind(id, runId, employeeId || null, employeeName, amountMinor, token, network, nowIso()).run();
-  await c.env.DB.prepare("UPDATE payroll_runs SET updated_at = ? WHERE id = ?").bind(nowIso(), runId).run();
+  const timestamp = nowIso();
+  const statements: D1PreparedStatement[] = [
+    c.env.DB.prepare(
+      "INSERT INTO payrun_items (id, run_id, employee_id, employee_name, amount_minor, token, network, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
+    ).bind(id, runId, employeeId || null, employeeName, amountMinor, token, network, timestamp),
+    c.env.DB.prepare("UPDATE payroll_runs SET updated_at = ? WHERE id = ?").bind(timestamp, runId),
+  ];
+  // Keep the employee profile default in sync with the latest drafted net amount.
+  if (employeeId) {
+    statements.push(
+      c.env.DB.prepare("UPDATE employees SET amount_minor = ?, token = ?, network = ? WHERE id = ? AND org_id = ?")
+        .bind(amountMinor, token, network, employeeId, user.org_id),
+    );
+  }
+  await c.env.DB.batch(statements);
   const row = await c.env.DB.prepare("SELECT * FROM payrun_items WHERE id = ?").bind(id).first();
   return c.json({ item: row }, 201);
 });
@@ -351,7 +362,7 @@ payrollRoutes.patch("/:id/items/:itemId", requireRole("admin"), async (c) => {
     : await c.env.DB.prepare("SELECT id FROM payrun_items WHERE run_id = ? AND employee_id IS NULL AND lower(employee_name) = lower(?) AND id <> ? AND removed_at IS NULL").bind(runId, employeeName, itemId).first();
   if (duplicate) return c.json({ error: "This employee or manual recipient is already in the run" }, 409);
   const timestamp = nowIso();
-  await c.env.DB.batch([
+  const statements: D1PreparedStatement[] = [
     c.env.DB.prepare(
       "UPDATE payrun_items SET employee_id = ?, employee_name = ?, amount_minor = ?, token = ?, network = ? WHERE id = ? AND run_id = ? AND removed_at IS NULL",
     ).bind(employeeId, employeeName, amountMinor, token, network, itemId, runId),
@@ -359,7 +370,14 @@ payrollRoutes.patch("/:id/items/:itemId", requireRole("admin"), async (c) => {
     c.env.DB.prepare(
       "INSERT INTO audit_log (id, org_id, actor_id, action, detail) VALUES (?, ?, ?, 'payroll.item_updated', ?)",
     ).bind(uuid(), user.org_id, user.id, `Updated payroll item ${itemId} in run ${runId}`),
-  ]);
+  ];
+  if (employeeId) {
+    statements.push(
+      c.env.DB.prepare("UPDATE employees SET amount_minor = ?, token = ?, network = ? WHERE id = ? AND org_id = ?")
+        .bind(amountMinor, token, network, employeeId, user.org_id),
+    );
+  }
+  await c.env.DB.batch(statements);
   const item = await c.env.DB.prepare("SELECT * FROM payrun_items WHERE id = ?").bind(itemId).first();
   return c.json({ item });
 });

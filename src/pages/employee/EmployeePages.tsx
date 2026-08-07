@@ -61,6 +61,10 @@ export function EmployeeHomePage({ user, orgName }: { user: AuthUser; orgName: s
 
   const employee = payout?.payout;
   const recent = records?.records[0];
+  // Profile default is often 0 after invite; prefer the latest payroll row.
+  const netAmountMinor = recent?.amount_minor ?? employee?.amount_minor;
+  const netToken = recent?.token ?? employee?.token ?? "USDC";
+  const metricsLoading = payoutLoading || recordsLoading;
 
   return (
     <EmployeeFrame>
@@ -72,7 +76,13 @@ export function EmployeeHomePage({ user, orgName }: { user: AuthUser; orgName: s
       />
 
       <section className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
-        <MetricCard label="Net amount" value={employee ? formatTokenAmount(employee.amount_minor) : "—"} helper={employee?.token ?? "USDC"} icon={<CalendarDays />} loading={payoutLoading} />
+        <MetricCard
+          label="Net amount"
+          value={netAmountMinor != null ? formatTokenAmount(netAmountMinor) : "—"}
+          helper={recent ? `Latest payroll · ${netToken}` : netToken}
+          icon={<CalendarDays />}
+          loading={metricsLoading}
+        />
         <MetricCard label="Stablecoin" value={employee?.token ?? "USDC"} helper="Your selected payout asset" icon={<WalletCards />} loading={payoutLoading} />
         <MetricCard label="Network" value={employee?.network ?? "Base"} helper="Selected destination chain" icon={<ShieldCheck />} loading={payoutLoading} />
         <MetricCard label="Payout status" value={employee?.status === "ready" ? "Ready" : "Pending"} helper={employee?.status === "ready" ? "Wallet ownership verified" : "Verification required"} icon={<CheckCircle2 />} loading={payoutLoading} />
@@ -135,8 +145,8 @@ export function EmployeeHomePage({ user, orgName }: { user: AuthUser; orgName: s
 
       <Alert>
         <AlertCircle />
-        <AlertTitle>Payment execution remains disabled</AlertTitle>
-        <AlertDescription>SalaryFlow is connected to the local API, but live settlement stays locked while production reconciliation is completed.</AlertDescription>
+        <AlertTitle>Confidential settlement</AlertTitle>
+        <AlertDescription>When payroll is sent, swap amounts stay private on NEAR Intents. Deposit and withdrawal activity on public chains may still be visible.</AlertDescription>
       </Alert>
       {recordsLoading && <span className="sr-only">Loading payment history</span>}
     </EmployeeFrame>

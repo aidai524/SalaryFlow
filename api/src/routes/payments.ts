@@ -6,9 +6,10 @@ import { Hono, type Context } from "hono";
 import { verifyMessage, type Address, type Hex } from "viem";
 import { encodeErc191Signature } from "../erc191";
 import { generateIntent, getSupportedTokens, requestQuote, submitIntent, verifyOneClickQuote, type QuoteRequest } from "../intents";
+import { toIntentsUserId } from "../intents-user-id";
 import { requireRole, type AppEnv } from "../middleware";
-import { getPaymentAttempt, reconcileOpenPayments, reconcilePaymentAttempt, type PaymentAttemptRow } from "../payment-execution";
-import { executionGate, resolvePaymentAssets, tokenMinorToAssetAmount, validatePaymentAssetMapping } from "../payment-state";
+import { failAttemptAndReopenItem, getPaymentAttempt, reconcileOpenPayments, reconcilePaymentAttempt, type PaymentAttemptRow } from "../payment-execution";
+import { executionGate, isDefinitiveSubmitFailure, resolvePaymentAssets, tokenMinorToAssetAmount, validatePaymentAssetMapping } from "../payment-state";
 import { EVM_PAYOUT_NETWORKS, PAYOUT_TOKENS } from "../payout";
 import { nowIso, uuid, type AuthUser } from "../types";
 
@@ -98,7 +99,7 @@ paymentRoutes.post("/quote", requireRole("admin"), async (c) => {
      FROM payrun_items pi
      JOIN payroll_runs pr ON pr.id = pi.run_id
      LEFT JOIN employees e ON e.id = pi.employee_id AND e.org_id = pr.org_id
-     WHERE pi.run_id = ? AND pr.org_id = ? AND pi.status = 'pending'
+     WHERE pi.run_id = ? AND pr.org_id = ? AND pi.status IN ('pending', 'failed')
        AND pi.removed_at IS NULL AND pr.archived_at IS NULL`,
   ).bind(runId, user.org_id).all<PayableItem>();
   if (items.results.length === 0) return c.json({ error: "No pending items in this run" }, 400);
@@ -158,7 +159,9 @@ paymentRoutes.post("/items/:itemId/quote", requireRole("admin"), async (c) => {
 
   const item = await loadPayableItem(c.env.DB, user.org_id, itemId);
   if (!item) return c.json({ error: "Payment item not found" }, 404);
-  if (item.status !== "pending") return c.json({ error: "Only pending payment items can be quoted", code: "ITEM_NOT_PENDING" }, 409);
+  if (item.status !== "pending" && item.status !== "failed") {
+    return c.json({ error: "Only pending or failed payment items can be quoted", code: "ITEM_NOT_PENDING" }, 409);
+  }
   const issues = validatePayableItem(item);
   if (issues.length > 0) return c.json({ error: issues[0].message, code: issues[0].code, issues }, 422);
   const assets = resolvePaymentAssets(c.env, item.token, item.network);
@@ -176,6 +179,15 @@ paymentRoutes.post("/items/:itemId/quote", requireRole("admin"), async (c) => {
     return c.json({ error: `Amount cannot be represented with ${assets.destination.decimals} destination decimals`, code: "AMOUNT_PRECISION_UNSUPPORTED" }, 422);
   }
 
+  // CONFIDENTIAL_INTENTS refund/signer ids must be the Intents account id
+  // (EVM → lowercased address), matching prophet/ui confidential withdraw quotes.
+  let intentsAccountId: string;
+  try {
+    intentsAccountId = toIntentsUserId(user.wallet_address);
+  } catch {
+    return c.json({ error: "Payment wallet is not a valid EVM address", code: "PAYMENT_WALLET_INVALID" }, 422);
+  }
+
   const timestamp = nowIso();
   const attemptId = uuid();
   const quoteRequest: QuoteRequest = {
@@ -187,12 +199,13 @@ paymentRoutes.post("/items/:itemId/quote", requireRole("admin"), async (c) => {
     amount: providerAmount,
     recipient: String(item.payout_endpoint),
     recipientType: "DESTINATION_CHAIN",
-    refundTo: user.wallet_address,
+    refundTo: intentsAccountId,
     refundType: "CONFIDENTIAL_INTENTS",
     confidentiality: "advanced",
     deadline: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
     slippageTolerance: 100,
   };
+  console.log("quoteRequest: %o", quoteRequest)
   const inserted = await c.env.DB.prepare(
     `INSERT OR IGNORE INTO payment_attempts
      (id, org_id, run_id, item_id, idempotency_key, state, token, network,
@@ -208,7 +221,7 @@ paymentRoutes.post("/items/:itemId/quote", requireRole("admin"), async (c) => {
     item.network,
     item.amount_minor,
     item.payout_endpoint,
-    user.wallet_address,
+    intentsAccountId,
     JSON.stringify(quoteRequest),
     user.id,
     timestamp,
@@ -271,7 +284,10 @@ paymentRoutes.post("/items/:itemId/quote", requireRole("admin"), async (c) => {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'confidential-intents', ?, 'advanced', 'quoted', ?)`,
       ).bind(uuid(), attemptId, item.id, user.org_id, item.employee_name, item.token, item.network, item.amount_minor, item.network, quotedAt),
       c.env.DB.prepare(
-        "UPDATE payrun_items SET status = 'processing', deposit_address = ?, error = NULL WHERE id = ? AND status = 'pending'",
+        `UPDATE payrun_items
+         SET status = 'processing', deposit_address = ?, error = NULL,
+             intent_hash = NULL, signed_at = NULL, submitted_at = NULL, confirmed_at = NULL
+         WHERE id = ? AND status IN ('pending', 'failed')`,
       ).bind(depositAddress, item.id),
       c.env.DB.prepare("UPDATE payroll_runs SET status = 'processing', updated_at = ? WHERE id = ? AND org_id = ?")
         .bind(quotedAt, item.run_id, user.org_id),
@@ -316,17 +332,18 @@ paymentRoutes.post("/attempts/:attemptId/intent", requireRole("admin"), async (c
   }
 
   try {
+    const signerId = toIntentsUserId(attempt.signer_id);
     const generated = await generateIntent(c.env, {
       type: "swap_transfer",
       standard: "erc191",
-      signerId: attempt.signer_id,
+      signerId,
       depositAddress: String(attempt.deposit_address),
     });
     if (generated.intent.standard !== "erc191" || typeof generated.intent.payload !== "string") {
       throw new Error("1Click returned an unsupported intent payload");
     }
     const payload = JSON.parse(generated.intent.payload) as { signer_id?: string };
-    if (String(payload.signer_id || "").toLowerCase() !== attempt.signer_id.toLowerCase()) {
+    if (String(payload.signer_id || "").toLowerCase() !== signerId) {
       throw new Error("1Click intent signer does not match the verified payment wallet");
     }
     const storedIntent = JSON.stringify(generated.intent);
@@ -405,13 +422,25 @@ paymentRoutes.post("/attempts/:attemptId/submit", requireRole("admin"), async (c
       ).bind(uuid(), user.org_id, user.id, `Submitted payment attempt ${attempt.id} as ${submitted.intentHash}`),
     ]);
   } catch (error) {
+    const detail = providerError(error);
+    if (isDefinitiveSubmitFailure(detail)) {
+      attempt = await failAttemptAndReopenItem(c.env, { ...attempt, state: "submitting" }, detail, user.id);
+      return c.json({
+        error: "Payment submission was rejected; the payroll item is reopened for a new quote",
+        code: "PAYMENT_SUBMIT_REJECTED",
+        detail,
+        attempt,
+        outcome: "failed",
+        reused: false,
+      }, 409);
+    }
     const unknownAt = nowIso();
     await c.env.DB.batch([
       c.env.DB.prepare(
         `UPDATE payment_attempts
          SET state = 'processing', provider_status = 'SUBMISSION_UNKNOWN', last_error = ?,
              next_reconcile_at = ?, updated_at = ? WHERE id = ? AND state = 'submitting'`,
-      ).bind(providerError(error), unknownAt, unknownAt, attempt.id),
+      ).bind(detail, unknownAt, unknownAt, attempt.id),
       c.env.DB.prepare("UPDATE payrun_items SET status = 'processing', error = ? WHERE id = ?")
         .bind("Submission outcome unknown; reconciliation scheduled", attempt.item_id),
       c.env.DB.prepare("UPDATE chain_records SET status = 'processing', provider_status = 'SUBMISSION_UNKNOWN', error = ? WHERE attempt_id = ?")
@@ -435,14 +464,41 @@ paymentRoutes.post("/attempts/:attemptId/reconcile", requireRole("admin"), async
   if (!["submitting", "submitted", "processing"].includes(attempt.state)) {
     return c.json({ error: `Attempt in state ${attempt.state} is not ready for reconciliation` }, 409);
   }
-  const forceLocal = c.env.PAYMENTS_EXECUTION_ACK === "local-test";
-  return c.json({ attempt: await reconcilePaymentAttempt(c.env, attempt, { force: forceLocal }), reused: false });
+  // Manual reconcile should always run (skip the cron lock) so stuck
+  // unsubmitted attempts can be failed and reopened immediately.
+  return c.json({ attempt: await reconcilePaymentAttempt(c.env, attempt, { force: true }), reused: false });
 });
 
 paymentRoutes.post("/reconcile", requireRole("admin"), async (c) => {
   const blocked = liveGateResponse(c);
   if (blocked) return blocked;
   return c.json(await reconcileOpenPayments(c.env, 1));
+});
+
+// Reopen failed payroll items so a fresh confidential quote can be created.
+paymentRoutes.post("/runs/:runId/reopen-failed", requireRole("admin"), async (c) => {
+  const user = c.get("user") as AuthUser;
+  const runId = c.req.param("runId");
+  const run = await c.env.DB.prepare(
+    "SELECT id FROM payroll_runs WHERE id = ? AND org_id = ? AND archived_at IS NULL",
+  ).bind(runId, user.org_id).first();
+  if (!run) return c.json({ error: "Run not found" }, 404);
+
+  const timestamp = nowIso();
+  const result = await c.env.DB.prepare(
+    `UPDATE payrun_items
+     SET status = 'pending', deposit_address = NULL, intent_hash = NULL,
+         signed_at = NULL, submitted_at = NULL, confirmed_at = NULL,
+         error = COALESCE(error, 'Reopened after failed payment attempt')
+     WHERE run_id = ? AND status = 'failed' AND removed_at IS NULL`,
+  ).bind(runId).run();
+  await c.env.DB.prepare("UPDATE payroll_runs SET status = 'ready', updated_at = ? WHERE id = ? AND org_id = ?")
+    .bind(timestamp, runId, user.org_id).run();
+  await c.env.DB.prepare(
+    "INSERT INTO audit_log (id, org_id, actor_id, action, detail) VALUES (?, ?, ?, 'payment.reopened', ?)",
+  ).bind(uuid(), user.org_id, user.id, `Reopened failed items in run ${runId}`).run();
+
+  return c.json({ ok: true, reopened: Number(result.meta.changes || 0) });
 });
 
 paymentRoutes.get("/runs/:runId/attempts", requireRole("admin"), async (c) => {
