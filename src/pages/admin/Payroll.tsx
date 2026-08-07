@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Archive, CalendarClock, ChevronRight, CircleDollarSign, FileUp, Pause, Pencil, Play, Plus, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
+import { Archive, CalendarClock, ChevronRight, CircleDollarSign, FileUp, Pause, Pencil, Play, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -308,6 +308,11 @@ export function PayrollPage({ user }: { user: AuthUser }) {
   const schedules = scheduleData?.schedules ?? [];
   const selected = runs.find((run) => run.id === selectedId) ?? runs[0] ?? null;
 
+  const openRun = (run: PayrollRun) => {
+    setSelectedId(run.id);
+    if (run.itemCount > 0 && run.status !== "paid") setShowPay(true);
+  };
+
   const create = async () => {
     if (!label.trim()) return;
     setCreating(true);
@@ -338,18 +343,10 @@ export function PayrollPage({ user }: { user: AuthUser }) {
         title="Payroll runs"
         description="Enter net amounts per employee, validate payout readiness, then send confidential mainnet payments when the API is unlocked."
         actions={(
-          <>
-            <Button variant="outline" type="button" onClick={() => setShowCreate(true)}>
-              <Plus data-icon="inline-start" />
-              New run
-            </Button>
-            {selected && (
-              <Button type="button" disabled={selected.itemCount === 0} onClick={() => setShowPay(true)}>
-                <ShieldCheck data-icon="inline-start" />
-                Pay / validate
-              </Button>
-            )}
-          </>
+          <Button variant="outline" type="button" onClick={() => setShowCreate(true)}>
+            <Plus data-icon="inline-start" />
+            New run
+          </Button>
         )}
       />
 
@@ -406,7 +403,7 @@ export function PayrollPage({ user }: { user: AuthUser }) {
       <Card>
         <CardHeader>
           <CardTitle>All payroll runs</CardTitle>
-          <CardDescription>Select a run to review its payment list.</CardDescription>
+          <CardDescription>Select any run row to review and pay. Runs without payable items open their details instead.</CardDescription>
           <CardAction><Badge variant="secondary">{runs.length} total</Badge></CardAction>
         </CardHeader>
         <CardContent className="px-0">
@@ -430,9 +427,22 @@ export function PayrollPage({ user }: { user: AuthUser }) {
               </TableHeader>
               <TableBody>
                 {runs.map((run) => (
-                  <TableRow key={run.id} data-state={selected?.id === run.id ? "selected" : undefined}>
+                  <TableRow
+                    key={run.id}
+                    data-state={selected?.id === run.id ? "selected" : undefined}
+                    className="cursor-pointer transition-colors hover:bg-muted/50 focus-within:bg-muted/50"
+                    onClick={() => openRun(run)}
+                  >
                     <TableCell className="pl-4">
-                      <button type="button" className="font-medium hover:underline" onClick={() => setSelectedId(run.id)}>
+                      <button
+                        type="button"
+                        className="font-medium text-left hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                        aria-label={`${run.itemCount > 0 && run.status !== "paid" ? "Review and pay" : "Open"} ${run.label}`}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openRun(run);
+                        }}
+                      >
                         {run.label}
                       </button>
                     </TableCell>
@@ -443,9 +453,7 @@ export function PayrollPage({ user }: { user: AuthUser }) {
                     <TableCell className="tabular-nums">{formatTokenAmount(run.usdtMinor)}</TableCell>
                     <TableCell><StatusBadge status={run.status} label={runStatusLabel(run.status)} /></TableCell>
                     <TableCell className="pr-4 text-right">
-                      <Button variant="ghost" size="icon-sm" type="button" onClick={() => setSelectedId(run.id)} aria-label={`Open ${run.label}`}>
-                        <ChevronRight />
-                      </Button>
+                      <ChevronRight className="ml-auto size-4 text-muted-foreground" aria-hidden="true" />
                     </TableCell>
                   </TableRow>
                 ))}
