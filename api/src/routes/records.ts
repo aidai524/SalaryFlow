@@ -23,7 +23,7 @@ recordRoutes.get("/me", requireRole("employee"), async (c) => {
   const emp = await c.env.DB.prepare("SELECT id FROM employees WHERE user_id = ?").bind(user.id).first<{ id: string }>();
   if (!emp) return c.json({ records: [] });
   const rows = await c.env.DB.prepare(
-    "SELECT * FROM payrun_items WHERE employee_id = ? ORDER BY created_at DESC",
+    "SELECT * FROM payrun_items WHERE employee_id = ? AND removed_at IS NULL ORDER BY created_at DESC",
   ).bind(emp.id).all<Record<string, unknown>>();
   return c.json({ records: rows.results });
 });

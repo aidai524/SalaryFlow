@@ -4,7 +4,6 @@ import {
   Bell,
   ChevronsUpDown,
   CircleDollarSign,
-  FileText,
   LayoutDashboard,
   LogOut,
   ReceiptText,
@@ -64,7 +63,6 @@ const employeeNav: NavigationItem[] = [
   { id: "home", en: "My pay", zh: "我的工资", icon: LayoutDashboard },
   { id: "history", en: "Payment history", zh: "收款记录", icon: Activity },
   { id: "payout", en: "Payout method", zh: "收款方式", icon: WalletCards },
-  { id: "documents", en: "Documents", zh: "合同与凭证", icon: FileText },
 ];
 
 interface ShellProps {

@@ -4,8 +4,8 @@ compatibility_date = "2024-11-01"
 
 # Production defaults. Local development overrides these values in .dev.vars.
 [vars]
-APP_URL = "https://salaryflow-payroll-prototype.pages.dev"
-API_URL = "https://salaryflow-payroll-prototype.pages.dev/api"
+APP_URL = "https://salary.stableflow.ai"
+API_URL = "https://salary.stableflow.ai/api"
 COOKIE_DOMAIN = ""
 INTENTS_API_URL = "https://1click.chaindefuser.com"
 MOCK_EMAIL = "false"

@@ -61,7 +61,7 @@ async function loadPayableItem(db: D1Database, orgId: string | null, itemId: str
      FROM payrun_items pi
      JOIN payroll_runs pr ON pr.id = pi.run_id
      LEFT JOIN employees e ON e.id = pi.employee_id AND e.org_id = pr.org_id
-     WHERE pi.id = ? AND pr.org_id = ?`,
+     WHERE pi.id = ? AND pr.org_id = ? AND pi.removed_at IS NULL AND pr.archived_at IS NULL`,
   ).bind(itemId, orgId).first<PayableItem>();
 }
 
@@ -87,7 +87,7 @@ paymentRoutes.post("/quote", requireRole("admin"), async (c) => {
   }
   if (body?.dry !== true) return c.json(liveExecutionDisabled, 409);
   if (!runId) return c.json({ error: "runId is required" }, 400);
-  const run = await c.env.DB.prepare("SELECT id FROM payroll_runs WHERE id = ? AND org_id = ?").bind(runId, user.org_id).first<{ id: string }>();
+  const run = await c.env.DB.prepare("SELECT id FROM payroll_runs WHERE id = ? AND org_id = ? AND archived_at IS NULL").bind(runId, user.org_id).first<{ id: string }>();
   if (!run) return c.json({ error: "Run not found" }, 404);
 
   const items = await c.env.DB.prepare(
@@ -98,7 +98,8 @@ paymentRoutes.post("/quote", requireRole("admin"), async (c) => {
      FROM payrun_items pi
      JOIN payroll_runs pr ON pr.id = pi.run_id
      LEFT JOIN employees e ON e.id = pi.employee_id AND e.org_id = pr.org_id
-     WHERE pi.run_id = ? AND pr.org_id = ? AND pi.status = 'pending'`,
+     WHERE pi.run_id = ? AND pr.org_id = ? AND pi.status = 'pending'
+       AND pi.removed_at IS NULL AND pr.archived_at IS NULL`,
   ).bind(runId, user.org_id).all<PayableItem>();
   if (items.results.length === 0) return c.json({ error: "No pending items in this run" }, 400);
 
@@ -446,7 +447,7 @@ paymentRoutes.post("/reconcile", requireRole("admin"), async (c) => {
 
 paymentRoutes.get("/runs/:runId/attempts", requireRole("admin"), async (c) => {
   const user = c.get("user") as AuthUser;
-  const run = await c.env.DB.prepare("SELECT id FROM payroll_runs WHERE id = ? AND org_id = ?")
+  const run = await c.env.DB.prepare("SELECT id FROM payroll_runs WHERE id = ? AND org_id = ? AND archived_at IS NULL")
     .bind(c.req.param("runId"), user.org_id).first();
   if (!run) return c.json({ error: "Run not found" }, 404);
   const attempts = await c.env.DB.prepare(

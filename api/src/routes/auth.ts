@@ -24,7 +24,16 @@ authRoutes.post("/register", async (c) => {
 
   const userId = uuid();
   const orgId = uuid();
-  const passwordHash = await hashPassword(password);
+  let passwordHash: string;
+  try {
+    passwordHash = await hashPassword(password);
+  } catch (error) {
+    console.error("Password hashing failed during registration", error instanceof Error ? error.name : "UnknownError");
+    return c.json(
+      { error: "Account security is temporarily unavailable", code: "PASSWORD_HASH_UNAVAILABLE" },
+      503,
+    );
+  }
   const now = nowIso();
 
   await c.env.DB.batch([

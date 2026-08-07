@@ -37,6 +37,31 @@ export interface PayrollRun {
   itemCount: number;
   usdcMinor: number;
   usdtMinor: number;
+  cadence: PayrollCadence;
+  schedule_id: string | null;
+  source: "manual" | "schedule";
+}
+
+export type PayrollCadence = "manual" | "weekly" | "biweekly" | "monthly";
+
+export interface PayrollSchedule {
+  id: string;
+  name: string;
+  cadence: Exclude<PayrollCadence, "manual">;
+  next_pay_date: string;
+  last_generated_date: string;
+  draft_lead_days: number;
+  active: boolean;
+  created_at: string;
+  updated_at: string | null;
+}
+
+export interface PayrollImportRow {
+  employeeEmail: string;
+  employeeName: string;
+  amount: string;
+  token: string;
+  network: string;
 }
 
 export interface PayrunItem {
@@ -190,12 +215,25 @@ export const api = {
 
   // payroll
   listRuns: () => request<{ runs: PayrollRun[] }>("/payroll"),
-  createRun: (body: { label: string; payDate: string }) => request<{ run: PayrollRun }>("/payroll", { method: "POST", body: JSON.stringify(body) }),
+  createRun: (body: { label: string; payDate: string; cadence?: PayrollCadence }) => request<{ run: PayrollRun }>("/payroll", { method: "POST", body: JSON.stringify(body) }),
+  listPayrollSchedules: () => request<{ schedules: PayrollSchedule[] }>("/payroll/schedules"),
+  updatePayrollSchedule: (id: string, body: { name?: string; cadence?: Exclude<PayrollCadence, "manual">; nextPayDate?: string; active?: boolean }) =>
+    request<{ schedule: PayrollSchedule }>(`/payroll/schedules/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  archivePayrollSchedule: (id: string) => request<{ ok: boolean; archivedAt: string }>(`/payroll/schedules/${id}`, { method: "DELETE" }),
   getRun: (id: string) => request<{ run: PayrollRun; items: PayrunItem[] }>(`/payroll/${id}`),
   addItem: (runId: string, body: { employeeId?: string; employeeName?: string; amount: string; token?: string; network?: string }) =>
     request<{ item: PayrunItem }>(`/payroll/${runId}/items`, { method: "POST", body: JSON.stringify(body) }),
+  importPayrollItems: (runId: string, rows: PayrollImportRow[]) =>
+    request<{ ok: boolean; importedCount: number; linkedCount: number; manualCount: number }>(`/payroll/${runId}/items/import`, { method: "POST", body: JSON.stringify({ rows }) }),
+  updatePayrollItem: (runId: string, itemId: string, body: { employeeId?: string | null; employeeName?: string; amount?: string; token?: string; network?: string }) =>
+    request<{ item: PayrunItem }>(`/payroll/${runId}/items/${itemId}`, { method: "PATCH", body: JSON.stringify(body) }),
+  removePayrollItem: (runId: string, itemId: string) =>
+    request<{ ok: boolean; removedAt: string }>(`/payroll/${runId}/items/${itemId}`, { method: "DELETE" }),
+  updateRun: (id: string, body: { label?: string; payDate?: string; status?: string }) =>
+    request<{ run: PayrollRun }>(`/payroll/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  archiveRun: (id: string) => request<{ ok: boolean; archivedAt: string }>(`/payroll/${id}`, { method: "DELETE" }),
   setRunStatus: (id: string, status: string) =>
-    request<{ ok: boolean }>(`/payroll/${id}`, { method: "PATCH", body: JSON.stringify({ status }) }),
+    request<{ run: PayrollRun }>(`/payroll/${id}`, { method: "PATCH", body: JSON.stringify({ status }) }),
 
   // records
   listRecords: () => request<{ records: ChainRecord[] }>("/records"),

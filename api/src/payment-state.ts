@@ -186,7 +186,7 @@ export async function syncPayrollRunStatus(db: D1Database, runId: string): Promi
             SUM(CASE WHEN status = 'paid' THEN 1 ELSE 0 END) AS paid,
             SUM(CASE WHEN status IN ('failed', 'refunded') THEN 1 ELSE 0 END) AS failed,
             SUM(CASE WHEN status = 'processing' THEN 1 ELSE 0 END) AS processing
-     FROM payrun_items WHERE run_id = ?`,
+     FROM payrun_items WHERE run_id = ? AND removed_at IS NULL`,
   ).bind(runId).first<{ total: number; paid: number; failed: number; processing: number }>();
   const total = Number(stats?.total || 0);
   const paid = Number(stats?.paid || 0);

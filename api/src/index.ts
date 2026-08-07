@@ -16,6 +16,7 @@ import { payrollRoutes } from "./routes/payroll";
 import { paymentRoutes } from "./routes/payments";
 import { recordRoutes } from "./routes/records";
 import { reconcileOpenPayments } from "./payment-execution";
+import { materializePayrollSchedules } from "./payroll-schedule";
 import type { Env } from "./types";
 
 const app = new Hono<AppEnv>();
@@ -45,6 +46,9 @@ export default {
   fetch: app.fetch,
   scheduled(_controller, env, ctx) {
     if (!env.JWT_SECRET) return;
-    ctx.waitUntil(reconcileOpenPayments(env, 1));
+    ctx.waitUntil(Promise.all([
+      materializePayrollSchedules(env),
+      reconcileOpenPayments(env, 1),
+    ]));
   },
 } satisfies ExportedHandler<Env>;

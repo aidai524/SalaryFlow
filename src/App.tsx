@@ -7,7 +7,7 @@ import { PayrollPage } from "./pages/admin/Payroll";
 import { TeamPayoutsPage } from "./pages/admin/TeamPayouts";
 import { RecordsPage } from "./pages/admin/Records";
 import { SettingsPage } from "./pages/admin/Settings";
-import { EmployeeHomePage, EmployeeHistoryPage, EmployeePayoutPage, EmployeeDocumentsPage } from "./pages/employee/EmployeePages";
+import { EmployeeHomePage, EmployeeHistoryPage, EmployeePayoutPage } from "./pages/employee/EmployeePages";
 import { api, type AuthUser } from "./lib/api";
 
 function App() {
@@ -70,7 +70,6 @@ function App() {
       home: "My pay",
       history: "Payment history",
       payout: "Payout method",
-      documents: "Documents",
     };
     document.title = `SalaryFlow · ${titles[screen] || "Workspace"}`;
   }, [screen, user]);
@@ -122,10 +121,9 @@ function App() {
         : screen === "records" ? <RecordsPage />
         : <SettingsPage user={user} onUserChange={setUser} onOrgChange={handleOrgChange} />
       ) : (
-        screen === "home" ? <EmployeeHomePage user={user} orgName={orgName} />
-        : screen === "history" ? <EmployeeHistoryPage />
+        screen === "history" ? <EmployeeHistoryPage />
         : screen === "payout" ? <EmployeePayoutPage />
-        : <EmployeeDocumentsPage user={user} />
+        : <EmployeeHomePage user={user} orgName={orgName} />
       )}
     </Shell>
   );

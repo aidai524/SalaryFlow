@@ -4,8 +4,16 @@
 import { SignJWT, jwtVerify } from "jose";
 import type { Env, JwtPayload } from "./types";
 
-const PBKDF2_ITERATIONS = 150_000;
+// Cloudflare Workers' production runtime caps PBKDF2 at 100,000 iterations.
+// Keep this value at or below the platform limit; each stored hash records its
+// own iteration count so a future authentication backend can migrate safely.
+export const CLOUDFLARE_PBKDF2_MAX_ITERATIONS = 100_000;
+export const PBKDF2_ITERATIONS = 100_000;
 const enc = new TextEncoder();
+
+if (PBKDF2_ITERATIONS > CLOUDFLARE_PBKDF2_MAX_ITERATIONS) {
+  throw new Error("PBKDF2 iteration count exceeds the Cloudflare Workers limit");
+}
 
 function toHex(buf: ArrayBuffer): string {
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");

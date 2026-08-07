@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useAccount, useConnect, useSignMessage } from "wagmi";
+import { useAccount, useConnect, useDisconnect, useSignMessage } from "wagmi";
 import {
   AlertCircle,
   CalendarDays,
@@ -194,6 +194,7 @@ export function EmployeePayoutPage() {
   const [verifying, setVerifying] = useState(false);
   const { address, isConnected } = useAccount();
   const { connect, connectors } = useConnect();
+  const { disconnect } = useDisconnect();
   const { signMessageAsync } = useSignMessage();
   const employee = data?.payout;
 
@@ -220,8 +221,45 @@ export function EmployeePayoutPage() {
   };
 
   const connectedAddressMatches = Boolean(address && address.toLowerCase() === endpoint.trim().toLowerCase());
+  const payoutConfigurationMatches = Boolean(
+    employee
+    && employee.token === token
+    && employee.network === network
+    && employee.endpoint.trim().toLowerCase() === endpoint.trim().toLowerCase(),
+  );
+  const ownershipVerified = Boolean(
+    payoutConfigurationMatches
+    && employee?.status === "ready"
+    && employee.payout_verified_at,
+  );
+
+  const useConnectedAddress = () => {
+    if (!address) return;
+    setEndpoint(address);
+    setSaved(false);
+    setError("");
+    const alreadyVerified = Boolean(
+      employee?.status === "ready"
+      && employee.payout_verified_at
+      && employee.token === token
+      && employee.network === network
+      && employee.endpoint.trim().toLowerCase() === address.toLowerCase(),
+    );
+    setNotice(alreadyVerified
+      ? "This connected wallet is already verified."
+      : "Connected wallet selected. Verify ownership to save and activate it.");
+  };
+
+  const changeConnectedWallet = () => {
+    disconnect();
+    setEndpoint("");
+    setSaved(false);
+    setError("");
+    setNotice("Wallet disconnected. Connect the wallet you want to use for payouts.");
+  };
 
   const verifyWallet = async () => {
+    if (ownershipVerified) return;
     setError("");
     setNotice("");
     if (!isValidEthereumAddress(endpoint.trim())) {
@@ -257,7 +295,7 @@ export function EmployeePayoutPage() {
             <CardHeader>
               <CardTitle>Current payout method</CardTitle>
               <CardDescription>Changes apply only to payroll runs that have not been sent.</CardDescription>
-              <CardAction><StatusBadge status={employee?.status ?? "pending"} label={employee?.status === "ready" ? "Ready" : "Needs verification"} /></CardAction>
+              <CardAction><StatusBadge status={ownershipVerified ? "ready" : "update_required"} label={ownershipVerified ? "Ready" : "Needs verification"} /></CardAction>
             </CardHeader>
             <CardContent className="space-y-5">
               <Field>
@@ -297,19 +335,50 @@ export function EmployeePayoutPage() {
                   </div>
                 </div>
                 <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center">
-                  {!isConnected ? connectors.map((connector) => (
-                    <Button variant="outline" type="button" key={connector.uid} onClick={() => connect({ connector })}>Connect {connector.name}</Button>
+                  {ownershipVerified ? (
+                    <>
+                      <span className="mono-value min-w-0 flex-1 truncate text-xs text-emerald-700">
+                        {employee?.endpoint.slice(0, 10)}…{employee?.endpoint.slice(-8)} · address verified
+                      </span>
+                      <span role="status" className="inline-flex items-center gap-1.5 text-sm font-medium text-emerald-700">
+                        <CheckCircle2 className="size-4" aria-hidden="true" />Ownership verified
+                      </span>
+                      <Button variant="ghost" type="button" onClick={changeConnectedWallet}>Change wallet</Button>
+                    </>
+                  ) : !isConnected ? connectors.map((connector) => (
+                    <Button
+                      variant="outline"
+                      type="button"
+                      key={connector.uid}
+                      onClick={() => {
+                        setError("");
+                        setNotice("");
+                        connect({ connector });
+                      }}
+                    >
+                      Connect {connector.name}
+                    </Button>
                   )) : (
                     <>
                       <span className={`mono-value min-w-0 flex-1 truncate text-xs ${connectedAddressMatches ? "text-emerald-700" : "text-amber-700"}`}>
                         {address?.slice(0, 10)}…{address?.slice(-8)} · {connectedAddressMatches ? "address matches" : "does not match"}
                       </span>
-                      <Button variant="outline" type="button" disabled={verifying || !connectedAddressMatches} onClick={verifyWallet}>
-                        <ShieldCheck data-icon="inline-start" />{verifying ? "Waiting…" : "Verify ownership"}
-                      </Button>
+                      {connectedAddressMatches ? (
+                        <Button variant="outline" type="button" disabled={verifying} onClick={verifyWallet}>
+                          <ShieldCheck data-icon="inline-start" />{verifying ? "Waiting…" : "Verify ownership"}
+                        </Button>
+                      ) : (
+                        <Button variant="outline" type="button" onClick={useConnectedAddress}>Use this address</Button>
+                      )}
+                      <Button variant="ghost" type="button" disabled={verifying} onClick={changeConnectedWallet}>Change wallet</Button>
                     </>
                   )}
                 </div>
+                {!ownershipVerified && isConnected && !connectedAddressMatches && (
+                  <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                    Use the connected address above, or disconnect it and connect a different wallet. Either choice requires a new ownership signature.
+                  </p>
+                )}
               </div>
             </CardContent>
             <CardFooter className="justify-between">

@@ -28,9 +28,12 @@ function escapeHtml(value: string) {
 
 export async function sendInviteEmail(env: Env, input: InviteMailInput): Promise<InviteMailResult> {
   const apiKey = env.RESEND_API_KEY;
-  const mock = env.MOCK_EMAIL === "true" || !apiKey;
+  const mock = env.MOCK_EMAIL === "true";
   if (mock) {
     return { ok: true, mock: true };
+  }
+  if (!apiKey) {
+    return { ok: false, error: "Email delivery is not configured" };
   }
   try {
     const from = env.SENDER_EMAIL || "SalaryFlow <onboarding@resend.dev>";

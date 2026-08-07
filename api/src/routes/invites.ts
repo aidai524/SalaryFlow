@@ -148,7 +148,16 @@ inviteRoutes.post("/accept", async (c) => {
       "UPDATE users SET org_id = ?, role = ?, status = 'active', updated_at = ? WHERE id = ?",
     ).bind(invite.org_id, role, nowIso(), userId));
   } else {
-    const passwordHash = await hashPassword(password);
+    let passwordHash: string;
+    try {
+      passwordHash = await hashPassword(password);
+    } catch (error) {
+      console.error("Password hashing failed during invitation acceptance", error instanceof Error ? error.name : "UnknownError");
+      return c.json(
+        { error: "Account security is temporarily unavailable", code: "PASSWORD_HASH_UNAVAILABLE" },
+        503,
+      );
+    }
     statements.push(c.env.DB.prepare(
       "INSERT INTO users (id, email, name, password_hash, role, status, org_id, created_at) VALUES (?, ?, ?, ?, ?, 'active', ?, ?)",
     ).bind(userId, email, displayName, passwordHash, role, invite.org_id, nowIso()));

@@ -101,9 +101,9 @@ npm run build
 npm run deploy:web
 ```
 
-Production currently uses `https://salaryflow-payroll-prototype.pages.dev` with an empty
-`COOKIE_DOMAIN`; the Pages Function proxy makes `/api` same-origin. If a custom frontend domain
-is added later, update `APP_URL` and redeploy the Worker before sending new invitation links.
+Production uses `https://salary.stableflow.ai` with an empty `COOKIE_DOMAIN`; the Pages Function proxy
+makes `/api` same-origin. The Cloudflare Pages project URL is a deployment fallback only and must not
+be used in user-facing invitation links.
 
 ## Payment flow (current safety mode)
 
@@ -120,6 +120,11 @@ against 1Click's `/v0/tokens` metadata. Quote execution fields are consumed only
 the Ed25519 signature; reconciliation also verifies that the status response embeds the same signed quote.
 The automated smoke test exercises that code against a loopback-only fake provider; the local-test
 acknowledgement is rejected for non-loopback provider URLs.
+
+Draft payroll runs can be renamed, rescheduled, and archived. Their pending payment rows can be edited or
+removed, and recurring schedules can be renamed, rescheduled, paused, resumed, or archived. These actions use
+soft deletion and append audit events; they never erase payroll history. As soon as a payment attempt exists,
+the affected payment and run metadata become immutable.
 
 ## Stateful payment flow (implemented, mainnet not enabled)
 
