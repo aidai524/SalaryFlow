@@ -403,7 +403,7 @@ export function PayrollPage({ user }: { user: AuthUser }) {
       <Card>
         <CardHeader>
           <CardTitle>All payroll runs</CardTitle>
-          <CardDescription>Select any run row to review and pay. Runs without payable items open their details instead.</CardDescription>
+          <CardDescription>Select any run row to review and pay. Empty or already-paid runs open their details instead.</CardDescription>
           <CardAction><Badge variant="secondary">{runs.length} total</Badge></CardAction>
         </CardHeader>
         <CardContent className="px-0">
