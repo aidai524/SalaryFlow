@@ -132,7 +132,12 @@ export function validatePaymentAssetMapping(
         message: `${kind} asset ${configured.assetId} decimals mismatch: configured ${configured.decimals}, provider ${metadata.decimals}`,
       };
     }
-    if (metadata.symbol.toUpperCase() !== token) {
+    const providerSymbol = metadata.symbol.toUpperCase();
+    const acceptedArbitrumUsdtAlias = kind === "destination"
+      && network === "Arbitrum"
+      && token === "USDT"
+      && providerSymbol === "USDT0";
+    if (providerSymbol !== token && !acceptedArbitrumUsdtAlias) {
       return {
         code: "ASSET_MAP_PROVIDER_MISMATCH",
         message: `${kind} asset ${configured.assetId} is ${metadata.symbol}, not ${token}`,

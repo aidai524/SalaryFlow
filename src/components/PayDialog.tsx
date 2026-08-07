@@ -15,9 +15,7 @@ import {
 import { Label } from "@/components/ui/label";
 import {
   PAYMENT_ITEM_PROGRESS_LABELS,
-  PAYMENT_MODES,
   type PaymentItemProgressStatus,
-  type PaymentUiMode,
 } from "@/components/config";
 import { api, ApiError, type AuthUser, type PayrunItem } from "@/lib/api";
 import {
@@ -50,12 +48,10 @@ function shortAddress(address: string) {
 }
 
 export function PayDialog({ run, user, onClose, onCompleted }: PayDialogProps) {
-  const [mode, setMode] = useState<PaymentUiMode>(PAYMENT_MODES.DRY_RUN);
   const [step, setStep] = useState<Step>("confirm");
   const [confirmed, setConfirmed] = useState(false);
   const [error, setError] = useState("");
   const [statusText, setStatusText] = useState("");
-  const [validation, setValidation] = useState<{ itemCount: number; validatedItemCount: number } | null>(null);
   const [itemProgress, setItemProgress] = useState<ItemProgress[]>([]);
   const [liveSummary, setLiveSummary] = useState<{ submitted: number; failed: number } | null>(null);
 
@@ -70,7 +66,6 @@ export function PayDialog({ run, user, onClose, onCompleted }: PayDialogProps) {
     && address.toLowerCase() === user.wallet_address.toLowerCase(),
   );
   const canStartLive = walletReady && connectedMatches && confirmed;
-  const canStartDry = confirmed;
 
   const injectedConnector = useMemo(
     () => connectors.find((connector) => connector.type === "injected") ?? connectors[0],
@@ -81,28 +76,10 @@ export function PayDialog({ run, user, onClose, onCompleted }: PayDialogProps) {
     setItemProgress((current) => current.map((row) => (row.itemId === itemId ? { ...row, ...patch } : row)));
   };
 
-  const runDryCheck = async () => {
-    setStep("working");
-    setError("");
-    setStatusText("Checking employee and payout readiness…");
-    setLiveSummary(null);
-    setItemProgress([]);
-    try {
-      const result = await api.quote({ runId: run.id, dry: true });
-      setValidation({ itemCount: result.itemCount, validatedItemCount: result.validatedItemCount });
-      setStep("done");
-      onCompleted?.();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Quote failed");
-      setStep("error");
-    }
-  };
-
   const runLivePayments = async () => {
     if (!canStartLive || !user.wallet_address) return;
     setStep("working");
     setError("");
-    setValidation(null);
     setLiveSummary(null);
     setStatusText("Loading payable items…");
     try {
@@ -175,8 +152,7 @@ export function PayDialog({ run, user, onClose, onCompleted }: PayDialogProps) {
       const needsFreshQuote = workItems.some((item) => !item.attemptId);
       if (needsFreshQuote) {
         setStatusText("Validating payroll readiness…");
-        const readiness = await api.quote({ runId: run.id, dry: true });
-        setValidation({ itemCount: readiness.itemCount, validatedItemCount: readiness.validatedItemCount });
+        await api.quote({ runId: run.id, dry: true });
       }
 
       setItemProgress(workItems.map((item) => ({
@@ -256,16 +232,7 @@ export function PayDialog({ run, user, onClose, onCompleted }: PayDialogProps) {
     }
   };
 
-  const start = () => {
-    if (mode === PAYMENT_MODES.LIVE) void runLivePayments();
-    else void runDryCheck();
-  };
-
-  const title = step === "done"
-    ? (mode === PAYMENT_MODES.LIVE ? "Payments submitted" : "Dry-run completed")
-    : mode === PAYMENT_MODES.LIVE
-      ? "Send confidential payroll?"
-      : "Validate this payroll batch?";
+  const title = step === "done" ? "Payments submitted" : "Send confidential payroll?";
 
   return (
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
@@ -277,9 +244,7 @@ export function PayDialog({ run, user, onClose, onCompleted }: PayDialogProps) {
           <DialogTitle className="text-lg">{title}</DialogTitle>
           <DialogDescription className="leading-6">
             {run.label} · {run.itemCount} payments.
-            {mode === PAYMENT_MODES.LIVE
-              ? " Live mode requests a confidential 1Click quote per employee, then asks your verified admin wallet to sign each intent."
-              : " Dry-run checks readiness without contacting 1Click, signing, or moving funds."}
+            Live payment requests a confidential 1Click quote per employee, then asks your verified admin wallet to sign each intent.
           </DialogDescription>
         </DialogHeader>
 
@@ -300,25 +265,7 @@ export function PayDialog({ run, user, onClose, onCompleted }: PayDialogProps) {
 
         {step === "confirm" && (
           <div className="space-y-3">
-            <div className="grid grid-cols-2 gap-2">
-              <Button
-                type="button"
-                variant={mode === PAYMENT_MODES.DRY_RUN ? "default" : "outline"}
-                onClick={() => { setMode(PAYMENT_MODES.DRY_RUN); setConfirmed(false); }}
-              >
-                Dry-run check
-              </Button>
-              <Button
-                type="button"
-                variant={mode === PAYMENT_MODES.LIVE ? "default" : "outline"}
-                onClick={() => { setMode(PAYMENT_MODES.LIVE); setConfirmed(false); }}
-              >
-                Send live payments
-              </Button>
-            </div>
-
-            {mode === PAYMENT_MODES.LIVE && (
-              <div className="space-y-3 rounded-lg border p-3">
+            <div className="space-y-3 rounded-lg border p-3">
                 <div className="flex items-start gap-3">
                   <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary">
                     <WalletCards className="size-4" />
@@ -353,8 +300,7 @@ export function PayDialog({ run, user, onClose, onCompleted }: PayDialogProps) {
                     {connecting ? "Connecting…" : "Connect wallet"}
                   </Button>
                 )}
-              </div>
-            )}
+            </div>
 
             <div className="flex items-start gap-3 rounded-lg border p-3">
               <Checkbox
@@ -363,29 +309,17 @@ export function PayDialog({ run, user, onClose, onCompleted }: PayDialogProps) {
                 onCheckedChange={(checked) => setConfirmed(checked === true)}
               />
               <Label htmlFor="payment-confirmation" className="items-start text-sm leading-5 font-normal">
-                {mode === PAYMENT_MODES.LIVE
-                  ? "I reviewed the totals and authorize confidential mainnet payment intents for this batch."
-                  : "I reviewed the totals and want to run a non-executing payment readiness check."}
+                I reviewed the totals and authorize confidential mainnet payment intents for this batch.
               </Label>
             </div>
 
-            {mode === PAYMENT_MODES.LIVE ? (
-              <Alert className="border-amber-200 bg-amber-50 text-amber-900">
-                <AlertCircle />
-                <AlertTitle>Mainnet funds can move</AlertTitle>
-                <AlertDescription className="text-amber-800">
-                  Each payment uses NEAR Intents confidential swaps (`CONFIDENTIAL_INTENTS`). There is no testnet. Use a tiny amount first.
-                </AlertDescription>
-              </Alert>
-            ) : (
-              <Alert className="border-emerald-200 bg-emerald-50 text-emerald-900">
-                <ShieldCheck />
-                <AlertTitle>No funds move in dry-run</AlertTitle>
-                <AlertDescription className="text-emerald-800">
-                  This only validates employee payout readiness on the server.
-                </AlertDescription>
-              </Alert>
-            )}
+            <Alert className="border-amber-200 bg-amber-50 text-amber-900">
+              <AlertCircle />
+              <AlertTitle>Mainnet funds can move</AlertTitle>
+              <AlertDescription className="text-amber-800">
+                Each payment uses NEAR Intents confidential swaps (`CONFIDENTIAL_INTENTS`). There is no testnet. Use a tiny amount first.
+              </AlertDescription>
+            </Alert>
           </div>
         )}
 
@@ -413,17 +347,7 @@ export function PayDialog({ run, user, onClose, onCompleted }: PayDialogProps) {
           </div>
         )}
 
-        {step === "done" && mode === PAYMENT_MODES.DRY_RUN && validation && (
-          <Alert className="border-emerald-200 bg-emerald-50 text-emerald-900">
-            <CheckCircle2 />
-            <AlertTitle>Readiness validated for {validation.validatedItemCount} of {validation.itemCount} pending payments</AlertTitle>
-            <AlertDescription className="text-emerald-800">
-              No intent was generated and no payment record was created. Switch to Send live payments when you are ready.
-            </AlertDescription>
-          </Alert>
-        )}
-
-        {step === "done" && mode === PAYMENT_MODES.LIVE && (
+        {step === "done" && (
           <Alert className="border-emerald-200 bg-emerald-50 text-emerald-900">
             <CheckCircle2 />
             <AlertTitle>
@@ -438,7 +362,7 @@ export function PayDialog({ run, user, onClose, onCompleted }: PayDialogProps) {
         {step === "error" && (
           <Alert variant="destructive">
             <AlertCircle />
-            <AlertTitle>{mode === PAYMENT_MODES.LIVE ? "Live payment failed" : "Readiness check failed"}</AlertTitle>
+            <AlertTitle>Live payment failed</AlertTitle>
             <AlertDescription>{error}</AlertDescription>
           </Alert>
         )}
@@ -466,15 +390,15 @@ export function PayDialog({ run, user, onClose, onCompleted }: PayDialogProps) {
           {step === "confirm" && (
             <Button
               type="button"
-              disabled={mode === PAYMENT_MODES.LIVE ? !canStartLive : !canStartDry}
-              onClick={start}
+              disabled={!canStartLive}
+              onClick={() => void runLivePayments()}
             >
               <ShieldCheck data-icon="inline-start" />
-              {mode === PAYMENT_MODES.LIVE ? "Send confidential payments" : "Run dry check"}
+              Send confidential payments
             </Button>
           )}
           {step === "error" && (
-            <Button type="button" onClick={start}>
+            <Button type="button" onClick={() => void runLivePayments()}>
               Retry
             </Button>
           )}

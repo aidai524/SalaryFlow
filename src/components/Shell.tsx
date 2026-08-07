@@ -151,7 +151,7 @@ function AppSidebar({
               Confidential payroll
             </div>
             <p className="mt-1.5 text-xs leading-5 text-muted-foreground">
-              Dry-run validates readiness. Live mode signs NEAR Intents confidential payments.
+              Every payment uses a live 1Click quote and the verified admin wallet signature.
             </p>
           </div>
         </SidebarGroup>

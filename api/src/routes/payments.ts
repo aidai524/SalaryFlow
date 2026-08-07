@@ -205,7 +205,6 @@ paymentRoutes.post("/items/:itemId/quote", requireRole("admin"), async (c) => {
     deadline: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
     slippageTolerance: 100,
   };
-  console.log("quoteRequest: %o", quoteRequest)
   const inserted = await c.env.DB.prepare(
     `INSERT OR IGNORE INTO payment_attempts
      (id, org_id, run_id, item_id, idempotency_key, state, token, network,

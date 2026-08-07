@@ -101,9 +101,6 @@ function shouldFailUnsubmittedExpiredAttempt(attempt: PaymentAttemptRow): string
   if (quoteRequestDeadlinePassed(attempt.quote_request)) {
     return "Quote request deadline passed before the intent was accepted; reopen for a new quote";
   }
-  if (attempt.provider_status === "SUBMISSION_UNKNOWN" || attempt.provider_status === "PENDING_DEPOSIT") {
-    return `Unsubmitted payment stuck in ${attempt.provider_status}; reopen for a new quote`;
-  }
   return null;
 }
 

@@ -369,7 +369,7 @@ try {
     body: { challengeId: walletChallenge.data.challengeId, signature: walletSignature },
   });
   const adminMe = await apiRequest(baseUrl, "/api/auth/me", { cookie: adminCookie });
-  assert.equal(adminMe.data.user.wallet_address, adminAccount.address);
+  assert.equal(adminMe.data.user.wallet_address.toLowerCase(), adminAccount.address.toLowerCase());
   assert.equal(adminMe.data.user.wallet_verified, true);
 
   const employees = await apiRequest(baseUrl, "/api/org/employees", { cookie: adminCookie });

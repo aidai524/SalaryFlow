@@ -46,7 +46,7 @@ export function RecordsPage() {
       {loading ? (
         <Card><CardContent className="grid h-40 place-items-center text-sm text-muted-foreground">Loading payment records…</CardContent></Card>
       ) : records.length === 0 ? (
-        <EmptyPanel title="No payment records yet" description="A record appears only after a payment reaches the execution state. Dry-runs never create records." />
+        <EmptyPanel title="No payment records yet" description="A record appears after a live payment creates an auditable execution attempt." />
       ) : (
         <Card>
           <CardHeader>
