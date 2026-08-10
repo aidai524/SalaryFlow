@@ -151,13 +151,31 @@ Rules:
 ### Pay (admin home)
 
 - Route `/pay` → `src/views/admin/PayView.tsx`
-- Quick Pay module: `src/components/quick-pay/QuickPayPanel.tsx` (reusable)
+- Quick Pay module: `src/components/quick-pay/QuickPayPanel.tsx` (reusable; Pay Now dialog uses `recipientLocked` + `compensationLayout="centered"` + `destinationTokenLocked`)
 - Token/network picker: `src/components/token-network-dialog/TokenNetworkDialog.tsx`
 - Recipient drawer: `src/components/drawer/RecipientPickerDrawer.tsx`
 - Overview data: `GET /api/org/pay-overview` via `src/hooks/use-pay-api.ts`
 - **Pay status (To be paid / Paid / none):** [`docs/pay-status.md`](pay-status.md) — source of truth for period math, badges, and overview aggregates (`api/src/pay-period.ts`)
+- Recipients deep link: overview list → `/recipients?selected=<employeeId>`
 
 Team switcher control next to the greeting is **disabled** until multi-team lands.
+
+### Recipients (admin)
+
+- Route `/recipients` → `src/views/admin/RecipientsView.tsx` + `src/views/admin/recipients/*`
+- Period picker: `src/components/payment-period-picker/PaymentPeriodPicker.tsx` (`date-fns`)
+- Hooks: `src/hooks/use-recipients-api.ts`
+- List/search/filter/pagination via `GET /api/org/employees`; history via `GET /api/org/employees/:id/payments`
+- Migration `0013_recipient_fields.sql`: contractor `payment_cadence` / `payment_date_key`, invitation `role_title`
+
+### Avatar upload (not implemented)
+
+No R2 binding or upload API today (`api/wrangler.toml` is D1-only; `employees` has no `avatar_url`). Recommended follow-up:
+
+1. Create a Cloudflare **R2** bucket and bind it on the Worker (e.g. `AVATARS`).
+2. Add `avatar_url` on `employees` + `POST /api/org/employees/:id/avatar` (admin, MIME jpeg/png/webp, size cap) writing `org/{orgId}/employees/{id}`.
+3. Prefer Worker-proxied upload over raw D1 blobs or Pages static writes.
+4. UI already uses `IdentityAvatar` (optional `src`) and a camera placeholder (“coming soon”).
 
 ## Wallet architecture
 

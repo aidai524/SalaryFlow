@@ -235,7 +235,12 @@ function InviteManager({ pendingInvites, onChanged }: { pendingInvites: Invitati
     setError("");
     setSending(true);
     try {
-      const result = await api.createInvite({ email: email.trim(), role });
+      const trimmed = email.trim();
+      const result = await api.createInvite({
+        email: trimmed,
+        name: trimmed.split("@")[0] || "Invitee",
+        role,
+      });
       const recipient = email.trim();
       setEmail("");
       setNotice(result.inviteUrl ? `Invitation created in local email mode: ${result.inviteUrl}` : `Invitation sent to ${recipient}.`);

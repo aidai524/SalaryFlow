@@ -42,19 +42,22 @@ Callers: legacy [`src/pages/admin/TeamPayouts.tsx`](../../src/pages/admin/TeamPa
 
   | Field | Type | Required | Notes |
   |---|---|---|---|
+  | `name` | string | yes | Prefill for account/employee profile on accept |
   | `email` | string | yes | |
-  | `role` | `"admin"\|"employee"` | no | default `employee` |
+  | `role` | `"admin"\|"employee"` | no | Account role; default `employee` |
+  | `role_title` | string | no | Job title enum (`Developer` \| `Product` \| `Growth` \| `Finance` \| `Operations`) |
+  | `employee_type` | `"employee"\|"contractor"` | no | Recipient type; default `employee` |
 
 - **Response** — `201` `{ invitation, mail, inviteUrl? }` — `inviteUrl` only when `mail.mock` (`MOCK_EMAIL=true`)
 - **Errors**
 
   | Status | Code | When |
   |---|---|---|
-  | 400 | — | invalid email |
+  | 400 | — | missing name / invalid email / invalid type or role_title |
   | 409 | — | already member / other org / pending invite exists |
   | 502 | `INVITE_EMAIL_FAILED` | **Invitation already inserted**; email failed. Body includes `invitation` |
 
-- **Rules** — Expires in 7 days. Writes audit `invite.created` / `invite.email_failed`.
+- **Rules** — Expires in 7 days. Persists `name`, `role_title`, `employee_type` on the invitation; accept applies them to the employee profile (and uses invite name when the accept form omits name for new accounts). Writes audit `invite.created` / `invite.email_failed`.
 - **Gotchas** — On 502, do not create again; use resend after fixing mail config.
 
 ---

@@ -27,10 +27,12 @@ Type: `EmployeePayStatus` in `api/src/pay-period.ts`.
 
 ## Phase-1 scope
 
-- Stats and badges use the **team** schedule only for `employee_type = 'employee'`.
-- **Contractors** return `none` until Recipients refactor adds per-recipient cadence (TODO).
+- Stats on Pay overview still aggregate **employees** (`employee_type = 'employee'`) against the **team** schedule.
+- **Contractors** with `payment_cadence` of `monthly` / `weekly` use **per-recipient** cadence + `payment_date_key` for badges and Next Payment (Recipients page).
+- Contractors with `on_demand` (or unset cadence) return `none` and have no scheduled Next Payment.
 - Periods count only from `employees.created_at` onward (no liability before hire/add).
 - Missing / unset payment rows for a period key count as **unpaid**.
+- Recipients list may pass `periodKey` to compute row `payStatus` relative to the selected period.
 
 ## Period and payday
 
@@ -84,8 +86,8 @@ Inputs:
 
 ```mermaid
 flowchart TD
-  start[Employee employee_type] -->|contractor| noneBadge[none]
-  start -->|employee| arrears{Any past period unpaid?}
+  start[Resolve schedule] -->|on_demand_or_missing| noneBadge[none]
+  start -->|monthly_or_weekly| arrears{Any past period unpaid?}
   arrears -->|yes| toBePaid[to_be_paid]
   arrears -->|no| currentPaid{Current period paid?}
   currentPaid -->|yes| paidBadge[paid]
@@ -93,6 +95,8 @@ flowchart TD
   inWindow -->|yes| toBePaid
   inWindow -->|no| noneBadge
 ```
+
+Employees always resolve schedule from `organizations.*`. Contractors resolve from `employees.payment_cadence` / `payment_date_key`.
 
 ### Implications for agents
 
@@ -116,7 +120,7 @@ Endpoint: `GET /api/org/pay-overview` (admin). Counts **employees only**.
 | `period.*` | Current window + `inReminderWindow`, `paydayDisplay`, `monthLabel` |
 | `payStatuses` | Map `employeeId → EmployeePayStatus` (employees only in loop; contractors omitted / frontend treats missing as none) |
 
-`GET /api/org/employees` attaches `payStatus` per row; contractors forced to `none`.
+`GET /api/org/employees` attaches `payStatus` (and `nextPayday` when scheduled) per row using the resolved schedule above.
 
 ## Related docs
 

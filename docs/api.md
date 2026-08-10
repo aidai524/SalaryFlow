@@ -147,6 +147,7 @@ Details: [`docs/api/payments.md`](api/payments.md).
 | PATCH | `/api/org` | admin | [org](api/org.md) | `api/src/routes/org.ts` | `api.updateOrg` |
 | PATCH | `/api/org/team` | admin | [org](api/org.md) | `api/src/routes/org.ts` | `api.updateTeam` |
 | GET | `/api/org/employees` | admin | [org](api/org.md) | `api/src/routes/org.ts` | `api.listEmployees` |
+| GET | `/api/org/employees/:id/payments` | admin | [org](api/org.md) | `api/src/routes/org.ts` | `api.listEmployeePayments` |
 | GET | `/api/org/pay-overview` | admin | [org](api/org.md) | `api/src/routes/org.ts` | `api.payOverview` |
 | POST | `/api/org/employees` | admin | [org](api/org.md) | `api/src/routes/org.ts` | `api.createEmployee` |
 | PATCH | `/api/org/employees/:id` | admin | [org](api/org.md) | `api/src/routes/org.ts` | `api.updateEmployee` |

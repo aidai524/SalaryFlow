@@ -98,13 +98,7 @@ export function PayView() {
           <StatCell
             label="Recipients"
             value={stats ? String(stats.recipientsCount) : isLoading ? "…" : "0"}
-            trailing={
-              stats && stats.toBePaidCount > 0 ? (
-                <span className="inline-flex h-[30px] items-center rounded-[15px] bg-[#9a7bff]/20 px-3 font-montserrat text-[14px] font-medium text-[#9a7bff]">
-                  {stats.toBePaidCount} To be paid
-                </span>
-              ) : null
-            }
+            trailing={null}
           />
           <StatCell
             label="payment progress"
@@ -140,9 +134,8 @@ export function PayView() {
             <ul className="flex flex-col gap-1">
               {(data?.recipients || []).map((r) => (
                 <li key={r.id}>
-                  {/* TODO(recipients-page): navigate to /recipients and expand this person. */}
                   <Link
-                    to="/recipients"
+                    to={`/recipients?selected=${r.id}`}
                     className="flex items-center gap-3 rounded-[12px] px-2 py-2 transition-colors hover:bg-[#f6f6f6]"
                   >
                     <IdentityAvatar seed={r.name} size={32} alt="" />

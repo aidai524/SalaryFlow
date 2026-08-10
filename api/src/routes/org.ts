@@ -14,14 +14,23 @@ import {
 } from "../org-payment";
 import {
   computeEmployeePayStatus,
+  computeEmployeePayStatusForPeriod,
   enumeratePeriodsSince,
   formatPaydayDisplay,
   isInReminderWindow,
   monthLabelForPayday,
   resolveCurrentPeriod,
+  resolveNextPeriod,
   type EmployeePayStatus,
 } from "../pay-period";
 import { normalizePayoutAddress, normalizePayoutNetwork, normalizePayoutToken } from "../payout";
+import {
+  normalizeEmployeeType,
+  normalizeRoleTitle,
+  parseContractorScheduleInput,
+  resolveRecipientSchedule,
+  type EmployeeType,
+} from "../recipient";
 import { nowIso, uuid, type AuthUser } from "../types";
 
 export const orgRoutes = new Hono<AppEnv>();
@@ -278,6 +287,15 @@ orgRoutes.get("/pay-overview", requireRole("admin"), async (c) => {
 // Employee directory (linked to org; can be pre-provisioned before account acceptance)
 orgRoutes.get("/employees", requireRole("admin"), async (c) => {
   const user = c.get("user") as AuthUser;
+  const q = String(c.req.query("q") || "").trim().toLowerCase();
+  const typeFilter = String(c.req.query("type") || "").trim().toLowerCase();
+  const periodKeyParam = String(c.req.query("periodKey") || "").trim();
+  const pageRaw = c.req.query("page");
+  const pageSizeRaw = c.req.query("pageSize");
+  const paginate = pageRaw !== undefined || pageSizeRaw !== undefined;
+  const page = Math.max(1, Number.parseInt(String(pageRaw || "1"), 10) || 1);
+  const pageSize = Math.min(100, Math.max(1, Number.parseInt(String(pageSizeRaw || "10"), 10) || 10));
+
   const org = await c.env.DB.prepare(
     `SELECT payment_cadence, payment_date_key, reminder_lead_days, payment_configured_at
      FROM organizations WHERE id = ?`,
@@ -290,53 +308,199 @@ orgRoutes.get("/employees", requireRole("admin"), async (c) => {
 
   const rows = await c.env.DB.prepare(
     `SELECT id, user_id, email, name, role_title, location, employee_type, token, network,
-            amount_minor, endpoint, status, payout_verified_at, last_paid_at, created_at
+            amount_minor, endpoint, status, payout_verified_at, last_paid_at, created_at,
+            payment_cadence, payment_date_key
      FROM employees WHERE org_id = ? ORDER BY created_at DESC`,
   ).bind(user.org_id).all<Record<string, unknown> & {
     id: string;
+    email: string | null;
+    name: string;
+    endpoint: string | null;
     employee_type: string;
     created_at: string;
+    payment_cadence: string | null;
+    payment_date_key: string | null;
   }>();
 
-  let payStatuses: Record<string, EmployeePayStatus> = {};
-  if (org?.payment_configured_at && org.payment_cadence && org.payment_date_key) {
-    const cadence = org.payment_cadence as TeamPaymentSchedule;
-    const dateKey = org.payment_date_key as TeamPaymentDateKey;
-    const leadDays = Number(org.reminder_lead_days ?? 0);
-    const now = new Date();
-    const current = resolveCurrentPeriod(cadence, dateKey, leadDays, now);
-    const payments = await c.env.DB.prepare(
-      `SELECT employee_id, period_key, status FROM employee_payments WHERE org_id = ?`,
-    ).bind(user.org_id).all<{ employee_id: string; period_key: string; status: string }>();
-    const paidMap = new Map<string, Map<string, boolean>>();
-    for (const row of payments.results) {
-      if (!paidMap.has(row.employee_id)) paidMap.set(row.employee_id, new Map());
-      paidMap.get(row.employee_id)!.set(row.period_key, row.status === "paid");
-    }
-    for (const emp of rows.results) {
-      // Contractor cadence is per-recipient; until that lands, only employees get team-schedule status.
-      if ((emp.employee_type || "employee") !== "employee") {
-        payStatuses[emp.id] = "none";
-        continue;
-      }
-      const windows = enumeratePeriodsSince(cadence, dateKey, leadDays, emp.created_at, now);
-      payStatuses[emp.id] = computeEmployeePayStatus({
-        current,
-        now,
-        paidByPeriod: paidMap.get(emp.id) || new Map(),
-        periodKeysSinceJoin: windows.map((w) => w.periodKey),
-      });
-    }
+  const teamCadence = (org?.payment_cadence as TeamPaymentSchedule | null) || null;
+  const teamDateKey = (org?.payment_date_key as TeamPaymentDateKey | null) || null;
+  const leadDays = Number(org?.reminder_lead_days ?? 0);
+  const now = new Date();
+  const teamConfigured = !!(org?.payment_configured_at && teamCadence && teamDateKey);
+
+  const payments = await c.env.DB.prepare(
+    `SELECT employee_id, period_key, status FROM employee_payments WHERE org_id = ?`,
+  ).bind(user.org_id).all<{ employee_id: string; period_key: string; status: string }>();
+  const paidMap = new Map<string, Map<string, boolean>>();
+  for (const row of payments.results) {
+    if (!paidMap.has(row.employee_id)) paidMap.set(row.employee_id, new Map());
+    paidMap.get(row.employee_id)!.set(row.period_key, row.status === "paid");
   }
 
+  const enriched = rows.results.map((emp) => {
+    const employeeType = ((emp.employee_type || "employee") as EmployeeType);
+    const schedule = resolveRecipientSchedule({
+      employeeType,
+      teamCadence,
+      teamDateKey,
+      paymentCadence: emp.payment_cadence,
+      paymentDateKey: emp.payment_date_key,
+    });
+
+    let payStatus: EmployeePayStatus = "none";
+    let nextPayday: string | null = null;
+    let displayCadence: string | null = schedule?.cadence ?? null;
+    let displayDateKey: string | null = schedule?.dateKey ?? null;
+
+    if (schedule?.scheduled && schedule.dateKey && (schedule.cadence === "monthly" || schedule.cadence === "weekly")) {
+      const cadence = schedule.cadence;
+      const dateKey = schedule.dateKey;
+      const reminder = teamConfigured
+        ? (employeeType === "employee" ? leadDays : reminderLeadDaysForSchedule(cadence, c.env))
+        : reminderLeadDaysForSchedule(cadence, c.env);
+      try {
+        const current = resolveCurrentPeriod(cadence, dateKey, reminder, now);
+        const windows = enumeratePeriodsSince(cadence, dateKey, reminder, emp.created_at, now);
+        const keys = windows.map((w) => w.periodKey);
+        const selectedKey = periodKeyParam || current.periodKey;
+        payStatus = periodKeyParam
+          ? computeEmployeePayStatusForPeriod({
+              selectedPeriodKey: selectedKey,
+              current,
+              now,
+              paidByPeriod: paidMap.get(emp.id) || new Map(),
+              periodKeysSinceJoin: keys,
+            })
+          : computeEmployeePayStatus({
+              current,
+              now,
+              paidByPeriod: paidMap.get(emp.id) || new Map(),
+              periodKeysSinceJoin: keys,
+            });
+        const next = resolveNextPeriod(cadence, dateKey, reminder, now);
+        nextPayday = next.payday;
+      } catch {
+        payStatus = "none";
+      }
+    } else if (employeeType === "employee" && !teamConfigured) {
+      displayCadence = teamCadence;
+      displayDateKey = teamDateKey;
+    }
+
+    return {
+      ...emp,
+      employee_type: employeeType,
+      payment_cadence: displayCadence,
+      payment_date_key: displayDateKey,
+      payStatus,
+      nextPayday,
+      nextPaydayDisplay: nextPayday ? formatPaydayDisplay(nextPayday) : null,
+    };
+  });
+
+  const counts = {
+    all: enriched.length,
+    employees: enriched.filter((e) => e.employee_type === "employee").length,
+    contractors: enriched.filter((e) => e.employee_type === "contractor").length,
+  };
+
+  let filtered = enriched;
+  if (typeFilter === "employee" || typeFilter === "contractor") {
+    filtered = filtered.filter((e) => e.employee_type === typeFilter);
+  }
+  if (q) {
+    filtered = filtered.filter((e) => {
+      const name = String(e.name || "").toLowerCase();
+      const email = String(e.email || "").toLowerCase();
+      const endpoint = String(e.endpoint || "").toLowerCase();
+      return name.includes(q) || email.includes(q) || endpoint.includes(q);
+    });
+  }
+
+  const total = filtered.length;
+  const pageRows = paginate
+    ? filtered.slice((page - 1) * pageSize, (page - 1) * pageSize + pageSize)
+    : filtered;
+
   return c.json({
-    employees: rows.results.map((e) => ({
-      ...e,
-      employee_type: e.employee_type || "employee",
-      payStatus: payStatuses[e.id] || "none",
-    })),
+    employees: pageRows,
+    total,
+    page: paginate ? page : 1,
+    pageSize: paginate ? pageSize : total,
+    counts,
   });
 });
+orgRoutes.get("/employees/:id/payments", requireRole("admin"), async (c) => {
+  const user = c.get("user") as AuthUser;
+  const employeeId = c.req.param("id");
+  const emp = await c.env.DB.prepare(
+    "SELECT id FROM employees WHERE id = ? AND org_id = ?",
+  ).bind(employeeId, user.org_id).first();
+  if (!emp) return c.json({ error: "Employee not found" }, 404);
+
+  const limit = Math.min(50, Math.max(1, Number.parseInt(String(c.req.query("limit") || "20"), 10) || 20));
+  const cursor = String(c.req.query("cursor") || "").trim();
+
+  let sql = `
+    SELECT ep.id, ep.paid_at, ep.amount_minor, ep.token, ep.network, ep.period_key, ep.status, ep.created_at,
+           pa.deposit_tx_hash AS tx_hash
+    FROM employee_payments ep
+    LEFT JOIN payment_attempts pa ON pa.employee_payment_id = ep.id AND pa.state = 'confirmed'
+    WHERE ep.org_id = ? AND ep.employee_id = ? AND ep.status = 'paid'
+  `;
+  const binds: unknown[] = [user.org_id, employeeId];
+  if (cursor) {
+    sql += ` AND (ep.paid_at < ? OR (ep.paid_at = ? AND ep.id < ?))`;
+    binds.push(cursor, cursor, cursor);
+  }
+  sql += ` ORDER BY ep.paid_at DESC, ep.id DESC LIMIT ?`;
+  binds.push(limit + 1);
+
+  const rows = await c.env.DB.prepare(sql).bind(...binds).all<{
+    id: string;
+    paid_at: string | null;
+    amount_minor: number;
+    token: string;
+    network: string;
+    period_key: string;
+    status: string;
+    created_at: string;
+    tx_hash: string | null;
+  }>();
+
+  const hasMore = rows.results.length > limit;
+  const page = hasMore ? rows.results.slice(0, limit) : rows.results;
+  const nextCursor = hasMore && page.length
+    ? (page[page.length - 1].paid_at || page[page.length - 1].created_at)
+    : null;
+
+  return c.json({
+    payments: page.map((r) => ({
+      id: r.id,
+      paid_at: r.paid_at || r.created_at,
+      amount_minor: r.amount_minor,
+      token: r.token,
+      network: r.network,
+      period_key: r.period_key,
+      txHash: r.tx_hash,
+      explorerUrl: r.tx_hash && r.network
+        ? explorerUrlForTx(r.network, r.tx_hash)
+        : null,
+    })),
+    nextCursor,
+  });
+});
+
+function explorerUrlForTx(network: string, txHash: string): string | null {
+  const n = network.toLowerCase();
+  const hash = txHash.startsWith("0x") ? txHash : `0x${txHash}`;
+  if (n.includes("arbitrum")) return `https://arbiscan.io/tx/${hash}`;
+  if (n.includes("base")) return `https://basescan.org/tx/${hash}`;
+  if (n.includes("polygon")) return `https://polygonscan.com/tx/${hash}`;
+  if (n.includes("optimism")) return `https://optimistic.etherscan.io/tx/${hash}`;
+  if (n.includes("ethereum") || n === "eth" || n === "mainnet") return `https://etherscan.io/tx/${hash}`;
+  return `https://basescan.org/tx/${hash}`;
+}
 
 orgRoutes.post("/employees", requireRole("admin"), async (c) => {
   const user = c.get("user") as AuthUser;
@@ -345,6 +509,24 @@ orgRoutes.post("/employees", requireRole("admin"), async (c) => {
   const email = String(body?.email || "").trim().toLowerCase();
   if (!name) return c.json({ error: "Name is required" }, 400);
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return c.json({ error: "A valid email is required" }, 400);
+
+  const employeeType = body?.employee_type !== undefined || body?.employeeType !== undefined
+    ? normalizeEmployeeType(body?.employee_type ?? body?.employeeType)
+    : "employee";
+  if (!employeeType) return c.json({ error: "Type must be employee or contractor" }, 400);
+
+  const roleTitle = normalizeRoleTitle(body?.role_title ?? body?.roleTitle);
+  if (roleTitle === null) return c.json({ error: "Choose a valid role" }, 400);
+
+  let paymentCadence: string | null = null;
+  let paymentDateKey: string | null = null;
+  if (employeeType === "contractor") {
+    const parsed = parseContractorScheduleInput(body || {});
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    paymentCadence = parsed.cadence;
+    paymentDateKey = parsed.dateKey;
+  }
+
   const existing = await c.env.DB.prepare(
     "SELECT id FROM employees WHERE org_id = ? AND email = ?",
   ).bind(user.org_id, email).first();
@@ -359,11 +541,29 @@ orgRoutes.post("/employees", requireRole("admin"), async (c) => {
   const amountMinor = body?.amount === undefined ? 0 : parseTokenAmount(body.amount, { allowZero: true });
   if (amountMinor === null) return c.json({ error: "Amount must have at most 6 decimal places" }, 400);
   await c.env.DB.prepare(
-    "INSERT INTO employees (id, org_id, email, name, role_title, location, token, network, amount_minor, endpoint, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
-  ).bind(id, user.org_id, email, name, String(body?.role_title || ""), String(body?.location || ""), token, network, amountMinor, endpoint, nowIso()).run();
+    `INSERT INTO employees (
+       id, org_id, email, name, role_title, location, employee_type, token, network,
+       amount_minor, endpoint, status, payment_cadence, payment_date_key, created_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+  ).bind(
+    id,
+    user.org_id,
+    email,
+    name,
+    roleTitle,
+    String(body?.location || ""),
+    employeeType,
+    token,
+    network,
+    amountMinor,
+    endpoint,
+    paymentCadence,
+    paymentDateKey,
+    nowIso(),
+  ).run();
   await c.env.DB.prepare(
     "INSERT INTO audit_log (id, org_id, actor_id, action, detail) VALUES (?, ?, ?, 'employee.created', ?)",
-  ).bind(uuid(), user.org_id, user.id, `Added employee ${name}`).run();
+  ).bind(uuid(), user.org_id, user.id, `Added ${employeeType} ${name}`).run();
   const row = await c.env.DB.prepare("SELECT * FROM employees WHERE id = ? AND org_id = ?").bind(id, user.org_id).first();
   return c.json({ employee: row }, 201);
 });
@@ -372,6 +572,11 @@ orgRoutes.patch("/employees/:id", requireRole("admin"), async (c) => {
   const user = c.get("user") as AuthUser;
   const id = c.req.param("id");
   const body = await c.req.json().catch(() => null);
+  const existing = await c.env.DB.prepare(
+    "SELECT * FROM employees WHERE id = ? AND org_id = ?",
+  ).bind(id, user.org_id).first<Record<string, unknown>>();
+  if (!existing) return c.json({ error: "Employee not found" }, 404);
+
   const fields: string[] = [];
   const values: unknown[] = [];
   if (body?.status !== undefined) {
@@ -380,19 +585,68 @@ orgRoutes.patch("/employees/:id", requireRole("admin"), async (c) => {
   if (body?.email !== undefined) {
     const email = String(body.email).trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return c.json({ error: "A valid email is required" }, 400);
-    const existing = await c.env.DB.prepare(
+    const dup = await c.env.DB.prepare(
       "SELECT id FROM employees WHERE org_id = ? AND email = ? AND id != ?",
     ).bind(user.org_id, email, id).first();
-    if (existing) return c.json({ error: "An employee with this email already exists" }, 409);
+    if (dup) return c.json({ error: "An employee with this email already exists" }, 409);
     fields.push("email = ?");
     values.push(email);
   }
-  for (const key of ["name", "role_title", "location"] as const) {
-    if (body?.[key] !== undefined) {
-      fields.push(`${key} = ?`);
-      values.push(body[key]);
+  if (body?.name !== undefined) {
+    fields.push("name = ?");
+    values.push(String(body.name).trim());
+  }
+  if (body?.location !== undefined) {
+    fields.push("location = ?");
+    values.push(body.location);
+  }
+  if (body?.role_title !== undefined || body?.roleTitle !== undefined) {
+    const roleTitle = normalizeRoleTitle(body?.role_title ?? body?.roleTitle);
+    if (roleTitle === null) return c.json({ error: "Choose a valid role" }, 400);
+    fields.push("role_title = ?");
+    values.push(roleTitle);
+  }
+
+  let nextType = (existing.employee_type as string) || "employee";
+  if (body?.employee_type !== undefined || body?.employeeType !== undefined) {
+    const employeeType = normalizeEmployeeType(body?.employee_type ?? body?.employeeType);
+    if (!employeeType) return c.json({ error: "Type must be employee or contractor" }, 400);
+    fields.push("employee_type = ?");
+    values.push(employeeType);
+    nextType = employeeType;
+  }
+
+  const scheduleTouched =
+    body?.payment_cadence !== undefined
+    || body?.paymentCadence !== undefined
+    || body?.payment_date_key !== undefined
+    || body?.paymentDate !== undefined
+    || body?.employee_type !== undefined
+    || body?.employeeType !== undefined;
+
+  if (scheduleTouched) {
+    if (nextType === "employee") {
+      fields.push("payment_cadence = ?", "payment_date_key = ?");
+      values.push(null, null);
+    } else {
+      const parsed = parseContractorScheduleInput(body || {
+        payment_cadence: existing.payment_cadence,
+        payment_date_key: existing.payment_date_key,
+      });
+      // If only type flipped to contractor without schedule, default on_demand.
+      if (!parsed.ok && (body?.employee_type !== undefined || body?.employeeType !== undefined)
+        && body?.payment_cadence === undefined && body?.paymentCadence === undefined) {
+        fields.push("payment_cadence = ?", "payment_date_key = ?");
+        values.push("on_demand", null);
+      } else if (!parsed.ok) {
+        return c.json({ error: parsed.error }, 400);
+      } else {
+        fields.push("payment_cadence = ?", "payment_date_key = ?");
+        values.push(parsed.cadence, parsed.dateKey);
+      }
     }
   }
+
   let payoutChanged = false;
   if (body?.token !== undefined) {
     const token = normalizePayoutToken(body.token);
@@ -434,6 +688,26 @@ orgRoutes.patch("/employees/:id", requireRole("admin"), async (c) => {
 
 orgRoutes.delete("/employees/:id", requireRole("admin"), async (c) => {
   const user = c.get("user") as AuthUser;
-  await c.env.DB.prepare("DELETE FROM employees WHERE id = ? AND org_id = ?").bind(c.req.param("id"), user.org_id).run();
+  const id = c.req.param("id");
+  const emp = await c.env.DB.prepare(
+    "SELECT id, user_id, name, email FROM employees WHERE id = ? AND org_id = ?",
+  ).bind(id, user.org_id).first<{ id: string; user_id: string | null; name: string; email: string | null }>();
+  if (!emp) return c.json({ error: "Employee not found" }, 404);
+
+  const statements: D1PreparedStatement[] = [
+    c.env.DB.prepare("DELETE FROM employees WHERE id = ? AND org_id = ?").bind(id, user.org_id),
+    c.env.DB.prepare(
+      "INSERT INTO audit_log (id, org_id, actor_id, action, detail) VALUES (?, ?, ?, 'employee.removed', ?)",
+    ).bind(uuid(), user.org_id, user.id, `Removed ${emp.name}${emp.email ? ` (${emp.email})` : ""} from team`),
+  ];
+  if (emp.user_id) {
+    // Unlink account from this org (single-org model). Keep the user row.
+    statements.unshift(
+      c.env.DB.prepare(
+        "UPDATE users SET org_id = NULL, role = 'employee', updated_at = ? WHERE id = ? AND org_id = ?",
+      ).bind(nowIso(), emp.user_id, user.org_id),
+    );
+  }
+  await c.env.DB.batch(statements);
   return c.json({ ok: true });
 });

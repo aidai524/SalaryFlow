@@ -67,9 +67,25 @@ export interface QuickPayPanelProps {
   /** Optional preselected employee id. */
   initialEmployeeId?: string | null;
   monthLabel?: string;
+  /** Hide the "Quick Pay" heading (e.g. when embedded in Pay Now dialog). */
+  hideTitle?: boolean;
+  /** Lock recipient — no Change / clear / empty picker. */
+  recipientLocked?: boolean;
+  /** Centered compensation block; destination token shown without picker. */
+  compensationLayout?: "row" | "centered";
+  /** Prevent changing destination token/network. */
+  destinationTokenLocked?: boolean;
 }
 
-export function QuickPayPanel({ className, initialEmployeeId = null, monthLabel }: QuickPayPanelProps) {
+export function QuickPayPanel({
+  className,
+  initialEmployeeId = null,
+  monthLabel,
+  hideTitle = false,
+  recipientLocked = false,
+  compensationLayout = "row",
+  destinationTokenLocked = false,
+}: QuickPayPanelProps) {
   const wallet = useWallet("evm");
   const walletInfo = useEvmWalletInfo();
   const queryClient = useQueryClient();
@@ -293,129 +309,201 @@ export function QuickPayPanel({ className, initialEmployeeId = null, monthLabel 
         className,
       )}
     >
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <h2 className="font-montserrat text-[20px] font-medium capitalize text-black">Quick Pay</h2>
-      </div>
-
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <p className="font-montserrat text-[14px] font-medium text-[#606060]">Recipient</p>
-        <button
-          type="button"
-          onClick={() =>
-            openRecipientPicker({
-              selectedId: employeeId,
-              onSelect: (id) => {
-                setEmployeeId(id);
-                setPhase("idle");
-                setError(null);
-                setLiveAttemptId(null);
-              },
-            })
-          }
-          className="inline-flex h-9 items-center gap-2 rounded-[18px] border border-black/10 px-4 font-montserrat text-[14px] font-medium text-black transition-colors hover:bg-black/5"
-        >
-          Change
-          <img src="/icons/to-down.svg" alt="" className="size-2.5 opacity-60" />
-        </button>
-      </div>
-
-      {employee ? (
-        <div className="relative mb-5 rounded-[12px] border border-white bg-[#fdfdfd] p-4 shadow-[0px_0px_20px_0px_rgba(0,0,0,0.06)]">
-          <button
-            type="button"
-            aria-label="Clear recipient"
-            onClick={() => {
-              setEmployeeId(null);
-              setPhase("idle");
-              setError(null);
-            }}
-            className="absolute top-3 right-3 rounded p-1 text-black/50 transition-colors hover:bg-black/5 hover:text-black"
-          >
-            <IconClose className="size-3" />
-          </button>
-          <div className="flex gap-3 pr-6">
-            <IdentityAvatar seed={employee.email || employee.name} size={56} alt="" />
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <p className="font-montserrat text-[16px] font-medium text-black">{employee.name}</p>
-                <span className="ml-auto font-montserrat text-[16px] font-medium text-black">
-                  {formatCurrencyFromMinor(employee.amount_minor)} /{" "}
-                  {employee.employee_type === "contractor" ? "period" : "month"}
-                </span>
-              </div>
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                {employee.role_title ? (
-                  <span className={cn("inline-flex h-6 items-center rounded-[12px] px-2 font-montserrat text-[12px]", roleBadgeColor(employee.role_title))}>
-                    {employee.role_title.length > 8 ? employee.role_title.slice(0, 3).toUpperCase() : employee.role_title}
-                  </span>
-                ) : null}
-                <span className="inline-flex h-6 items-center rounded-[12px] border border-black/10 px-2 font-montserrat text-[12px] text-[#909090]">
-                  {employee.employee_type === "contractor" ? "Contractor" : "Employee"}
-                </span>
-                <VerifiedBadge verified={verified} />
-              </div>
-              {payStatus === "to_be_paid" && (
-                <div className="mt-3 inline-flex h-[30px] items-center gap-2 rounded-[25px] bg-[#9a7bff] px-3 font-montserrat text-[14px] font-medium text-white">
-                  <IconAlert className="size-3 text-white" />
-                  {monthLabel || "Current"} payroll is to be paid
-                </div>
-              )}
-            </div>
-          </div>
+      {!hideTitle ? (
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <h2 className="font-montserrat text-[20px] font-medium capitalize text-black">Quick Pay</h2>
         </div>
+      ) : null}
+
+      {recipientLocked ? (
+        employee ? (
+          <div className="mb-5 flex items-center gap-3">
+            <IdentityAvatar seed={employee.email || employee.name} size={32} alt="" />
+            <p className="min-w-0 flex-1 truncate font-montserrat text-[16px] font-medium text-black">
+              {employee.name}
+            </p>
+            <p className="shrink-0 font-montserrat text-[14px] font-medium text-black">
+              {employee.endpoint ? formatAddress(employee.endpoint) : "—"}
+            </p>
+          </div>
+        ) : (
+          <div className="mb-5 font-montserrat text-[14px] text-[#606060]">Recipient unavailable</div>
+        )
       ) : (
-        <button
-          type="button"
-          onClick={() =>
-            openRecipientPicker({
-              onSelect: (id) => setEmployeeId(id),
-            })
-          }
-          className="mb-5 flex h-[88px] w-full items-center justify-center rounded-[12px] border border-dashed border-black/15 bg-[#fafafa] font-montserrat text-[14px] text-[#606060] transition-colors hover:bg-[#f0f0f0]"
-        >
-          Select a recipient
-        </button>
+        <>
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <p className="font-montserrat text-[14px] font-medium text-[#606060]">Recipient</p>
+            <button
+              type="button"
+              onClick={() =>
+                openRecipientPicker({
+                  selectedId: employeeId,
+                  onSelect: (id) => {
+                    setEmployeeId(id);
+                    setPhase("idle");
+                    setError(null);
+                    setLiveAttemptId(null);
+                  },
+                })
+              }
+              className="inline-flex h-9 items-center gap-2 rounded-[18px] border border-black/10 px-4 font-montserrat text-[14px] font-medium text-black transition-colors hover:bg-black/5"
+            >
+              Change
+              <img src="/icons/to-down.svg" alt="" className="size-2.5 opacity-60" />
+            </button>
+          </div>
+
+          {employee ? (
+            <div className="relative mb-5 rounded-[12px] border border-white bg-[#fdfdfd] p-4 shadow-[0px_0px_20px_0px_rgba(0,0,0,0.06)]">
+              <button
+                type="button"
+                aria-label="Clear recipient"
+                onClick={() => {
+                  setEmployeeId(null);
+                  setPhase("idle");
+                  setError(null);
+                }}
+                className="absolute top-3 right-3 rounded p-1 text-black/50 transition-colors hover:bg-black/5 hover:text-black"
+              >
+                <IconClose className="size-3" />
+              </button>
+              <div className="flex gap-3 pr-6">
+                <IdentityAvatar seed={employee.email || employee.name} size={56} alt="" />
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="font-montserrat text-[16px] font-medium text-black">{employee.name}</p>
+                    <span className="ml-auto font-montserrat text-[16px] font-medium text-black">
+                      {formatCurrencyFromMinor(employee.amount_minor)} /{" "}
+                      {employee.employee_type === "contractor" ? "period" : "month"}
+                    </span>
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    {employee.role_title ? (
+                      <span className={cn("inline-flex h-6 items-center rounded-[12px] px-2 font-montserrat text-[12px]", roleBadgeColor(employee.role_title))}>
+                        {employee.role_title.length > 8 ? employee.role_title.slice(0, 3).toUpperCase() : employee.role_title}
+                      </span>
+                    ) : null}
+                    <span className="inline-flex h-6 items-center rounded-[12px] border border-black/10 px-2 font-montserrat text-[12px] text-[#909090]">
+                      {employee.employee_type === "contractor" ? "Contractor" : "Employee"}
+                    </span>
+                    <VerifiedBadge verified={verified} />
+                  </div>
+                  {payStatus === "to_be_paid" && (
+                    <div className="mt-3 inline-flex h-[30px] items-center gap-2 rounded-[25px] bg-[#9a7bff] px-3 font-montserrat text-[14px] font-medium text-white">
+                      <IconAlert className="size-3 text-white" />
+                      {monthLabel || "Current"} payroll is to be paid
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() =>
+                openRecipientPicker({
+                  onSelect: (id) => setEmployeeId(id),
+                })
+              }
+              className="mb-5 flex h-[88px] w-full items-center justify-center rounded-[12px] border border-dashed border-black/15 bg-[#fafafa] font-montserrat text-[14px] text-[#606060] transition-colors hover:bg-[#f0f0f0]"
+            >
+              Select a recipient
+            </button>
+          )}
+        </>
       )}
 
       {/* Compensation */}
-      <div className="mb-1 flex items-center justify-between">
-        <p className="font-montserrat text-[14px] font-medium text-[#606060]">Compensation</p>
-        <p className="font-montserrat text-[12px] text-[#606060]">
-          {employee?.endpoint ? formatAddress(employee.endpoint) : "—"}
-        </p>
-      </div>
-      <div className="mb-4 flex items-end justify-between gap-3 border-b border-black/10 pb-3">
-        <input
-          value={compensation}
-          onChange={(e) => setCompensation(e.target.value)}
-          inputMode="decimal"
-          placeholder="0"
-          className="w-full min-w-0 bg-transparent font-montserrat text-[26px] font-medium text-black outline-none"
-        />
-        <button
-          type="button"
-          onClick={() => setDestDialogOpen(true)}
-          disabled={!employee}
-          className="inline-flex h-9 shrink-0 items-center gap-2 rounded-[18px] border border-black/10 px-3 font-montserrat text-[14px] font-medium text-black transition-colors hover:bg-black/5 disabled:opacity-40"
-        >
-          {destToken ? (
-            <>
-              <span className="relative size-5">
-                <img src={destToken.logo} alt="" className="size-5 rounded-full object-cover" />
-                <img
-                  src={chainLogoUrl(destToken.blockchain)}
-                  alt=""
-                  className="absolute -right-0.5 -bottom-0.5 size-2.5 rounded-[2px] border border-white object-cover"
-                />
-              </span>
-              {destToken.symbol}
-            </>
-          ) : (
-            "Token"
-          )}
-          <img src="/icons/to-down.svg" alt="" className="size-2.5 opacity-60" />
-        </button>
-      </div>
+      {compensationLayout === "centered" ? (
+        <div className="mb-5 border-b border-black/10 pb-5 text-center">
+          <p className="font-montserrat text-[14px] font-medium text-[#606060]">Compensation</p>
+          <input
+            value={compensation}
+            onChange={(e) => setCompensation(e.target.value)}
+            inputMode="decimal"
+            placeholder="0"
+            className="mt-2 w-full bg-transparent text-center font-montserrat text-[26px] font-medium text-black outline-none"
+          />
+          <div className="mt-2 inline-flex items-center justify-center gap-2 font-montserrat text-[14px] font-medium text-black">
+            {destToken ? (
+              <>
+                <span className="relative size-5">
+                  <img src={destToken.logo} alt="" className="size-5 rounded-full object-cover" />
+                  <img
+                    src={chainLogoUrl(destToken.blockchain)}
+                    alt=""
+                    className="absolute -right-0.5 -bottom-0.5 size-2.5 rounded-[2px] border border-white object-cover"
+                  />
+                </span>
+                {destToken.symbol}
+              </>
+            ) : (
+              employee?.token || "—"
+            )}
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="mb-1 flex items-center justify-between">
+            <p className="font-montserrat text-[14px] font-medium text-[#606060]">Compensation</p>
+            <p className="font-montserrat text-[12px] text-[#606060]">
+              {employee?.endpoint ? formatAddress(employee.endpoint) : "—"}
+            </p>
+          </div>
+          <div className="mb-4 flex items-end justify-between gap-3 border-b border-black/10 pb-3">
+            <input
+              value={compensation}
+              onChange={(e) => setCompensation(e.target.value)}
+              inputMode="decimal"
+              placeholder="0"
+              className="w-full min-w-0 bg-transparent font-montserrat text-[26px] font-medium text-black outline-none"
+            />
+            {destinationTokenLocked ? (
+              <div className="inline-flex h-9 shrink-0 items-center gap-2 rounded-[18px] border border-black/10 px-3 font-montserrat text-[14px] font-medium text-black">
+                {destToken ? (
+                  <>
+                    <span className="relative size-5">
+                      <img src={destToken.logo} alt="" className="size-5 rounded-full object-cover" />
+                      <img
+                        src={chainLogoUrl(destToken.blockchain)}
+                        alt=""
+                        className="absolute -right-0.5 -bottom-0.5 size-2.5 rounded-[2px] border border-white object-cover"
+                      />
+                    </span>
+                    {destToken.symbol}
+                  </>
+                ) : (
+                  "Token"
+                )}
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setDestDialogOpen(true)}
+                disabled={!employee}
+                className="inline-flex h-9 shrink-0 items-center gap-2 rounded-[18px] border border-black/10 px-3 font-montserrat text-[14px] font-medium text-black transition-colors hover:bg-black/5 disabled:opacity-40"
+              >
+                {destToken ? (
+                  <>
+                    <span className="relative size-5">
+                      <img src={destToken.logo} alt="" className="size-5 rounded-full object-cover" />
+                      <img
+                        src={chainLogoUrl(destToken.blockchain)}
+                        alt=""
+                        className="absolute -right-0.5 -bottom-0.5 size-2.5 rounded-[2px] border border-white object-cover"
+                      />
+                    </span>
+                    {destToken.symbol}
+                  </>
+                ) : (
+                  "Token"
+                )}
+                <img src="/icons/to-down.svg" alt="" className="size-2.5 opacity-60" />
+              </button>
+            )}
+          </div>
+        </>
+      )}
 
       {/* You Pay */}
       <div className="mb-1 flex items-center justify-between">

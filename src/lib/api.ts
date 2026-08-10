@@ -12,6 +12,21 @@ export interface AuthUser {
 
 export type EmployeeType = "employee" | "contractor";
 export type EmployeePayStatus = "to_be_paid" | "paid" | "none";
+export type TeamPaymentSchedule = "monthly" | "weekly";
+export type ContractorPaymentCadence = TeamPaymentSchedule | "on_demand";
+export type RecipientRoleTitle = "Developer" | "Product" | "Growth" | "Finance" | "Operations";
+
+export type TeamPaymentDateKey =
+  | "every_1st"
+  | "every_15th"
+  | "every_end_of_month"
+  | "every_monday"
+  | "every_tuesday"
+  | "every_wednesday"
+  | "every_thursday"
+  | "every_friday"
+  | "every_saturday"
+  | "every_sunday";
 
 export interface Employee {
   id: string;
@@ -29,8 +44,40 @@ export interface Employee {
   payout_verified_at: string | null;
   last_paid_at: string | null;
   created_at: string;
-  /** Present on listEmployees when team payment prefs are configured. */
+  /** Effective schedule (team for employees; own for contractors). */
+  payment_cadence?: ContractorPaymentCadence | TeamPaymentSchedule | null;
+  payment_date_key?: TeamPaymentDateKey | null;
+  /** Present on listEmployees when schedule can be resolved. */
   payStatus?: EmployeePayStatus;
+  nextPayday?: string | null;
+  nextPaydayDisplay?: string | null;
+}
+
+export interface EmployeeListResult {
+  employees: Employee[];
+  total: number;
+  page: number;
+  pageSize: number;
+  counts: { all: number; employees: number; contractors: number };
+}
+
+export interface EmployeePaymentHistoryItem {
+  id: string;
+  paid_at: string;
+  amount_minor: number;
+  token: string;
+  network: string;
+  period_key: string;
+  txHash: string | null;
+  explorerUrl: string | null;
+}
+
+export interface ListEmployeesParams {
+  q?: string;
+  type?: EmployeeType | "";
+  periodKey?: string;
+  page?: number;
+  pageSize?: number;
 }
 
 export interface PayOverview {
@@ -215,6 +262,9 @@ export interface Invitation {
   id: string;
   email: string;
   role: "admin" | "employee";
+  role_title?: string | null;
+  name?: string | null;
+  employee_type?: EmployeeType | null;
   status: string;
   expires_at: string;
   created_at: string;
@@ -226,20 +276,6 @@ export interface InviteMailResult {
 }
 
 /** Team payment schedule stored on organizations (not payroll_runs). */
-export type TeamPaymentSchedule = "monthly" | "weekly";
-
-export type TeamPaymentDateKey =
-  | "every_1st"
-  | "every_15th"
-  | "every_end_of_month"
-  | "every_monday"
-  | "every_tuesday"
-  | "every_wednesday"
-  | "every_thursday"
-  | "every_friday"
-  | "every_saturday"
-  | "every_sunday";
-
 export interface OrgPaymentFields {
   payment_cadence: TeamPaymentSchedule | null;
   payment_date_key: TeamPaymentDateKey | null;
@@ -322,7 +358,13 @@ export const api = {
 
   // invites
   listInvites: () => request<{ invitations: Invitation[] }>("/invites"),
-  createInvite: (body: { email: string; role: string }) =>
+  createInvite: (body: {
+    email: string;
+    name: string;
+    role?: string;
+    role_title?: RecipientRoleTitle | string;
+    employee_type?: EmployeeType;
+  }) =>
     request<{ invitation: Invitation; mail: InviteMailResult; inviteUrl?: string }>("/invites", { method: "POST", body: JSON.stringify(body) }),
   resolveInvite: (token: string) => request<{ invitation: { email: string; role: string; orgName: string; accountExists: boolean } }>(`/invites/resolve/${token}`),
   acceptInvite: (body: { token: string; email: string; name: string; password: string }) =>
@@ -342,10 +384,38 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
-  listEmployees: () => request<{ employees: Employee[] }>("/org/employees"),
+  listEmployees: (params?: ListEmployeesParams) => {
+    const qs = new URLSearchParams();
+    if (params?.q) qs.set("q", params.q);
+    if (params?.type) qs.set("type", params.type);
+    if (params?.periodKey) qs.set("periodKey", params.periodKey);
+    if (params?.page !== undefined) qs.set("page", String(params.page));
+    if (params?.pageSize !== undefined) qs.set("pageSize", String(params.pageSize));
+    const query = qs.toString();
+    return request<EmployeeListResult>(`/org/employees${query ? `?${query}` : ""}`);
+  },
+  listEmployeePayments: (id: string, params?: { limit?: number; cursor?: string | null }) => {
+    const qs = new URLSearchParams();
+    if (params?.limit) qs.set("limit", String(params.limit));
+    if (params?.cursor) qs.set("cursor", params.cursor);
+    const query = qs.toString();
+    return request<{ payments: EmployeePaymentHistoryItem[]; nextCursor: string | null }>(
+      `/org/employees/${id}/payments${query ? `?${query}` : ""}`,
+    );
+  },
   payOverview: () => request<PayOverview>("/org/pay-overview"),
-  createEmployee: (body: Partial<Employee> & { amount?: string }) => request<{ employee: Employee }>("/org/employees", { method: "POST", body: JSON.stringify(body) }),
-  updateEmployee: (id: string, body: Partial<Employee> & { amount?: string }) =>
+  createEmployee: (body: Partial<Employee> & {
+    amount?: string;
+    employee_type?: EmployeeType;
+    payment_cadence?: ContractorPaymentCadence;
+    payment_date_key?: TeamPaymentDateKey | null;
+  }) => request<{ employee: Employee }>("/org/employees", { method: "POST", body: JSON.stringify(body) }),
+  updateEmployee: (id: string, body: Partial<Employee> & {
+    amount?: string;
+    employee_type?: EmployeeType;
+    payment_cadence?: ContractorPaymentCadence;
+    payment_date_key?: TeamPaymentDateKey | null;
+  }) =>
     request<{ employee: Employee }>(`/org/employees/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   deleteEmployee: (id: string) => request<{ ok: boolean }>(`/org/employees/${id}`, { method: "DELETE" }),
 

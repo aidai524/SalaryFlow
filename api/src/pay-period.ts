@@ -107,12 +107,52 @@ export function resolveCurrentPeriod(
   if (weekday === null) {
     throw new Error(`Invalid weekly payment_date_key: ${dateKey}`);
   }
-  let payday = nextWeekdayOnOrAfter(today, weekday);
-  // If today is after payday earlier today isn't possible (ymd compare); if today > last payday
-  // nextWeekdayOnOrAfter already returns today when it matches.
+  const payday = nextWeekdayOnOrAfter(today, weekday);
   const periodKey = isoWeekKey(utcMidnight(payday));
   const reminderStartsAt = `${addUtcDays(payday, -Math.max(0, reminderLeadDays))}T00:00:00.000Z`;
   return { periodKey, payday, reminderStartsAt, cadence };
+}
+
+/** Alias for team or contractor monthly/weekly cadence. */
+export const resolvePeriodForCadence = resolveCurrentPeriod;
+
+/**
+ * Next pay period after the current window (for Recipients detail "Next Payment").
+ */
+export function resolveNextPeriod(
+  cadence: TeamPaymentSchedule,
+  dateKey: TeamPaymentDateKey,
+  reminderLeadDays: number,
+  now: Date = new Date(),
+): PeriodWindow {
+  const current = resolveCurrentPeriod(cadence, dateKey, reminderLeadDays, now);
+  const dayAfter = utcMidnight(addUtcDays(current.payday, 1));
+  return resolveCurrentPeriod(cadence, dateKey, reminderLeadDays, dayAfter);
+}
+
+/**
+ * Pay-status badge relative to a selected period key (Recipients period picker).
+ */
+export function computeEmployeePayStatusForPeriod(opts: {
+  selectedPeriodKey: string;
+  current: PeriodWindow;
+  now?: Date;
+  paidByPeriod: Map<string, boolean>;
+  periodKeysSinceJoin: string[];
+}): EmployeePayStatus {
+  if (opts.paidByPeriod.get(opts.selectedPeriodKey)) return "paid";
+  if (opts.selectedPeriodKey === opts.current.periodKey) {
+    return computeEmployeePayStatus({
+      current: opts.current,
+      now: opts.now,
+      paidByPeriod: opts.paidByPeriod,
+      periodKeysSinceJoin: opts.periodKeysSinceJoin,
+    });
+  }
+  if (opts.periodKeysSinceJoin.includes(opts.selectedPeriodKey)) {
+    return "to_be_paid";
+  }
+  return "none";
 }
 
 /** All period keys from employee join date through (but not including) current, plus current. */

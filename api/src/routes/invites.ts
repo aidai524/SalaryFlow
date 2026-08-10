@@ -4,6 +4,7 @@ import { Hono } from "hono";
 import { hashPassword, signToken, verifyPassword } from "../crypto";
 import { requireRole, setAuthCookie, type AppEnv } from "../middleware";
 import { sendInviteEmail } from "../mail";
+import { normalizeEmployeeType, normalizeRoleTitle } from "../recipient";
 import { nowIso, uuid, type AuthUser } from "../types";
 
 export const inviteRoutes = new Hono<AppEnv>();
@@ -12,7 +13,7 @@ export const inviteRoutes = new Hono<AppEnv>();
 inviteRoutes.get("/", requireRole("admin"), async (c) => {
   const user = c.get("user") as AuthUser;
   const rows = await c.env.DB.prepare(
-    "SELECT id, email, role, status, expires_at, created_at FROM invitations WHERE org_id = ? ORDER BY created_at DESC",
+    "SELECT id, email, role, role_title, name, employee_type, status, expires_at, created_at FROM invitations WHERE org_id = ? ORDER BY created_at DESC",
   ).bind(user.org_id).all<Record<string, unknown>>();
   return c.json({ invitations: rows.results });
 });
@@ -22,7 +23,23 @@ inviteRoutes.post("/", requireRole("admin"), async (c) => {
   const user = c.get("user") as AuthUser;
   const body = await c.req.json().catch(() => null);
   const email = String(body?.email || "").trim().toLowerCase();
+  const inviteName = String(body?.name || "").trim();
   const role = body?.role === "admin" ? "admin" : "employee";
+  const roleTitleRaw = body?.role_title ?? body?.roleTitle;
+  let roleTitle = "";
+  if (roleTitleRaw !== undefined && roleTitleRaw !== null && String(roleTitleRaw).trim()) {
+    const normalized = normalizeRoleTitle(roleTitleRaw);
+    if (normalized === null) return c.json({ error: "Choose a valid role title" }, 400);
+    roleTitle = normalized;
+  }
+  const typeRaw = body?.employee_type ?? body?.employeeType;
+  let employeeType = "employee";
+  if (typeRaw !== undefined && typeRaw !== null && String(typeRaw).trim()) {
+    const normalized = normalizeEmployeeType(typeRaw);
+    if (!normalized) return c.json({ error: "Type must be employee or contractor" }, 400);
+    employeeType = normalized;
+  }
+  if (!inviteName) return c.json({ error: "Name is required" }, 400);
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return c.json({ error: "A valid email is required" }, 400);
 
   // The current data model supports one organization per account. Never silently
@@ -47,8 +64,22 @@ inviteRoutes.post("/", requireRole("admin"), async (c) => {
   const now = nowIso();
 
   await c.env.DB.prepare(
-    "INSERT INTO invitations (id, org_id, email, role, token, invited_by, status, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
-  ).bind(id, user.org_id, email, role, token, user.id, expiresAt, now).run();
+    `INSERT INTO invitations (
+       id, org_id, email, role, role_title, name, employee_type, token, invited_by, status, expires_at, created_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+  ).bind(
+    id,
+    user.org_id,
+    email,
+    role,
+    roleTitle || null,
+    inviteName,
+    employeeType,
+    token,
+    user.id,
+    expiresAt,
+    now,
+  ).run();
 
   const org = await c.env.DB.prepare("SELECT name FROM organizations WHERE id = ?").bind(user.org_id).first<{ name: string }>();
   const inviteUrl = `${c.env.APP_URL}/invite/${token}`;
@@ -64,6 +95,17 @@ inviteRoutes.post("/", requireRole("admin"), async (c) => {
     "INSERT INTO audit_log (id, org_id, actor_id, action, detail) VALUES (?, ?, ?, 'invite.created', ?)",
   ).bind(uuid(), user.org_id, user.id, `Invited ${email} (${role})`).run();
 
+  const invitationPayload = {
+    id,
+    email,
+    role,
+    role_title: roleTitle || null,
+    name: inviteName,
+    employee_type: employeeType,
+    status: "pending",
+    expires_at: expiresAt,
+  };
+
   if (!mail.ok) {
     await c.env.DB.prepare(
       "INSERT INTO audit_log (id, org_id, actor_id, action, detail) VALUES (?, ?, ?, 'invite.email_failed', ?)",
@@ -71,11 +113,11 @@ inviteRoutes.post("/", requireRole("admin"), async (c) => {
     return c.json({
       error: `Invitation created, but email delivery failed. ${mail.error || "Check the email provider configuration and retry."}`,
       code: "INVITE_EMAIL_FAILED",
-      invitation: { id, email, role, status: "pending", expires_at: expiresAt },
+      invitation: invitationPayload,
     }, 502);
   }
 
-  return c.json({ invitation: { id, email, role, status: "pending", expires_at: expiresAt }, mail, inviteUrl: mail.mock ? inviteUrl : undefined }, 201);
+  return c.json({ invitation: invitationPayload, mail, inviteUrl: mail.mock ? inviteUrl : undefined }, 201);
 });
 
 // Public: resolve an invitation token (used by invite page)
@@ -107,7 +149,7 @@ inviteRoutes.post("/accept", async (c) => {
   const email = String(body?.email || "").trim().toLowerCase();
 
   const invite = await c.env.DB.prepare(
-    "SELECT id, org_id, email, role, status, expires_at FROM invitations WHERE token = ?",
+    "SELECT id, org_id, email, role, role_title, name, employee_type, status, expires_at FROM invitations WHERE token = ?",
   ).bind(token).first<Record<string, unknown>>();
   if (!invite) return c.json({ error: "Invitation not found" }, 404);
   if (invite.status !== "pending") return c.json({ error: "This invitation is no longer valid" }, 410);
@@ -129,10 +171,13 @@ inviteRoutes.post("/accept", async (c) => {
   if (existing && !(await verifyPassword(password, String(existing.password_hash)))) {
     return c.json({ error: "Invalid password for the existing account" }, 401);
   }
-  if (!existing && !name) return c.json({ error: "Name is required" }, 400);
+  const invitePrefillName = String(invite.name || "").trim();
+  if (!existing && !name && !invitePrefillName) return c.json({ error: "Name is required" }, 400);
 
   const userId = existing ? String(existing.id) : uuid();
-  const displayName = existing ? String(existing.name) : name;
+  const displayName = existing
+    ? String(existing.name)
+    : (name || invitePrefillName);
   const employee = role === "employee"
     ? await c.env.DB.prepare(
       "SELECT id, user_id FROM employees WHERE org_id = ? AND email = ?",
@@ -164,14 +209,43 @@ inviteRoutes.post("/accept", async (c) => {
   }
 
   if (role === "employee") {
+    const inviteRoleTitle = String(invite.role_title || "");
+    const inviteEmployeeType = normalizeEmployeeType(invite.employee_type) || "employee";
+    const employeeName = invitePrefillName || displayName;
     if (employee) {
       statements.push(c.env.DB.prepare(
-        "UPDATE employees SET user_id = ?, name = ? WHERE id = ? AND org_id = ?",
-      ).bind(userId, displayName, employee.id, invite.org_id));
+        `UPDATE employees SET
+           user_id = ?,
+           name = CASE WHEN ? != '' THEN ? ELSE name END,
+           role_title = CASE WHEN ? != '' THEN ? ELSE role_title END,
+           employee_type = ?
+         WHERE id = ? AND org_id = ?`,
+      ).bind(
+        userId,
+        employeeName,
+        employeeName,
+        inviteRoleTitle,
+        inviteRoleTitle,
+        inviteEmployeeType,
+        employee.id,
+        invite.org_id,
+      ));
     } else {
       statements.push(c.env.DB.prepare(
-        "INSERT INTO employees (id, org_id, user_id, email, name, role_title, location, token, network, amount_minor, endpoint, status, created_at) VALUES (?, ?, ?, ?, ?, '', '', 'USDC', 'Base', 0, '', 'pending', ?)",
-      ).bind(uuid(), invite.org_id, userId, email, displayName, nowIso()));
+        `INSERT INTO employees (
+           id, org_id, user_id, email, name, role_title, location, employee_type,
+           token, network, amount_minor, endpoint, status, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, '', ?, 'USDC', 'Base', 0, '', 'pending', ?)`,
+      ).bind(
+        uuid(),
+        invite.org_id,
+        userId,
+        email,
+        employeeName,
+        inviteRoleTitle,
+        inviteEmployeeType,
+        nowIso(),
+      ));
     }
   }
 

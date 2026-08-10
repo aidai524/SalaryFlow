@@ -11,6 +11,7 @@ Parent index: [`docs/api.md`](../api.md) · Source: [`api/src/routes/org.ts`](..
 | PATCH | `/api/org` | `api.updateOrg` |
 | PATCH | `/api/org/team` | `api.updateTeam` |
 | GET | `/api/org/employees` | `api.listEmployees` |
+| GET | `/api/org/employees/:id/payments` | `api.listEmployeePayments` |
 | GET | `/api/org/pay-overview` | `api.payOverview` |
 | POST | `/api/org/employees` | `api.createEmployee` |
 | PATCH | `/api/org/employees/:id` | `api.updateEmployee` |
@@ -98,10 +99,28 @@ Employee `status`: `pending` \| `ready` \| `update_required` — set by payout v
 - **Auth** — admin
 - **Source** — `api/src/routes/org.ts`
 - **Client** — `api.listEmployees`
-- **Request** — none
-- **Response** — `{ employees: Employee[] }` fields: `id, user_id, email, name, role_title, location, employee_type, token, network, amount_minor, endpoint, status, payout_verified_at, last_paid_at, created_at, payStatus`
-- **Errors** — 401/403
-- **Rules** — `payStatus` is `to_be_paid` \| `paid` \| `none` from team schedule + `employee_payments` (employees only; contractors return `none` until Recipients refactor). See [`docs/pay-status.md`](../pay-status.md).
+- **Request** (query, all optional)
+
+  | Param | Notes |
+  |---|---|
+  | `q` | Case-insensitive substring on name, email, endpoint |
+  | `type` | `employee` \| `contractor` |
+  | `periodKey` | `YYYY-MM` or `YYYY-Www`; scopes row `payStatus` |
+  | `page` / `pageSize` | When either is set, response is paginated; omit both for full list (Quick Pay / drawers) |
+
+- **Response** — `{ employees, total, page, pageSize, counts: { all, employees, contractors } }`
+  - Row fields include: `payment_cadence`, `payment_date_key`, `payStatus`, `nextPayday`, `nextPaydayDisplay`
+- **Rules** — Employees inherit team schedule; contractors use own cadence (`monthly`/`weekly`/`on_demand`). See [`docs/pay-status.md`](../pay-status.md).
+
+---
+
+### GET /api/org/employees/:id/payments
+
+- **Auth** — admin
+- **Client** — `api.listEmployeePayments`
+- **Request** — `limit`, `cursor` (paid_at cursor)
+- **Response** — `{ payments: [{ id, paid_at, amount_minor, token, network, period_key, txHash, explorerUrl }], nextCursor }`
+- **Rules** — `status = paid` rows only; optional join to confirmed attempt `deposit_tx_hash`.
 
 ---
 
@@ -116,16 +135,19 @@ Employee `status`: `pending` \| `ready` \| `update_required` — set by payout v
   |---|---|---|---|
   | `name` | string | yes | |
   | `email` | string | yes | unique per org |
-  | `role_title` | string | no | |
+  | `employee_type` | `employee` \| `contractor` | no | default `employee` |
+  | `role_title` | enum | no | `Developer` \| `Product` \| `Growth` \| `Finance` \| `Operations` |
   | `location` | string | no | |
   | `token` | string | no | default USDC |
   | `network` | string | no | default Base |
   | `endpoint` | string | no | EVM address or empty |
   | `amount` | string | no | decimal → `amount_minor`; default 0 |
+  | `payment_cadence` | string | contractor | `monthly` \| `weekly` \| `on_demand` |
+  | `payment_date_key` | string | if monthly/weekly | same keys as Create Team |
 
 - **Response** — `201` `{ employee }` · `status=pending`
 - **Errors** — 400 validation; 409 duplicate email
-- **Rules** — Pre-provision before invite accept; audit `employee.created`.
+- **Rules** — Employees ignore personal cadence columns (stored null). Audit `employee.created`.
 
 ---
 
@@ -133,11 +155,11 @@ Employee `status`: `pending` \| `ready` \| `update_required` — set by payout v
 
 - **Auth** — admin
 - **Source** — `api/src/routes/org.ts`
-- **Client** — `api.updateEmployee` (**unused by UI**)
-- **Request** — any of `email, name, role_title, location, token, network, endpoint, amount` — **not** `status`
+- **Client** — `api.updateEmployee`
+- **Request** — any of create fields above — **not** `status`
 - **Response** — `{ employee }`
 - **Errors** — 400 if `status` sent / invalid fields; 409 duplicate email
-- **Rules** — Changing token/network/endpoint → `status=update_required`, clears `payout_verified_at`.
+- **Rules** — Changing token/network/endpoint → `status=update_required`, clears `payout_verified_at`. Switching to employee clears personal cadence.
 - **Gotchas** — Admin cannot force `ready`; employee must re-verify via `/api/records/me/payout/*`.
 
 ---
@@ -146,8 +168,8 @@ Employee `status`: `pending` \| `ready` \| `update_required` — set by payout v
 
 - **Auth** — admin
 - **Source** — `api/src/routes/org.ts`
-- **Client** — `api.deleteEmployee` (**unused by UI**)
+- **Client** — `api.deleteEmployee`
 - **Request** — path `id`
 - **Response** — `{ ok: true }`
-- **Errors** — 401/403
-- **Rules** — Hard delete. No FK cleanup documented here — check DB constraints before calling from new UI.
+- **Errors** — 404 missing; 401/403
+- **Rules** — Removes directory row (hard delete). If `user_id` set, unlinks `users.org_id` (sets null) so the account leaves the team. Keeps `employee_payments` history rows. Audit `employee.removed`.
