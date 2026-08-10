@@ -1,7 +1,12 @@
 # DECash Frontend Architecture
 
 This document describes the UI architecture after the DECash refactor foundation.
-Code and docs are English-only.
+
+## Language policy (agents)
+
+- **Code, comments, UI copy, and docs in this repo:** English only. Never add Chinese to source files or product UI.
+- **Implementation plans** (Cursor plan mode / `.plan.md`): Chinese (Simplified).
+- Chat replies to the user may be Chinese; committed artifacts follow the table in `docs/page-migration-guide.md`.
 
 ## Product rename
 
@@ -58,6 +63,15 @@ Guards:
 - `/` sends admin → `/pay`, employee → `/my-pay`
 
 Design-preview bypass remains in `main.tsx` (`/design-preview` or `?preview=decash`).
+
+### Auth views (ported)
+
+Login / register / accept-invite UI lives under `src/views/auth/` (legacy layout pending Figma redesign).
+
+- Shared helpers: `src/views/auth/auth-shared.tsx`
+- API hooks (react-query): `src/hooks/use-auth-api.ts` — `useLoginMutation`, `useRegisterMutation`, `useAcceptInviteMutation`, `useResolveInviteQuery`
+- On success, views call `useAuthStore.applyAuthedUser(user)` then navigate admin → `/pay`, employee → `/my-pay`
+- Legacy reference: `src/auth/AuthPages.tsx` (not mounted)
 
 ## Layout
 
@@ -157,7 +171,7 @@ Avoid importing wagmi/RainbowKit hooks directly in new page code unless you are 
 - Layout chrome lives in `src/layouts` + `src/components/layout`
 - Stores are named by domain (`auth.ts`, future `team.ts`, …)
 - Shared primitives stay in `src/components/ui` (shadcn)
-- No Chinese in source, comments, or docs
+- Language: English in code/UI/docs; Chinese only for agent plans (see Language policy)
 
 ## Package manager
 
@@ -170,3 +184,10 @@ Do **not**:
 - rewrite scripts solely to coerce other developers onto pnpm
 
 `pnpm-workspace.yaml` exists so pnpm can resolve the `api` workspace. npm users can continue using existing npm scripts/lockfile.
+
+## API reference
+
+Agent-oriented HTTP contracts (handlers, client methods, error codes, debug map):
+
+- [`docs/api.md`](api.md) — entry index
+- Domain docs under [`docs/api/`](api/)

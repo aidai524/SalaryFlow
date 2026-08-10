@@ -8,9 +8,19 @@ Use this checklist when implementing one Figma screen into DECash.
 - Keep architecture boundaries intact (router, layout, wallet, state)
 - Ship clean, reusable, mobile-responsive code
 
+## Language policy (agents)
+
+| Artifact | Language |
+|---|---|
+| Source code, comments, string literals, UI copy, error messages | **English only** — no Chinese characters in the repo |
+| Docs under `docs/` | **English only** |
+| Cursor / agent **plans** (`.plan.md`, plan mode output) | **Chinese (Simplified)** |
+
+Do not put Chinese in React components, hooks, stores, API clients, or user-facing pages. When talking to the user or writing an implementation plan, use Chinese; when writing product code and docs, use English.
+
 ## Non-negotiable rules
 
-1. **English only** in code, comments, commits (when asked), and docs.
+1. Follow the **Language policy** above (English code/UI/docs; Chinese plans).
 2. **Keep code clean** — small components, clear names, no dead code, no drive-by refactors outside the page.
 3. **Reuse first** — prefer `src/components/ui/*`, `IdentityAvatar`, layout primitives, and existing dialogs/hooks before inventing duplicates.
 4. **Mobile responsive is mandatory** — even if Figma only provides desktop. Mobile-first layout, shared breakpoints from `docs/architecture.md`, verify narrow widths.
@@ -25,15 +35,17 @@ Use this checklist when implementing one Figma screen into DECash.
 
 | Screen | Route | File |
 |---|---|---|
-| Login | `/login` | `src/views/auth/LoginView.tsx` |
-| Register | `/register` | `src/views/auth/RegisterView.tsx` |
-| Accept invite | `/invite/:token?` | `src/views/auth/InviteView.tsx` |
+| Login | `/login` | `src/views/auth/LoginView.tsx` (ported; redesign later) |
+| Register | `/register` | `src/views/auth/RegisterView.tsx` (ported; redesign later) |
+| Accept invite | `/invite/:token?` | `src/views/auth/InviteView.tsx` (ported; redesign later) |
 | Pay (admin home) | `/pay` | `src/views/admin/PayView.tsx` |
 | Recipients | `/recipients` | `src/views/admin/RecipientsView.tsx` |
 | Overview | `/overview` | `src/views/admin/OverviewView.tsx` |
 | Create team | `/teams/create` | `src/views/admin/CreateTeamView.tsx` |
 | Payment history | `/payments` | `src/views/admin/PaymentHistoryView.tsx` |
 | My pay (employee) | `/my-pay` | `src/views/employee/MyPayView.tsx` |
+
+Auth API hooks: `src/hooks/use-auth-api.ts`. Session writes go through `useAuthStore.applyAuthedUser`.
 
 Authenticated screens already render inside `AppLayout` (header + content). Do **not** re-implement the global header inside a page unless the design explicitly changes chrome.
 
@@ -74,6 +86,8 @@ Extract reusable pieces into:
 - `src/components/ui/...` only for generic primitives
 
 ### 5. Wire data correctly
+
+Before wiring fetches, look up the endpoint in [`docs/api.md`](api.md) (handler path, `api.*` client method, auth role, error codes). Prefer `src/lib/api.ts` — do not invent parallel `fetch` wrappers.
 
 ```ts
 // GOOD
@@ -117,7 +131,8 @@ If you add routes, stores, wallet chains, or shared layout rules, update:
 ## Quality bar
 
 - Typecheck clean (`pnpm run check` or `npm run check`)
-- No Chinese in source/docs
+- No Chinese in source, comments, UI strings, or `docs/` (plans may be Chinese)
+- UI copy is English
 - No duplicated avatar/wallet/nav primitives
 - No new global CSS unless tokens are genuinely shared
 - Prefer composition over one giant view file
