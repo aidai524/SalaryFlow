@@ -1,6 +1,8 @@
-# SalaryFlow
+# DECash
 
 USDC/USDT stablecoin payroll for global teams with confidential payments.
+
+> Formerly known as SalaryFlow. Runtime storage keys (e.g. `salaryflow:theme:v1`) are unchanged for compatibility.
 
 - **Accounts**: email + password (PBKDF2), admin/employee roles, email invitations (Resend)
 - **Payout safety**: employees prove EVM wallet ownership with a 10-minute, one-time ERC-191 challenge

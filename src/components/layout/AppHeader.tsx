@@ -1,0 +1,191 @@
+import { LogOut } from "lucide-react";
+import { useState } from "react";
+import { NavLink, useNavigate } from "react-router-dom";
+import { EmployeePayoutWalletDialog } from "@/components/EmployeePayoutWalletDialog";
+import { IdentityAvatar } from "@/components/IdentityAvatar";
+import { WalletConnectDialog } from "@/components/WalletConnect";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { formatAddress } from "@/lib/address";
+import { cn } from "@/lib/utils";
+import { useAuthStore } from "@/stores/auth";
+
+const ADMIN_NAV = [
+  { to: "/pay", label: "Pay" },
+  { to: "/recipients", label: "Recipients" },
+  { to: "/overview", label: "Overview" },
+] as const;
+
+const EMPLOYEE_NAV = [
+  { to: "/my-pay", label: "My Pay" },
+] as const;
+
+function HeaderWalletChip() {
+  const user = useAuthStore((state) => state.user);
+  const setUser = useAuthStore((state) => state.setUser);
+  const [open, setOpen] = useState(false);
+
+  if (!user) return null;
+
+  const bound = Boolean(user.wallet_address && user.wallet_verified);
+  const label = bound ? formatAddress(user.wallet_address) : "Connect";
+  const seed = user.wallet_address || user.email;
+  const isEmployee = user.role === "employee";
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="inline-flex h-[42px] items-center gap-[7px] rounded-[25px] border border-black/20 bg-white py-1 pr-3.5 pl-1.5 shadow-[0_0_6px_rgba(0,0,0,0.06)]"
+        aria-label={bound ? `Wallet ${label}` : "Connect wallet"}
+      >
+        <IdentityAvatar seed={seed} size={30} alt="" />
+        <span className="hidden font-[family-name:var(--font-space-grotesk)] text-sm text-black sm:inline">
+          {label}
+        </span>
+      </button>
+
+      {open && isEmployee && (
+        <EmployeePayoutWalletDialog
+          onClose={() => setOpen(false)}
+          onBound={(address) => {
+            setOpen(false);
+            setUser({ ...user, wallet_address: address, wallet_verified: true });
+          }}
+        />
+      )}
+      {open && !isEmployee && (
+        <WalletConnectDialog
+          user={user}
+          onClose={() => setOpen(false)}
+          onBound={(address) => {
+            setOpen(false);
+            setUser({ ...user, wallet_address: address, wallet_verified: true });
+          }}
+          onUnbound={() => {
+            setUser({ ...user, wallet_address: null, wallet_verified: false });
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+function HeaderAccountMenu() {
+  const navigate = useNavigate();
+  const user = useAuthStore((state) => state.user);
+  const logout = useAuthStore((state) => state.logout);
+
+  if (!user) return null;
+
+  const handleSignOut = () => {
+    void logout().then(() => {
+      navigate("/login", { replace: true });
+    });
+  };
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          className="inline-grid size-[42px] place-items-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-black/20"
+          aria-label="Open account menu"
+          title="Account menu"
+        >
+          <img src="/icons/menu.svg" alt="" width={16} height={16} className="size-4" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="end"
+        sideOffset={8}
+        className={cn(
+          "min-w-56 rounded-2xl border border-black/10 bg-white p-2",
+          "font-[family-name:var(--font-montserrat)] text-black",
+          "shadow-[0_0_20px_rgba(0,0,0,0.06)] ring-0",
+        )}
+      >
+        <DropdownMenuLabel className="flex flex-col gap-0.5 px-2.5 py-2">
+          <span className="truncate text-sm font-medium text-black">{user.name}</span>
+          <span className="truncate text-xs font-normal text-[#606060]">{user.email}</span>
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator className="mx-1 bg-black/10" />
+        <DropdownMenuItem
+          variant="destructive"
+          onSelect={handleSignOut}
+          className="cursor-pointer rounded-xl px-2.5 py-2 text-sm focus:bg-black/5"
+        >
+          <LogOut className="size-4" />
+          Sign out
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+export function AppHeader() {
+  const navigate = useNavigate();
+  const user = useAuthStore((state) => state.user);
+  const isAdmin = user?.role === "admin";
+  const navItems = isAdmin ? ADMIN_NAV : EMPLOYEE_NAV;
+  const homePath = isAdmin ? "/pay" : "/my-pay";
+
+  return (
+    <header
+      className={cn(
+        "grid w-full grid-cols-[1fr_auto] items-start gap-x-3 gap-y-3 px-4 py-4 sm:px-6",
+        "md:grid-cols-[1fr_auto_1fr] md:items-center md:px-10 md:py-5 lg:px-14",
+      )}
+    >
+      <button
+        type="button"
+        className="justify-self-start rounded-[25px] p-0"
+        onClick={() => navigate(homePath)}
+        aria-label="DECash home"
+      >
+        <img
+          src="/logo.svg"
+          alt="DECash"
+          className="h-auto w-[123px] md:w-[142px]"
+          width={142}
+          height={42}
+        />
+      </button>
+
+      <div className="col-start-2 row-start-1 flex items-center justify-self-end gap-2 md:col-start-3">
+        <HeaderWalletChip />
+        <HeaderAccountMenu />
+      </div>
+
+      <nav
+        className={cn(
+          "col-span-2 row-start-2 flex h-[42px] items-center justify-center justify-self-center gap-1.5 rounded-[25px] bg-white px-1 shadow-[0_0_6px_rgba(0,0,0,0.06)]",
+          "md:col-span-1 md:col-start-2 md:row-start-1 md:gap-[15px] md:px-0",
+        )}
+        aria-label="Primary navigation"
+      >
+        {navItems.map((item) => (
+          <NavLink
+            key={item.to}
+            to={item.to}
+            className={({ isActive }) =>
+              cn(
+                "inline-flex h-[42px] min-w-0 items-center justify-center rounded-[25px] px-[17px] font-[family-name:var(--font-montserrat)] text-sm font-medium text-black md:min-w-[108px] md:px-6 md:text-base",
+                isActive && "bg-black text-white shadow-[0_0_6px_rgba(0,0,0,0.06)]",
+              )
+            }
+          >
+            {item.label}
+          </NavLink>
+        ))}
+      </nav>
+    </header>
+  );
+}
