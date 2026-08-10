@@ -29,9 +29,9 @@ Employee `status`: `pending` \| `ready` \| `update_required` — set by payout v
 - **Source** — `api/src/routes/org.ts`
 - **Client** — `api.orgContext` · callers: `stores/auth.ts`
 - **Request** — none
-- **Response** — `{ org: { id, name, country, payment_cadence, payment_date_key, reminder_lead_days, payment_configured_at }, memberCount, paymentConfigured }`
+- **Response** — `{ org: { id, name, country, payment_cadence, payment_date_key, reminder_lead_days, payment_configured_at }, memberCount, paymentConfigured, reminderLeadDefaults: { monthly, weekly } }`
 - **Errors** — 404 org missing
-- **Rules** — Minimal workspace context; no member directory. `paymentConfigured` is true when `payment_configured_at` is set (Create Team onboarding complete). Phase 1: single org via `user.org_id`.
+- **Rules** — Minimal workspace context; no member directory. `paymentConfigured` is true when `payment_configured_at` is set (Create Team onboarding complete). Phase 1: single org via `user.org_id`. `reminderLeadDefaults` comes from env `REMINDER_LEAD_DAYS_MONTHLY` / `REMINDER_LEAD_DAYS_WEEKLY` (defaults 7 / 3).
 
 ---
 
@@ -76,7 +76,7 @@ Employee `status`: `pending` \| `ready` \| `update_required` — set by payout v
 
 - **Response** — `{ org: { id, name, country, payment_cadence, payment_date_key, reminder_lead_days, payment_configured_at } }`
 - **Errors** — 400 invalid schedule / date / mismatch
-- **Rules** — Writes org payment fields only; sets `reminder_lead_days` to **7** (monthly) or **3** (weekly); sets `payment_configured_at`. Does **not** create `payroll_runs` or `payroll_schedules`. Does not change org name. Audit `org.team_payment_updated`. Idempotent (may update preferences again).
+- **Rules** — Writes org payment fields only; sets `reminder_lead_days` from env (`REMINDER_LEAD_DAYS_MONTHLY` / `REMINDER_LEAD_DAYS_WEEKLY`, defaults **7** / **3**); sets `payment_configured_at`. Does **not** create `payroll_runs` or `payroll_schedules`. Does not change org name. Audit `org.team_payment_updated`. Idempotent (may update preferences again).
 
 ---
 

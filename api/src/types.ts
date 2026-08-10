@@ -15,6 +15,10 @@ export interface Env {
   INTENTS_QUOTE_PUBLIC_KEY?: string;
   PAYMENTS_MODE?: "disabled" | "dry-run" | "live";
   PAYMENTS_EXECUTION_ACK?: "local-test" | "mainnet-live";
+  /** Create Team / org payment reminder lead days (monthly). Default 7. */
+  REMINDER_LEAD_DAYS_MONTHLY?: string;
+  /** Create Team / org payment reminder lead days (weekly). Default 3. */
+  REMINDER_LEAD_DAYS_WEEKLY?: string;
 }
 
 export type Role = "admin" | "employee";

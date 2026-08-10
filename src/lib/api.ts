@@ -166,6 +166,11 @@ export interface OrgPaymentFields {
   payment_configured_at: string | null;
 }
 
+export interface ReminderLeadDefaults {
+  monthly: number;
+  weekly: number;
+}
+
 export interface OrgContext {
   org: {
     id: string;
@@ -174,6 +179,8 @@ export interface OrgContext {
   } & OrgPaymentFields;
   memberCount: number;
   paymentConfigured: boolean;
+  /** From Worker env REMINDER_LEAD_DAYS_MONTHLY / WEEKLY (defaults 7 / 3). */
+  reminderLeadDefaults: ReminderLeadDefaults;
 }
 
 export interface OrgInfo {

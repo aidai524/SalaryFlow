@@ -9,14 +9,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useUpdateTeamMutation } from "@/hooks/use-org-api";
+import { useOrgContextQuery, useUpdateTeamMutation } from "@/hooks/use-org-api";
 import { ApiError, type TeamPaymentDateKey, type TeamPaymentSchedule } from "@/lib/api";
 import { useAuthStore } from "@/stores/auth";
 import {
   CREATE_TEAM_BG,
   DEFAULT_PAYMENT_SCHEDULE,
-  PAYMENT_REMINDER_HELPER,
+  DEFAULT_REMINDER_LEAD_DAYS,
   PAYMENT_SCHEDULE_OPTIONS,
+  paymentReminderHelper,
 } from "./create-team/config";
 import { defaultPaymentDateForSchedule, paymentDateOptionsForSchedule } from "./create-team/utils";
 
@@ -34,6 +35,10 @@ export function CreateTeamView() {
   const [paymentDate, setPaymentDate] = useState<TeamPaymentDateKey>(
     defaultPaymentDateForSchedule(DEFAULT_PAYMENT_SCHEDULE),
   );
+
+  const orgContextQuery = useOrgContextQuery(orgId);
+  const reminderLeadDefaults = orgContextQuery.data?.reminderLeadDefaults ?? DEFAULT_REMINDER_LEAD_DAYS;
+  const reminderDays = reminderLeadDefaults[schedule];
 
   const updateTeamMutation = useUpdateTeamMutation(orgId);
   const dateOptions = paymentDateOptionsForSchedule(schedule);
@@ -164,7 +169,7 @@ export function CreateTeamView() {
             </Select>
 
             <p className="mt-3 font-montserrat text-xs leading-normal text-[#909090]">
-              {PAYMENT_REMINDER_HELPER[schedule]}
+              {paymentReminderHelper(reminderDays)}
             </p>
 
             {errorMessage && (

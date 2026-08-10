@@ -4,6 +4,7 @@ import { Hono } from "hono";
 import { requireRole, type AppEnv } from "../middleware";
 import { parseTokenAmount } from "../money";
 import {
+  getReminderLeadDefaults,
   isPaymentDateValidForSchedule,
   normalizeTeamPaymentDateKey,
   normalizeTeamPaymentSchedule,
@@ -48,6 +49,7 @@ orgRoutes.get("/context", requireRole("admin", "employee"), async (c) => {
     },
     memberCount: Number(memberCount?.n || 0),
     paymentConfigured: !!org.payment_configured_at,
+    reminderLeadDefaults: getReminderLeadDefaults(c.env),
   });
 });
 
@@ -97,7 +99,7 @@ orgRoutes.patch("/team", requireRole("admin"), async (c) => {
     return c.json({ error: "Payment date does not match the selected schedule" }, 400);
   }
 
-  const reminderLeadDays = reminderLeadDaysForSchedule(paymentSchedule);
+  const reminderLeadDays = reminderLeadDaysForSchedule(paymentSchedule, c.env);
   const configuredAt = nowIso();
   await c.env.DB.batch([
     c.env.DB.prepare(
