@@ -17,3 +17,4 @@ _worker.bundle
 
 pnpm-lock.yaml
 .env.local
+.pnpm-store/
