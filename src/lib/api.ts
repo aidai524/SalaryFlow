@@ -105,6 +105,105 @@ export interface PayOverview {
   };
 }
 
+export interface OrgOverview {
+  org: { id: string; name: string };
+  period: {
+    periodKey: string;
+    payday: string;
+    paydayDisplay: string;
+    cadence: TeamPaymentSchedule;
+    monthLabel: string;
+    currentPeriodKey: string;
+  };
+  stats: {
+    paidMinor: number;
+    paidCount: number;
+    awaitingMinor: number;
+    awaitingCount: number;
+    daysLeft: number;
+    progress: number;
+    recipientsCount: number;
+  };
+  volume: {
+    range: 6 | 12;
+    cadence: TeamPaymentSchedule;
+    bars: Array<{
+      periodKey: string;
+      label: string;
+      amountMinor: number;
+      changePct: number | null;
+      isCurrent: boolean;
+    }>;
+  };
+  upcoming: Array<{
+    periodKey: string;
+    title: string;
+    payday: string;
+    paydayDisplay: string;
+    employeeCount: number;
+    amountMinor: number;
+  }>;
+  recentPayments: Array<{
+    id: string;
+    employeeId: string;
+    name: string;
+    role_title: string | null;
+    amount_minor: number;
+    token: string;
+    network: string;
+    status: "paid" | "processing";
+    paid_at: string;
+    period_key: string;
+  }>;
+  category: Array<{
+    type: EmployeeType;
+    label: string;
+    count: number;
+    pct: number;
+  }>;
+  networks: Array<{
+    network: string;
+    count: number;
+    pct: number;
+  }>;
+}
+
+export interface OrgPaymentRow {
+  id: string;
+  employeeId: string;
+  name: string;
+  role_title: string | null;
+  employee_type: EmployeeType;
+  amount_minor: number;
+  token: string;
+  network: string;
+  status: string;
+  paid_at: string;
+  period_key: string;
+}
+
+export interface OrgPaymentsResult {
+  org: { id: string; name: string };
+  period: {
+    periodKey: string;
+    payday: string;
+    paydayDisplay: string;
+    cadence: TeamPaymentSchedule;
+    monthLabel: string;
+  };
+  payments: OrgPaymentRow[];
+}
+
+export interface OrgOverviewParams {
+  periodKey?: string;
+  volumeRange?: 6 | 12;
+}
+
+export interface ListOrgPaymentsParams {
+  periodKey?: string;
+  q?: string;
+}
+
 export interface QuickPayAsset {
   assetId: string;
   decimals: number;
@@ -392,6 +491,20 @@ export const api = {
     );
   },
   payOverview: () => request<PayOverview>("/org/pay-overview"),
+  orgOverview: (params?: OrgOverviewParams) => {
+    const qs = new URLSearchParams();
+    if (params?.periodKey) qs.set("periodKey", params.periodKey);
+    if (params?.volumeRange) qs.set("volumeRange", String(params.volumeRange));
+    const query = qs.toString();
+    return request<OrgOverview>(`/org/overview${query ? `?${query}` : ""}`);
+  },
+  listOrgPayments: (params?: ListOrgPaymentsParams) => {
+    const qs = new URLSearchParams();
+    if (params?.periodKey) qs.set("periodKey", params.periodKey);
+    if (params?.q) qs.set("q", params.q);
+    const query = qs.toString();
+    return request<OrgPaymentsResult>(`/org/payments${query ? `?${query}` : ""}`);
+  },
   createEmployee: (body: Partial<Employee> & {
     amount?: string;
     employee_type?: EmployeeType;

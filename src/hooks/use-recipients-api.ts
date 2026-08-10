@@ -37,6 +37,8 @@ async function invalidateRecipientLists(queryClient: ReturnType<typeof useQueryC
     queryClient.invalidateQueries({ queryKey: ["recipients"] }),
     queryClient.invalidateQueries({ queryKey: ["employees"] }),
     queryClient.invalidateQueries({ queryKey: ["pay-overview", orgId] }),
+    queryClient.invalidateQueries({ queryKey: ["org-overview"] }),
+    queryClient.invalidateQueries({ queryKey: ["org-payments"] }),
   ]);
 }
 

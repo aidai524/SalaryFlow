@@ -18,11 +18,16 @@ const MONTHS = [
   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ] as const;
 
+const DROPDOWN_WIDTH_PX = 280;
+const VIEWPORT_EDGE_PAD_PX = 12;
+
 export interface PaymentPeriodPickerProps {
   cadence: TeamPaymentSchedule;
   value: string;
   onChange: (periodKey: string) => void;
   className?: string;
+  /** `short` → "2026 Aug" / "2026 W32"; default `long` keeps Recipients label. */
+  labelFormat?: "short" | "long";
 }
 
 export function periodKeyFromDate(cadence: TeamPaymentSchedule, date: Date = new Date()): string {
@@ -34,15 +39,21 @@ export function periodKeyFromDate(cadence: TeamPaymentSchedule, date: Date = new
   return format(date, "yyyy-MM");
 }
 
-export function formatPeriodLabel(cadence: TeamPaymentSchedule, periodKey: string): string {
+export function formatPeriodLabel(
+  cadence: TeamPaymentSchedule,
+  periodKey: string,
+  labelFormat: "short" | "long" = "long",
+): string {
   if (cadence === "weekly") {
     const match = /^(\d{4})-W(\d{2})$/.exec(periodKey);
     if (!match) return periodKey;
+    if (labelFormat === "short") return `${match[1]} W${Number(match[2])}`;
     return `${match[1]} Week ${Number(match[2])} Payment`;
   }
   const match = /^(\d{4})-(\d{2})$/.exec(periodKey);
   if (!match) return periodKey;
   const date = parse(`${match[1]}-${match[2]}-01`, "yyyy-MM-dd", new Date());
+  if (labelFormat === "short") return format(date, "yyyy MMM");
   return `${format(date, "yyyy MMMM")} Payment`;
 }
 
@@ -70,14 +81,40 @@ export function PaymentPeriodPicker({
   value,
   onChange,
   className,
+  labelFormat = "long",
 }: PaymentPeriodPickerProps) {
   const [open, setOpen] = useState(false);
   const [viewYear, setViewYear] = useState(() => yearFromPeriodKey(cadence, value));
+  /** Align dropdown to trigger's left or right edge so it stays in viewport. */
+  const [align, setAlign] = useState<"left" | "right">("left");
   const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setViewYear(yearFromPeriodKey(cadence, value));
   }, [cadence, value]);
+
+  useEffect(() => {
+    if (!open) return;
+    const updateAlign = () => {
+      const el = rootRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const spaceRight = window.innerWidth - rect.left - VIEWPORT_EDGE_PAD_PX;
+      const spaceLeft = rect.right - VIEWPORT_EDGE_PAD_PX;
+      if (spaceRight >= DROPDOWN_WIDTH_PX) {
+        setAlign("left");
+        return;
+      }
+      if (spaceLeft >= DROPDOWN_WIDTH_PX) {
+        setAlign("right");
+        return;
+      }
+      setAlign(spaceLeft > spaceRight ? "right" : "left");
+    };
+    updateAlign();
+    window.addEventListener("resize", updateAlign);
+    return () => window.removeEventListener("resize", updateAlign);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -121,7 +158,7 @@ export function PaymentPeriodPicker({
 
   const selectedMonth = monthFromPeriodKey(value);
   const selectedWeek = weekFromPeriodKey(value);
-  const label = formatPeriodLabel(cadence, value);
+  const label = formatPeriodLabel(cadence, value, labelFormat);
 
   return (
     <div ref={rootRef} className={cn("relative", className)}>
@@ -139,7 +176,12 @@ export function PaymentPeriodPicker({
       </button>
 
       {open ? (
-        <div className="absolute left-0 top-[calc(100%+8px)] z-40 w-[280px] rounded-[16px] border border-black/10 bg-white p-4 shadow-[0px_8px_24px_rgba(0,0,0,0.08)]">
+        <div
+          className={cn(
+            "absolute top-[calc(100%+8px)] z-40 w-[280px] rounded-[16px] border border-black/10 bg-white p-4 shadow-[0px_8px_24px_rgba(0,0,0,0.08)]",
+            align === "right" ? "right-0 left-auto" : "left-0 right-auto",
+          )}
+        >
           <div className="mb-3 flex items-center justify-between">
             <button
               type="button"

@@ -241,6 +241,8 @@ export function QuickPayPanel({
     onSuccess: async () => {
       setPhase("done");
       await queryClient.invalidateQueries({ queryKey: ["pay-overview"] });
+      await queryClient.invalidateQueries({ queryKey: ["org-overview"] });
+      await queryClient.invalidateQueries({ queryKey: ["org-payments"] });
       await queryClient.invalidateQueries({ queryKey: ["employees"] });
     },
     onError: (err) => {

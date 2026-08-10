@@ -13,6 +13,8 @@ Parent index: [`docs/api.md`](../api.md) · Source: [`api/src/routes/org.ts`](..
 | GET | `/api/org/employees` | `api.listEmployees` |
 | GET | `/api/org/employees/:id/payments` | `api.listEmployeePayments` |
 | GET | `/api/org/pay-overview` | `api.payOverview` |
+| GET | `/api/org/overview` | `api.orgOverview` |
+| GET | `/api/org/payments` | `api.listOrgPayments` |
 | POST | `/api/org/employees` | `api.createEmployee` |
 | PATCH | `/api/org/employees/:id` | `api.updateEmployee` |
 | DELETE | `/api/org/employees/:id` | `api.deleteEmployee` |
@@ -91,6 +93,42 @@ Employee `status`: `pending` \| `ready` \| `update_required` — set by payout v
 - **Response** — period window (`periodKey`, `payday`, `paydayDisplay`, `cadence`, `monthLabel`), stats (`currentPayrollMinor`, `recipientsCount`, `progress`), latest 6 `recipients`, `highPriority.verification`
 - **Rules** — Aggregates `employee_type = 'employee'` only against team schedule (`organizations.payment_*`) and `employee_payments`. `progress` = share of employees with a `status=paid` payment for the current `periodKey`. Contractor cadence is deferred.
 - **Errors** — 404 org; 409 `PAYMENT_NOT_CONFIGURED`
+
+---
+
+### GET /api/org/overview
+
+- **Auth** — admin
+- **Source** — `api/src/routes/org.ts` + `api/src/pay-period.ts`
+- **Client** — `api.orgOverview` · callers: `OverviewView`
+- **Request** (query)
+
+  | Param | Notes |
+  |---|---|
+  | `periodKey` | Optional. `YYYY-MM` or `YYYY-Www` matching team cadence; default = current period |
+  | `volumeRange` | `6` \| `12` (default `6`) — number of past periods for Payment Volume |
+
+- **Response** — `period` (includes `currentPeriodKey`), `stats` (`paidMinor`, `paidCount`, `awaitingMinor`, `awaitingCount`, `daysLeft`, `progress`, `recipientsCount`), `volume.bars[]`, `upcoming[]` (current + next 3 unpaid employee payrolls), `recentPayments` (latest 5 paid/processing), `category` (employee vs contractor headcount), `networks` (payout network distribution)
+- **Rules** — Dashboard money/progress counts `employee_type = 'employee'` only. Category / networks use full directory. No schema change; aggregates existing `employees` + `employee_payments`.
+- **Errors** — 400 invalid `periodKey`; 404 org; 409 `PAYMENT_NOT_CONFIGURED`
+
+---
+
+### GET /api/org/payments
+
+- **Auth** — admin
+- **Source** — `api/src/routes/org.ts`
+- **Client** — `api.listOrgPayments` · callers: `PaymentHistoryView`
+- **Request** (query)
+
+  | Param | Notes |
+  |---|---|
+  | `periodKey` | Optional; default current period |
+  | `q` | Case-insensitive substring on employee name |
+
+- **Response** — `{ org, period, payments: [{ id, employeeId, name, role_title, employee_type, amount_minor, token, network, status, paid_at, period_key }] }`
+- **Rules** — All payment statuses for the period; UI maps `processing` → Pending.
+- **Errors** — 400 invalid `periodKey`; 404 org; 409 `PAYMENT_NOT_CONFIGURED`
 
 ---
 

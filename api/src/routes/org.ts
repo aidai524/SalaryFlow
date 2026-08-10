@@ -11,10 +11,15 @@ import {
   type TeamPaymentSchedule,
 } from "../org-payment";
 import {
+  daysUntilPayday,
   formatPaydayDisplay,
+  listPeriodWindows,
   monthLabelForPayday,
+  payrollTitleForPeriod,
   resolveCurrentPeriod,
   resolveNextPeriod,
+  resolvePeriodFromKey,
+  shortPeriodLabel,
 } from "../pay-period";
 import { normalizePayoutAddress, normalizePayoutNetwork, normalizePayoutToken } from "../payout";
 import {
@@ -230,6 +235,338 @@ orgRoutes.get("/pay-overview", requireRole("admin"), async (c) => {
           }
         : null,
     },
+  });
+});
+
+// Admin Overview dashboard aggregation (period-aware stats + charts + upcoming).
+orgRoutes.get("/overview", requireRole("admin"), async (c) => {
+  const user = c.get("user") as AuthUser;
+  const org = await c.env.DB.prepare(
+    `SELECT id, name, payment_cadence, payment_date_key, payment_configured_at
+     FROM organizations WHERE id = ?`,
+  ).bind(user.org_id).first<{
+    id: string;
+    name: string;
+    payment_cadence: string | null;
+    payment_date_key: string | null;
+    payment_configured_at: string | null;
+  }>();
+  if (!org) return c.json({ error: "Organization not found" }, 404);
+  if (!org.payment_configured_at || !org.payment_cadence || !org.payment_date_key) {
+    return c.json({ error: "Team payment preferences are not configured", code: "PAYMENT_NOT_CONFIGURED" }, 409);
+  }
+
+  const cadence = org.payment_cadence as TeamPaymentSchedule;
+  const dateKey = org.payment_date_key as TeamPaymentDateKey;
+  const now = new Date();
+  const current = resolveCurrentPeriod(cadence, dateKey, now);
+
+  const periodKeyParam = String(c.req.query("periodKey") || "").trim();
+  let selected = current;
+  if (periodKeyParam) {
+    const resolved = resolvePeriodFromKey(cadence, dateKey, periodKeyParam);
+    if (!resolved) return c.json({ error: "Invalid periodKey for team cadence" }, 400);
+    selected = resolved;
+  }
+
+  const volumeRangeRaw = Number.parseInt(String(c.req.query("volumeRange") || "6"), 10);
+  const volumeRange = volumeRangeRaw === 12 ? 12 : 6;
+
+  const employees = await c.env.DB.prepare(
+    `SELECT id, name, role_title, employee_type, amount_minor, token, network, endpoint,
+            status, payout_verified_at, last_paid_at, created_at
+     FROM employees WHERE org_id = ? ORDER BY created_at DESC`,
+  ).bind(user.org_id).all<{
+    id: string;
+    name: string;
+    role_title: string | null;
+    employee_type: string;
+    amount_minor: number;
+    token: string;
+    network: string;
+    endpoint: string | null;
+    status: string;
+    payout_verified_at: string | null;
+    last_paid_at: string | null;
+    created_at: string;
+  }>();
+
+  const fullTime = employees.results.filter((e) => (e.employee_type || "employee") === "employee");
+  const contractors = employees.results.filter((e) => (e.employee_type || "employee") === "contractor");
+
+  const paidRows = await c.env.DB.prepare(
+    `SELECT ep.id, ep.employee_id, ep.amount_minor, ep.period_key, ep.status, ep.paid_at, ep.created_at,
+            ep.token, ep.network, e.name, e.role_title, e.employee_type
+     FROM employee_payments ep
+     JOIN employees e ON e.id = ep.employee_id
+     WHERE ep.org_id = ?`,
+  ).bind(user.org_id).all<{
+    id: string;
+    employee_id: string;
+    amount_minor: number;
+    period_key: string;
+    status: string;
+    paid_at: string | null;
+    created_at: string;
+    token: string;
+    network: string;
+    name: string;
+    role_title: string | null;
+    employee_type: string;
+  }>();
+
+  const paidIdsSelected = new Set<string>();
+  let paidMinor = 0;
+  let paidCount = 0;
+  for (const row of paidRows.results) {
+    if (row.period_key !== selected.periodKey || row.status !== "paid") continue;
+    const emp = fullTime.find((e) => e.id === row.employee_id);
+    if (!emp) continue;
+    paidIdsSelected.add(row.employee_id);
+    paidMinor += Number(row.amount_minor || 0);
+    paidCount += 1;
+  }
+
+  let awaitingMinor = 0;
+  let awaitingCount = 0;
+  for (const emp of fullTime) {
+    if (paidIdsSelected.has(emp.id)) continue;
+    awaitingMinor += Number(emp.amount_minor || 0);
+    awaitingCount += 1;
+  }
+
+  const recipientsCount = fullTime.length;
+  const progress = Math.round((paidCount / (recipientsCount || 1)) * 100);
+  const daysLeft = daysUntilPayday(selected.payday, now);
+
+  // Volume: last N periods ending at current (real now), paid amounts for employees only.
+  const volumeWindows = listPeriodWindows(cadence, dateKey, {
+    direction: "past",
+    count: volumeRange,
+    from: current,
+    now,
+  });
+  const paidByPeriod = new Map<string, number>();
+  for (const row of paidRows.results) {
+    if (row.status !== "paid") continue;
+    const empType = row.employee_type || "employee";
+    if (empType !== "employee") continue;
+    paidByPeriod.set(row.period_key, (paidByPeriod.get(row.period_key) || 0) + Number(row.amount_minor || 0));
+  }
+  const volumeBars = volumeWindows.map((w, index) => {
+    const amountMinor = paidByPeriod.get(w.periodKey) || 0;
+    const prev = index > 0 ? (paidByPeriod.get(volumeWindows[index - 1].periodKey) || 0) : null;
+    let changePct: number | null = null;
+    if (prev !== null && prev > 0) {
+      changePct = Math.round(((amountMinor - prev) / prev) * 100);
+    } else if (prev === 0 && amountMinor > 0) {
+      changePct = 100;
+    } else if (prev === 0 && amountMinor === 0) {
+      changePct = 0;
+    }
+    return {
+      periodKey: w.periodKey,
+      label: shortPeriodLabel(w.periodKey, cadence),
+      amountMinor,
+      changePct,
+      isCurrent: w.periodKey === current.periodKey,
+    };
+  });
+
+  // Upcoming: current + next 3; hide fully paid periods.
+  const upcomingWindows = listPeriodWindows(cadence, dateKey, {
+    direction: "future",
+    count: 4,
+    from: current,
+    now,
+  });
+  const upcoming = upcomingWindows.flatMap((w) => {
+    const paidIds = new Set(
+      paidRows.results
+        .filter((r) => r.period_key === w.periodKey && r.status === "paid")
+        .map((r) => r.employee_id),
+    );
+    let amountMinor = 0;
+    let employeeCount = 0;
+    for (const emp of fullTime) {
+      if (paidIds.has(emp.id)) continue;
+      amountMinor += Number(emp.amount_minor || 0);
+      employeeCount += 1;
+    }
+    if (employeeCount === 0) return [];
+    return [{
+      periodKey: w.periodKey,
+      title: payrollTitleForPeriod(w.periodKey, cadence),
+      payday: w.payday,
+      paydayDisplay: formatPaydayDisplay(w.payday),
+      employeeCount,
+      amountMinor,
+    }];
+  });
+
+  const recentSorted = [...paidRows.results]
+    .filter((r) => r.status === "paid" || r.status === "processing")
+    .sort((a, b) => {
+      const at = a.paid_at || a.created_at;
+      const bt = b.paid_at || b.created_at;
+      return bt.localeCompare(at);
+    })
+    .slice(0, 5)
+    .map((r) => ({
+      id: r.id,
+      employeeId: r.employee_id,
+      name: r.name,
+      role_title: r.role_title,
+      amount_minor: Number(r.amount_minor || 0),
+      token: r.token,
+      network: r.network,
+      status: r.status as "paid" | "processing",
+      paid_at: r.paid_at || r.created_at,
+      period_key: r.period_key,
+    }));
+
+  const totalHeadcount = employees.results.length || 1;
+  const category = [
+    {
+      type: "employee" as const,
+      label: "Employees",
+      count: fullTime.length,
+      pct: Math.round((fullTime.length / totalHeadcount) * 100),
+    },
+    {
+      type: "contractor" as const,
+      label: "Contractors",
+      count: contractors.length,
+      pct: Math.round((contractors.length / totalHeadcount) * 100),
+    },
+  ].filter((c) => c.count > 0);
+
+  const networkCounts = new Map<string, number>();
+  for (const emp of employees.results) {
+    const network = String(emp.network || "Unknown").trim() || "Unknown";
+    networkCounts.set(network, (networkCounts.get(network) || 0) + 1);
+  }
+  const networkTotal = employees.results.length || 1;
+  const networks = [...networkCounts.entries()]
+    .map(([network, count]) => ({
+      network,
+      count,
+      pct: Math.round((count / networkTotal) * 100),
+    }))
+    .sort((a, b) => b.count - a.count);
+
+  return c.json({
+    org: { id: org.id, name: org.name },
+    period: {
+      periodKey: selected.periodKey,
+      payday: selected.payday,
+      paydayDisplay: formatPaydayDisplay(selected.payday),
+      cadence,
+      monthLabel: monthLabelForPayday(selected.payday),
+      currentPeriodKey: current.periodKey,
+    },
+    stats: {
+      paidMinor,
+      paidCount,
+      awaitingMinor,
+      awaitingCount,
+      daysLeft,
+      progress,
+      recipientsCount,
+    },
+    volume: {
+      range: volumeRange,
+      cadence,
+      bars: volumeBars,
+    },
+    upcoming,
+    recentPayments: recentSorted,
+    category,
+    networks,
+  });
+});
+
+// Org-wide payment history for a period (Payment History page).
+orgRoutes.get("/payments", requireRole("admin"), async (c) => {
+  const user = c.get("user") as AuthUser;
+  const org = await c.env.DB.prepare(
+    `SELECT id, name, payment_cadence, payment_date_key, payment_configured_at
+     FROM organizations WHERE id = ?`,
+  ).bind(user.org_id).first<{
+    id: string;
+    name: string;
+    payment_cadence: string | null;
+    payment_date_key: string | null;
+    payment_configured_at: string | null;
+  }>();
+  if (!org) return c.json({ error: "Organization not found" }, 404);
+  if (!org.payment_configured_at || !org.payment_cadence || !org.payment_date_key) {
+    return c.json({ error: "Team payment preferences are not configured", code: "PAYMENT_NOT_CONFIGURED" }, 409);
+  }
+
+  const cadence = org.payment_cadence as TeamPaymentSchedule;
+  const dateKey = org.payment_date_key as TeamPaymentDateKey;
+  const now = new Date();
+  const current = resolveCurrentPeriod(cadence, dateKey, now);
+  const periodKeyParam = String(c.req.query("periodKey") || "").trim();
+  let selected = current;
+  if (periodKeyParam) {
+    const resolved = resolvePeriodFromKey(cadence, dateKey, periodKeyParam);
+    if (!resolved) return c.json({ error: "Invalid periodKey for team cadence" }, 400);
+    selected = resolved;
+  }
+
+  const q = String(c.req.query("q") || "").trim().toLowerCase();
+
+  const rows = await c.env.DB.prepare(
+    `SELECT ep.id, ep.employee_id, ep.amount_minor, ep.token, ep.network, ep.status,
+            ep.paid_at, ep.created_at, ep.period_key,
+            e.name, e.role_title, e.employee_type
+     FROM employee_payments ep
+     JOIN employees e ON e.id = ep.employee_id AND e.org_id = ep.org_id
+     WHERE ep.org_id = ? AND ep.period_key = ?
+     ORDER BY COALESCE(ep.paid_at, ep.created_at) DESC, ep.id DESC`,
+  ).bind(user.org_id, selected.periodKey).all<{
+    id: string;
+    employee_id: string;
+    amount_minor: number;
+    token: string;
+    network: string;
+    status: string;
+    paid_at: string | null;
+    created_at: string;
+    period_key: string;
+    name: string;
+    role_title: string | null;
+    employee_type: string;
+  }>();
+
+  const payments = rows.results
+    .filter((r) => !q || r.name.toLowerCase().includes(q))
+    .map((r) => ({
+      id: r.id,
+      employeeId: r.employee_id,
+      name: r.name,
+      role_title: r.role_title,
+      employee_type: (r.employee_type || "employee") as EmployeeType,
+      amount_minor: Number(r.amount_minor || 0),
+      token: r.token,
+      network: r.network,
+      status: r.status,
+      paid_at: r.paid_at || r.created_at,
+      period_key: r.period_key,
+    }));
+
+  return c.json({
+    org: { id: org.id, name: org.name },
+    period: {
+      periodKey: selected.periodKey,
+      payday: selected.payday,
+      paydayDisplay: formatPaydayDisplay(selected.payday),
+      cadence,
+      monthLabel: monthLabelForPayday(selected.payday),
+    },
+    payments,
   });
 });
 

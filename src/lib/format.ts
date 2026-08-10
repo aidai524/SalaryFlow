@@ -73,6 +73,22 @@ export function formatDate(value: Date | string): string {
   return dateFmt.format(d);
 }
 
+const dateTimeFmt = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+
+/** Format ISO datetime as "Aug 1, 2026 11:56". */
+export function formatDateTime(value: string): string {
+  const d = new Date(value);
+  if (!Number.isFinite(d.getTime())) return value;
+  return dateTimeFmt.format(d);
+}
+
 /** Truncate an address: 0x541…8dc1 */
 export function formatAddress(address: string, left = 5, right = 5): string {
   const value = String(address || "");

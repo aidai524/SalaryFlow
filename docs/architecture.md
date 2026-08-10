@@ -160,6 +160,20 @@ Rules:
 
 Team switcher control next to the greeting is **disabled** until multi-team lands.
 
+### Overview (admin dashboard)
+
+- Route `/overview` → `src/views/admin/OverviewView.tsx` + `src/views/admin/overview/*`
+- Aggregation: `GET /api/org/overview?periodKey=&volumeRange=` via `src/hooks/use-overview-api.ts`
+- Period picker: shared `PaymentPeriodPicker` (`labelFormat="short"`)
+- Charts: `recharts` (Payment Volume bar + Spend Category donut)
+- Payment History entry: `/payments?period=<periodKey>` (Review Payments / View All)
+
+### Payment History (admin)
+
+- Route `/payments` → `src/views/admin/PaymentHistoryView.tsx` + `src/views/admin/payment-history/*`
+- List: `GET /api/org/payments?periodKey=&q=` (no in-page period switcher yet; uses Overview’s selected period via query)
+- Status icons: `IconCheck` / `IconAlert` without pill backgrounds
+
 ### Recipients (admin)
 
 - Route `/recipients` → `src/views/admin/RecipientsView.tsx` + `src/views/admin/recipients/*`

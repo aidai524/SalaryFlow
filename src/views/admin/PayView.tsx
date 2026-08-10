@@ -1,33 +1,14 @@
-import { useEffect, type ReactNode } from "react";
+import { useEffect } from "react";
 import { Link } from "react-router-dom";
 import { IdentityAvatar } from "@/components/IdentityAvatar";
 import { IconAlert } from "@/components/icons/alert";
 import { IconCheck } from "@/components/icons/check";
 import { QuickPayPanel } from "@/components/quick-pay/QuickPayPanel";
+import { StatCell } from "@/components/stats/StatCell";
 import { usePayOverviewQuery } from "@/hooks/use-pay-api";
 import { formatCurrencyFromMinor, formatDate } from "@/lib/format";
 import { useAuthStore } from "@/stores/auth";
 import { useIntentsTokensStore } from "@/stores/intents-tokens";
-
-function StatCell({
-  label,
-  value,
-  trailing,
-}: {
-  label: string;
-  value: string;
-  trailing?: ReactNode;
-}) {
-  return (
-    <div className="min-w-0 flex-1 px-4 py-4 first:pl-5 last:pr-5 sm:px-6">
-      <p className="font-montserrat text-[14px] font-medium capitalize text-[#606060]">{label}</p>
-      <div className="mt-1 flex flex-wrap items-center gap-2">
-        <p className="font-montserrat text-[20px] font-semibold capitalize text-black">{value}</p>
-        {trailing}
-      </div>
-    </div>
-  );
-}
 
 function VerifiedPill({ verified }: { verified: boolean }) {
   if (verified) {
@@ -127,7 +108,7 @@ export function PayView() {
                 className="inline-flex items-center gap-1 font-montserrat text-[12px] text-[#606060] transition-colors hover:text-black"
               >
                 View All
-                <img src="/icons/to-down.svg" alt="" className="size-2 -rotate-90 opacity-50" />
+                <img src="/icons/all.svg" alt="" className="h-2.5 w-auto" />
               </Link>
             </div>
             <ul className="flex flex-col gap-1">
@@ -176,7 +157,7 @@ export function PayView() {
                 className="inline-flex items-center gap-1 font-montserrat text-[12px] text-[#606060] opacity-50"
               >
                 View All
-                <img src="/icons/to-down.svg" alt="" className="size-2 -rotate-90" />
+                <img src="/icons/all.svg" alt="" className="h-2.5 w-auto" />
               </button>
             </div>
 
