@@ -11,6 +11,7 @@ Parent index: [`docs/api.md`](../api.md) · Source: [`api/src/routes/org.ts`](..
 | PATCH | `/api/org` | `api.updateOrg` |
 | PATCH | `/api/org/team` | `api.updateTeam` |
 | GET | `/api/org/employees` | `api.listEmployees` |
+| GET | `/api/org/pay-overview` | `api.payOverview` |
 | POST | `/api/org/employees` | `api.createEmployee` |
 | PATCH | `/api/org/employees/:id` | `api.updateEmployee` |
 | DELETE | `/api/org/employees/:id` | `api.deleteEmployee` |
@@ -80,14 +81,27 @@ Employee `status`: `pending` \| `ready` \| `update_required` — set by payout v
 
 ---
 
+### GET /api/org/pay-overview
+
+- **Auth** — admin
+- **Source** — `api/src/routes/org.ts` + `api/src/pay-period.ts`
+- **Client** — `api.payOverview` · callers: `PayView`
+- **Request** — none
+- **Response** — period window, stats (`currentPayrollMinor`, `recipientsCount`, `toBePaidCount`, `paidCount`, `progress`), latest 6 `recipients`, `highPriority` payroll/verification alerts, `payStatuses` map
+- **Rules** — Aggregates `employee_type = 'employee'` only against team schedule (`organizations.payment_*`) and `employee_payments`. Contractor cadence is deferred. Full To be paid / Paid / none algorithm: [`docs/pay-status.md`](../pay-status.md).
+- **Errors** — 404 org; 409 `PAYMENT_NOT_CONFIGURED`
+
+---
+
 ### GET /api/org/employees
 
 - **Auth** — admin
 - **Source** — `api/src/routes/org.ts`
 - **Client** — `api.listEmployees`
 - **Request** — none
-- **Response** — `{ employees: Employee[] }` fields: `id, user_id, email, name, role_title, location, token, network, amount_minor, endpoint, status, payout_verified_at, last_paid_at, created_at`
+- **Response** — `{ employees: Employee[] }` fields: `id, user_id, email, name, role_title, location, employee_type, token, network, amount_minor, endpoint, status, payout_verified_at, last_paid_at, created_at, payStatus`
 - **Errors** — 401/403
+- **Rules** — `payStatus` is `to_be_paid` \| `paid` \| `none` from team schedule + `employee_payments` (employees only; contractors return `none` until Recipients refactor). See [`docs/pay-status.md`](../pay-status.md).
 
 ---
 

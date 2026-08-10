@@ -132,6 +132,33 @@ Rules:
 3. Prefer query keys that include org/user scope when data is tenant-specific.
 4. Migrate legacy `src/lib/useData.ts` usage as each page is rebuilt.
 
+### Zustand stores
+
+| Store | Path | Role |
+|---|---|---|
+| Auth / workspace | `src/stores/auth.ts` | Session user, orgId, paymentConfigured |
+| Intents tokens | `src/stores/intents-tokens.ts` | Cached 1Click `/v0/tokens` (USDT/USDC, phase-1 EVM), 30min TTL + localStorage |
+| Global drawers | `src/stores/drawer.ts` | Open recipient picker (and future drawers) from any admin page |
+
+`GlobalDrawerHost` mounts under `AppLayout` for admin users and renders drawer content from the drawer store.
+
+### Formatting & logos
+
+- Numbers / currency / dates: `src/lib/format.ts` (`Intl` en-US)
+- Chain / token / route logos: `src/lib/logo.ts` (CDN `assets.dapdap.net`, same paths as StableFlow)
+- Chain registry: `src/config/chains.ts` (phase-1 EVM; non-EVM kinds reserved)
+
+### Pay (admin home)
+
+- Route `/pay` → `src/views/admin/PayView.tsx`
+- Quick Pay module: `src/components/quick-pay/QuickPayPanel.tsx` (reusable)
+- Token/network picker: `src/components/token-network-dialog/TokenNetworkDialog.tsx`
+- Recipient drawer: `src/components/drawer/RecipientPickerDrawer.tsx`
+- Overview data: `GET /api/org/pay-overview` via `src/hooks/use-pay-api.ts`
+- **Pay status (To be paid / Paid / none):** [`docs/pay-status.md`](pay-status.md) — source of truth for period math, badges, and overview aggregates (`api/src/pay-period.ts`)
+
+Team switcher control next to the greeting is **disabled** until multi-team lands.
+
 ## Wallet architecture
 
 Module: `src/wallet/`.
@@ -141,6 +168,7 @@ src/wallet/
 ├── types.ts            # ChainKind, adapter contracts, errors
 ├── evm/config.ts       # wagmi + RainbowKit config
 ├── evm/adapter.ts      # useEvmWallet()
+├── evm/transfer.ts     # ERC-20 balance + transfer encoding (Quick Pay)
 ├── WalletProvider.tsx  # WagmiProvider + RainbowKitProvider (+ future chains)
 ├── use-wallet.ts       # useWallet(chainKind)
 └── index.ts
@@ -153,8 +181,9 @@ Only EVM is implemented today (RainbowKit / wagmi / viem). NEAR and Solana stubs
 
 Primary wallet use cases:
 
-1. **Admin payment signing** — sign payroll / intent payloads before submit
-2. **Employee wallet verification** — prove ownership of a payout address
+1. **Admin Quick Pay** — ERC-20 transfer on the chosen origin chain to the 1Click deposit address (ORIGIN_CHAIN confidential swap)
+2. **Admin payment signing** — legacy payroll-run path still uses ERC-191 intent signatures
+3. **Employee wallet verification** — prove ownership of a payout address
 
 UI and payment flows should call:
 
@@ -163,7 +192,7 @@ const wallet = useWallet("evm");
 await wallet.signMessage({ message: challenge });
 ```
 
-Avoid importing wagmi/RainbowKit hooks directly in new page code unless you are extending the adapter layer.
+ERC-20 deposit helpers live in `src/wallet/evm/transfer.ts`. Prefer those over scattering wagmi/viem calls in page components.
 
 ### Adding a new chain
 
@@ -187,7 +216,7 @@ Avoid importing wagmi/RainbowKit hooks directly in new page code unless you are 
 
 - Route pages live in `src/views/**` and are named `*View.tsx`
 - Layout chrome lives in `src/layouts` + `src/components/layout`
-- Stores are named by domain (`auth.ts`, future `team.ts`, …)
+- Stores are named by domain (`auth.ts`, `intents-tokens.ts`, `drawer.ts`, …)
 - Shared primitives stay in `src/components/ui` (shadcn)
 - Language: English in code/UI/docs; Chinese only for agent plans (see Language policy)
 

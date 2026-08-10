@@ -16,9 +16,11 @@ Parent index: [`docs/api.md`](../api.md)
 | Method | Path | Client |
 |---|---|---|
 | POST | `/api/payments/quote` | `api.quote` (forces `dry: true`) |
-| POST | `/api/payments/items/:itemId/quote` | `api.quotePaymentItem` |
-| POST | `/api/payments/attempts/:attemptId/intent` | `api.generatePaymentIntent` |
-| POST | `/api/payments/attempts/:attemptId/submit` | `api.submitPaymentAttempt` |
+| POST | `/api/payments/items/:itemId/quote` | `api.quotePaymentItem` (**legacy** payroll-run path) |
+| POST | `/api/payments/employees/:employeeId/quote` | `api.quoteEmployeePayment` / `quoteEmployeePaymentDry` |
+| POST | `/api/payments/attempts/:attemptId/intent` | `api.generatePaymentIntent` (**legacy**) |
+| POST | `/api/payments/attempts/:attemptId/submit` | `api.submitPaymentAttempt` (**legacy**) |
+| POST | `/api/payments/attempts/:attemptId/deposit` | `api.submitPaymentDeposit` (Quick Pay ORIGIN_CHAIN) |
 | POST | `/api/payments/attempts/:attemptId/reconcile` | `api.reconcilePaymentAttempt` |
 | POST | `/api/payments/reconcile` | — |
 | POST | `/api/payments/runs/:runId/reopen-failed` | `api.reopenFailedPayments` |
@@ -42,12 +44,21 @@ Local default should stay dry-run. Do not wire deprecated routes.
 
 ## Attempt state machine
 
+Legacy Confidential Intents (embedded) path:
+
 ```text
 created → quoting → quoted → generating → awaiting_signature
   → submitting → submitted → processing → confirmed | failed | refunded
 ```
 
-Frontend type `PaymentAttemptState` matches. Backend `PaymentAttemptRow` also has `quote_response`, `quote_hash`, `intent_payload`, timestamps — **returned but not fully typed** on client `PaymentAttempt`.
+Quick Pay ORIGIN_CHAIN deposit path:
+
+```text
+created → quoting → awaiting_deposit → deposit_submitted
+  → processing → confirmed | failed | refunded
+```
+
+Frontend type `PaymentAttemptState` includes both. Quick Pay rows set `employee_payment_id` and may leave `run_id` / `item_id` null.
 
 ## Failure matrix (high-frequency)
 
@@ -100,8 +111,32 @@ Frontend type `PaymentAttemptState` matches. Backend `PaymentAttemptRow` also ha
 - **Request** — path `itemId`; body `{ idempotencyKey }` — `^[A-Za-z0-9._:-]{16,128}$`
 - **Response** — `201` `{ attempt, reused: false }` or `200` `{ attempt, reused: true }` when same key+item
 - **Errors** — live gate; 422 wallet/payout/precision; 409 idempotency/active attempt/`ITEM_NOT_PENDING`; 503 asset map; 502 provider
-- **Rules** — Creates `payment_attempts` + `chain_records`; moves item/run toward processing. Idempotent on key.
+- **Rules** — **Legacy** payroll-run path. Still uses `CONFIDENTIAL_INTENTS` + `INTENTS_ASSET_MAP`. Prefer Quick Pay employee quote for new UI.
 - **Gotchas** — Requires admin `wallet_verified`. Failed items can be re-quoted after reopen / fail path.
+
+---
+
+### POST /api/payments/employees/:employeeId/quote
+
+- **Auth** — admin + **verified payment wallet** (live path)
+- **Source** — `payments.ts` + dynamic `/v0/tokens` via `api/src/assets.ts`
+- **Client** — `api.quoteEmployeePaymentDry` (`dry: true`) · `api.quoteEmployeePayment` (live)
+- **Request** — `{ originAsset, amount?, destinationToken?, destinationNetwork?, idempotencyKey?, dry? }`
+- **Response (dry)** — `{ dry: true, quote: { amountIn, amountOut, timeEstimate, deadline, originAsset, destinationAsset, confidentiality } }`
+- **Response (live)** — `201` `{ attempt, quote, reused }` — attempt state `awaiting_deposit`
+- **Rules** — `EXACT_OUTPUT`, `depositType: ORIGIN_CHAIN`, `recipientType: DESTINATION_CHAIN`, `refundType: ORIGIN_CHAIN`, `confidentiality` from `INTENTS_CONFIDENTIALITY` (default `advanced`). Upserts `employee_payments` for the current team `period_key`.
+- **Errors** — 422 payout/token; 409 period already paid/processing; live gate on non-dry; 502 provider
+
+---
+
+### POST /api/payments/attempts/:attemptId/deposit
+
+- **Auth** — admin
+- **Client** — `api.submitPaymentDeposit(attemptId, txHash)`
+- **Request** — `{ txHash }` — `0x` + 64 hex
+- **Response** — `{ attempt, reused }` · `202` `{ outcome: "unknown" }` if 1Click notify fails but hash is stored
+- **Rules** — Quick Pay only (`employee_payment_id` set). Forwards to 1Click `/v0/deposit/submit`. State → `deposit_submitted`.
+- **Errors** — 409 wrong state / wallet changed / quote expired; live gate
 
 ---
 

@@ -9,7 +9,18 @@ import {
   normalizeTeamPaymentDateKey,
   normalizeTeamPaymentSchedule,
   reminderLeadDaysForSchedule,
+  type TeamPaymentDateKey,
+  type TeamPaymentSchedule,
 } from "../org-payment";
+import {
+  computeEmployeePayStatus,
+  enumeratePeriodsSince,
+  formatPaydayDisplay,
+  isInReminderWindow,
+  monthLabelForPayday,
+  resolveCurrentPeriod,
+  type EmployeePayStatus,
+} from "../pay-period";
 import { normalizePayoutAddress, normalizePayoutNetwork, normalizePayoutToken } from "../payout";
 import { nowIso, uuid, type AuthUser } from "../types";
 
@@ -124,13 +135,207 @@ orgRoutes.patch("/team", requireRole("admin"), async (c) => {
   return c.json({ org });
 });
 
+// Admin Pay home aggregation: team stats, recent recipients, high-priority alerts.
+// Stats count employee_type = 'employee' only (contractor cadence lands later).
+orgRoutes.get("/pay-overview", requireRole("admin"), async (c) => {
+  const user = c.get("user") as AuthUser;
+  const org = await c.env.DB.prepare(
+    `SELECT id, name, payment_cadence, payment_date_key, reminder_lead_days, payment_configured_at
+     FROM organizations WHERE id = ?`,
+  ).bind(user.org_id).first<{
+    id: string;
+    name: string;
+    payment_cadence: string | null;
+    payment_date_key: string | null;
+    reminder_lead_days: number | null;
+    payment_configured_at: string | null;
+  }>();
+  if (!org) return c.json({ error: "Organization not found" }, 404);
+  if (!org.payment_configured_at || !org.payment_cadence || !org.payment_date_key) {
+    return c.json({ error: "Team payment preferences are not configured", code: "PAYMENT_NOT_CONFIGURED" }, 409);
+  }
+
+  const cadence = org.payment_cadence as TeamPaymentSchedule;
+  const dateKey = org.payment_date_key as TeamPaymentDateKey;
+  const leadDays = Number(org.reminder_lead_days ?? 0);
+  const now = new Date();
+  const current = resolveCurrentPeriod(cadence, dateKey, leadDays, now);
+
+  const employees = await c.env.DB.prepare(
+    `SELECT id, name, role_title, employee_type, amount_minor, token, network, endpoint,
+            status, payout_verified_at, last_paid_at, created_at
+     FROM employees WHERE org_id = ? ORDER BY created_at DESC`,
+  ).bind(user.org_id).all<{
+    id: string;
+    name: string;
+    role_title: string | null;
+    employee_type: string;
+    amount_minor: number;
+    token: string;
+    network: string;
+    endpoint: string | null;
+    status: string;
+    payout_verified_at: string | null;
+    last_paid_at: string | null;
+    created_at: string;
+  }>();
+
+  const payments = await c.env.DB.prepare(
+    `SELECT employee_id, period_key, status FROM employee_payments WHERE org_id = ?`,
+  ).bind(user.org_id).all<{ employee_id: string; period_key: string; status: string }>();
+
+  const paidMap = new Map<string, Map<string, boolean>>();
+  for (const row of payments.results) {
+    if (!paidMap.has(row.employee_id)) paidMap.set(row.employee_id, new Map());
+    paidMap.get(row.employee_id)!.set(row.period_key, row.status === "paid");
+  }
+
+  const fullTime = employees.results.filter((e) => (e.employee_type || "employee") === "employee");
+  let currentPayrollMinor = 0;
+  let toBePaidCount = 0;
+  let paidCount = 0;
+  let readyToPayMinor = 0;
+  let readyToPayCount = 0;
+  const payStatuses: Record<string, EmployeePayStatus> = {};
+
+  for (const emp of fullTime) {
+    currentPayrollMinor += Number(emp.amount_minor || 0);
+    const windows = enumeratePeriodsSince(cadence, dateKey, leadDays, emp.created_at, now);
+    const keys = windows.map((w) => w.periodKey);
+    const status = computeEmployeePayStatus({
+      current,
+      now,
+      paidByPeriod: paidMap.get(emp.id) || new Map(),
+      periodKeysSinceJoin: keys,
+    });
+    payStatuses[emp.id] = status;
+    if (status === "to_be_paid") {
+      toBePaidCount += 1;
+      if (emp.status === "ready" && emp.payout_verified_at) {
+        readyToPayCount += 1;
+        readyToPayMinor += Number(emp.amount_minor || 0);
+      }
+    } else if (status === "paid") {
+      paidCount += 1;
+    }
+  }
+
+  const recipientsCount = fullTime.length;
+  const progressDenom = recipientsCount || 1;
+  const progress = Math.round((paidCount / progressDenom) * 100);
+
+  const unverified = employees.results.filter((e) => !e.payout_verified_at || e.status !== "ready");
+  const recent = employees.results.slice(0, 6).map((e) => ({
+    id: e.id,
+    name: e.name,
+    role_title: e.role_title,
+    employee_type: e.employee_type || "employee",
+    verified: !!e.payout_verified_at && e.status === "ready",
+    status: e.status,
+    created_at: e.created_at,
+  }));
+
+  const inReminder = isInReminderWindow(current, now);
+
+  return c.json({
+    org: { id: org.id, name: org.name },
+    period: {
+      periodKey: current.periodKey,
+      payday: current.payday,
+      paydayDisplay: formatPaydayDisplay(current.payday),
+      reminderStartsAt: current.reminderStartsAt,
+      inReminderWindow: inReminder,
+      cadence,
+      monthLabel: monthLabelForPayday(current.payday),
+    },
+    stats: {
+      currentPayrollMinor,
+      recipientsCount,
+      toBePaidCount,
+      paidCount,
+      progress,
+    },
+    recipients: recent,
+    highPriority: {
+      payroll: inReminder && toBePaidCount > 0
+        ? {
+            title: `${monthLabelForPayday(current.payday)} payroll`,
+            readyCount: readyToPayCount,
+            amountMinor: readyToPayMinor,
+          }
+        : null,
+      verification: unverified.length > 0
+        ? {
+            count: unverified.length,
+            names: unverified.slice(0, 2).map((e) => e.name),
+          }
+        : null,
+    },
+    payStatuses,
+  });
+});
+
 // Employee directory (linked to org; can be pre-provisioned before account acceptance)
 orgRoutes.get("/employees", requireRole("admin"), async (c) => {
   const user = c.get("user") as AuthUser;
+  const org = await c.env.DB.prepare(
+    `SELECT payment_cadence, payment_date_key, reminder_lead_days, payment_configured_at
+     FROM organizations WHERE id = ?`,
+  ).bind(user.org_id).first<{
+    payment_cadence: string | null;
+    payment_date_key: string | null;
+    reminder_lead_days: number | null;
+    payment_configured_at: string | null;
+  }>();
+
   const rows = await c.env.DB.prepare(
-    "SELECT id, user_id, email, name, role_title, location, token, network, amount_minor, endpoint, status, payout_verified_at, last_paid_at, created_at FROM employees WHERE org_id = ? ORDER BY created_at",
-  ).bind(user.org_id).all<Record<string, unknown>>();
-  return c.json({ employees: rows.results });
+    `SELECT id, user_id, email, name, role_title, location, employee_type, token, network,
+            amount_minor, endpoint, status, payout_verified_at, last_paid_at, created_at
+     FROM employees WHERE org_id = ? ORDER BY created_at DESC`,
+  ).bind(user.org_id).all<Record<string, unknown> & {
+    id: string;
+    employee_type: string;
+    created_at: string;
+  }>();
+
+  let payStatuses: Record<string, EmployeePayStatus> = {};
+  if (org?.payment_configured_at && org.payment_cadence && org.payment_date_key) {
+    const cadence = org.payment_cadence as TeamPaymentSchedule;
+    const dateKey = org.payment_date_key as TeamPaymentDateKey;
+    const leadDays = Number(org.reminder_lead_days ?? 0);
+    const now = new Date();
+    const current = resolveCurrentPeriod(cadence, dateKey, leadDays, now);
+    const payments = await c.env.DB.prepare(
+      `SELECT employee_id, period_key, status FROM employee_payments WHERE org_id = ?`,
+    ).bind(user.org_id).all<{ employee_id: string; period_key: string; status: string }>();
+    const paidMap = new Map<string, Map<string, boolean>>();
+    for (const row of payments.results) {
+      if (!paidMap.has(row.employee_id)) paidMap.set(row.employee_id, new Map());
+      paidMap.get(row.employee_id)!.set(row.period_key, row.status === "paid");
+    }
+    for (const emp of rows.results) {
+      // Contractor cadence is per-recipient; until that lands, only employees get team-schedule status.
+      if ((emp.employee_type || "employee") !== "employee") {
+        payStatuses[emp.id] = "none";
+        continue;
+      }
+      const windows = enumeratePeriodsSince(cadence, dateKey, leadDays, emp.created_at, now);
+      payStatuses[emp.id] = computeEmployeePayStatus({
+        current,
+        now,
+        paidByPeriod: paidMap.get(emp.id) || new Map(),
+        periodKeysSinceJoin: windows.map((w) => w.periodKey),
+      });
+    }
+  }
+
+  return c.json({
+    employees: rows.results.map((e) => ({
+      ...e,
+      employee_type: e.employee_type || "employee",
+      payStatus: payStatuses[e.id] || "none",
+    })),
+  });
 });
 
 orgRoutes.post("/employees", requireRole("admin"), async (c) => {

@@ -4,13 +4,35 @@
 
 import { Hono, type Context } from "hono";
 import { verifyMessage, type Address, type Hex } from "viem";
+import { findStableAsset, findStableAssetByNetwork, type StableSymbol } from "../assets";
 import { encodeErc191Signature } from "../erc191";
-import { generateIntent, getSupportedTokens, requestQuote, submitIntent, verifyOneClickQuote, type QuoteRequest } from "../intents";
+import {
+  generateIntent,
+  getSupportedTokens,
+  requestQuote,
+  submitDepositTx,
+  submitIntent,
+  verifyOneClickQuote,
+  type QuoteRequest,
+} from "../intents";
 import { toIntentsUserId } from "../intents-user-id";
+import { parseTokenAmount } from "../money";
 import { requireRole, type AppEnv } from "../middleware";
+import {
+  type TeamPaymentDateKey,
+  type TeamPaymentSchedule,
+} from "../org-payment";
+import { resolveCurrentPeriod } from "../pay-period";
 import { failAttemptAndReopenItem, getPaymentAttempt, reconcileOpenPayments, reconcilePaymentAttempt, type PaymentAttemptRow } from "../payment-execution";
-import { executionGate, isDefinitiveSubmitFailure, resolvePaymentAssets, tokenMinorToAssetAmount, validatePaymentAssetMapping } from "../payment-state";
-import { EVM_PAYOUT_NETWORKS, PAYOUT_TOKENS } from "../payout";
+import {
+  executionGate,
+  isDefinitiveSubmitFailure,
+  resolveConfidentiality,
+  resolvePaymentAssets,
+  tokenMinorToAssetAmount,
+  validatePaymentAssetMapping,
+} from "../payment-state";
+import { EVM_PAYOUT_NETWORKS, normalizePayoutAddress, PAYOUT_TOKENS } from "../payout";
 import { nowIso, uuid, type AuthUser } from "../types";
 
 export const paymentRoutes = new Hono<AppEnv>();
@@ -460,12 +482,402 @@ paymentRoutes.post("/attempts/:attemptId/reconcile", requireRole("admin"), async
   const attempt = await getPaymentAttempt(c.env.DB, c.req.param("attemptId"), user.org_id);
   if (!attempt) return c.json({ error: "Payment attempt not found" }, 404);
   if (["confirmed", "failed", "refunded"].includes(attempt.state)) return c.json({ attempt, reused: true });
-  if (!["submitting", "submitted", "processing"].includes(attempt.state)) {
+  if (!["submitting", "submitted", "awaiting_deposit", "deposit_submitted", "processing"].includes(attempt.state)) {
     return c.json({ error: `Attempt in state ${attempt.state} is not ready for reconciliation` }, 409);
   }
   // Manual reconcile should always run (skip the cron lock) so stuck
   // unsubmitted attempts can be failed and reopened immediately.
   return c.json({ attempt: await reconcilePaymentAttempt(c.env, attempt, { force: true }), reused: false });
+});
+
+// ---------------------------------------------------------------------------
+// Quick Pay: ORIGIN_CHAIN → confidential intents → DESTINATION_CHAIN
+// ---------------------------------------------------------------------------
+
+/** Preview quote (dry) or create a live ORIGIN_CHAIN deposit attempt for one employee. */
+paymentRoutes.post("/employees/:employeeId/quote", requireRole("admin"), async (c) => {
+  const user = c.get("user") as AuthUser;
+  const employeeId = c.req.param("employeeId");
+  const body = await c.req.json().catch(() => null);
+  const dry = body?.dry === true;
+  const originAssetId = String(body?.originAsset || "").trim();
+  if (!originAssetId) return c.json({ error: "originAsset is required" }, 400);
+
+  const employee = await c.env.DB.prepare(
+    `SELECT id, name, token, network, amount_minor, endpoint, status, payout_verified_at, employee_type, created_at
+     FROM employees WHERE id = ? AND org_id = ?`,
+  ).bind(employeeId, user.org_id).first<{
+    id: string;
+    name: string;
+    token: string;
+    network: string;
+    amount_minor: number;
+    endpoint: string | null;
+    status: string;
+    payout_verified_at: string | null;
+    employee_type: string;
+    created_at: string;
+  }>();
+  if (!employee) return c.json({ error: "Employee not found" }, 404);
+  if (employee.status !== "ready" || !employee.payout_verified_at) {
+    return c.json({ error: "Employee payout wallet is not verified", code: "PAYOUT_NOT_VERIFIED" }, 422);
+  }
+  const recipient = normalizePayoutAddress(employee.endpoint);
+  if (!recipient) return c.json({ error: "Invalid employee payout address", code: "INVALID_PAYOUT_ADDRESS" }, 422);
+
+  let amountMinor = Number(employee.amount_minor);
+  if (body?.amount !== undefined && body?.amount !== null && body?.amount !== "") {
+    const parsed = parseTokenAmount(body.amount);
+    if (parsed === null) return c.json({ error: "Amount must have at most 6 decimal places", code: "INVALID_AMOUNT" }, 422);
+    amountMinor = parsed;
+  }
+  if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) {
+    return c.json({ error: "Amount must be a positive token amount", code: "INVALID_AMOUNT" }, 422);
+  }
+
+  let destinationToken = employee.token as StableSymbol;
+  let destinationNetwork = employee.network;
+  if (body?.destinationToken) {
+    const t = String(body.destinationToken).toUpperCase();
+    if (t !== "USDC" && t !== "USDT") return c.json({ error: "Unsupported destination token" }, 400);
+    destinationToken = t;
+  }
+  if (body?.destinationNetwork) {
+    destinationNetwork = String(body.destinationNetwork);
+  }
+
+  let supportedTokens;
+  try {
+    supportedTokens = await getSupportedTokens(c.env);
+  } catch (error) {
+    return c.json({ error: "Could not load supported tokens", code: "PAYMENT_PROVIDER_ERROR", detail: providerError(error) }, 502);
+  }
+
+  const origin = findStableAsset(supportedTokens, { assetId: originAssetId });
+  if (!origin) return c.json({ error: "originAsset is not a supported phase-1 EVM stablecoin", code: "UNSUPPORTED_TOKEN" }, 422);
+  const destination = findStableAssetByNetwork(supportedTokens, destinationNetwork, destinationToken);
+  if (!destination) {
+    return c.json({ error: `No ${destinationToken} asset on ${destinationNetwork}`, code: "UNSUPPORTED_NETWORK" }, 422);
+  }
+
+  const providerAmount = tokenMinorToAssetAmount(amountMinor, destination.decimals);
+  if (!providerAmount) {
+    return c.json({ error: `Amount cannot be represented with ${destination.decimals} destination decimals`, code: "AMOUNT_PRECISION_UNSUPPORTED" }, 422);
+  }
+
+  if (!user.wallet_address || !user.wallet_verified) {
+    return c.json({ error: "A signature-verified admin payment wallet is required", code: "PAYMENT_WALLET_NOT_VERIFIED" }, 422);
+  }
+  const refundTo = normalizePayoutAddress(user.wallet_address);
+  if (!refundTo) return c.json({ error: "Payment wallet is not a valid EVM address", code: "PAYMENT_WALLET_INVALID" }, 422);
+
+  const confidentiality = resolveConfidentiality(c.env);
+  const quoteRequest: QuoteRequest = {
+    dry,
+    swapType: "EXACT_OUTPUT",
+    originAsset: origin.assetId,
+    depositType: "ORIGIN_CHAIN",
+    destinationAsset: destination.assetId,
+    amount: providerAmount,
+    recipient,
+    recipientType: "DESTINATION_CHAIN",
+    refundTo,
+    refundType: "ORIGIN_CHAIN",
+    confidentiality,
+    deadline: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+    slippageTolerance: 100,
+  };
+
+  // Dry preview: contact 1Click with dry:true, do not persist an attempt.
+  if (dry) {
+    try {
+      const quote = await requestQuote(c.env, quoteRequest);
+      return c.json({
+        dry: true,
+        quote: {
+          amountIn: quote.quote.amountIn,
+          amountOut: quote.quote.amountOut,
+          timeEstimate: quote.quote.timeEstimate ?? null,
+          deadline: quote.quote.deadline ?? quoteRequest.deadline,
+          originAsset: origin,
+          destinationAsset: destination,
+          confidentiality,
+        },
+      });
+    } catch (error) {
+      return c.json({ error: "Quote preview failed", code: "PAYMENT_PROVIDER_ERROR", detail: providerError(error) }, 502);
+    }
+  }
+
+  const blocked = liveGateResponse(c);
+  if (blocked) return blocked;
+
+  const idempotencyKey = String(body?.idempotencyKey || "").trim();
+  if (!/^[A-Za-z0-9._:-]{16,128}$/.test(idempotencyKey)) {
+    return c.json({ error: "idempotencyKey must be 16-128 safe characters" }, 400);
+  }
+
+  const org = await c.env.DB.prepare(
+    `SELECT payment_cadence, payment_date_key, reminder_lead_days, payment_configured_at
+     FROM organizations WHERE id = ?`,
+  ).bind(user.org_id).first<{
+    payment_cadence: string | null;
+    payment_date_key: string | null;
+    reminder_lead_days: number | null;
+    payment_configured_at: string | null;
+  }>();
+  if (!org?.payment_configured_at || !org.payment_cadence || !org.payment_date_key) {
+    return c.json({ error: "Team payment preferences are not configured", code: "PAYMENT_NOT_CONFIGURED" }, 409);
+  }
+  const period = resolveCurrentPeriod(
+    org.payment_cadence as TeamPaymentSchedule,
+    org.payment_date_key as TeamPaymentDateKey,
+    Number(org.reminder_lead_days ?? 0),
+  );
+
+  const existing = await c.env.DB.prepare(
+    "SELECT * FROM payment_attempts WHERE org_id = ? AND idempotency_key = ?",
+  ).bind(user.org_id, idempotencyKey).first<PaymentAttemptRow>();
+  if (existing) {
+    return c.json({ attempt: existing, reused: true });
+  }
+
+  const timestamp = nowIso();
+  const paymentId = uuid();
+  await c.env.DB.prepare(
+    `INSERT INTO employee_payments
+     (id, org_id, employee_id, period_key, amount_minor, token, network, status, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+     ON CONFLICT(org_id, employee_id, period_key) DO UPDATE SET
+       amount_minor = excluded.amount_minor,
+       token = excluded.token,
+       network = excluded.network,
+       updated_at = excluded.updated_at
+     WHERE employee_payments.status IN ('pending', 'failed')`,
+  ).bind(
+    paymentId,
+    user.org_id,
+    employee.id,
+    period.periodKey,
+    amountMinor,
+    destinationToken,
+    destinationNetwork,
+    timestamp,
+    timestamp,
+  ).run();
+
+  const employeePayment = await c.env.DB.prepare(
+    `SELECT * FROM employee_payments WHERE org_id = ? AND employee_id = ? AND period_key = ?`,
+  ).bind(user.org_id, employee.id, period.periodKey).first<{
+    id: string;
+    status: string;
+  }>();
+  if (!employeePayment) return c.json({ error: "Could not create employee payment row" }, 500);
+  if (employeePayment.status === "paid" || employeePayment.status === "processing") {
+    return c.json({ error: "This period is already paid or processing", code: "ITEM_NOT_PENDING" }, 409);
+  }
+
+  const attemptId = uuid();
+  const liveRequest: QuoteRequest = { ...quoteRequest, dry: false };
+  const inserted = await c.env.DB.prepare(
+    `INSERT OR IGNORE INTO payment_attempts
+     (id, org_id, run_id, item_id, employee_payment_id, idempotency_key, state, token, network,
+      amount_minor, recipient, signer_id, origin_asset_id, destination_asset_id,
+      quote_request, created_by, created_at, updated_at)
+     VALUES (?, ?, NULL, NULL, ?, ?, 'created', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).bind(
+    attemptId,
+    user.org_id,
+    employeePayment.id,
+    idempotencyKey,
+    destinationToken,
+    destinationNetwork,
+    amountMinor,
+    recipient,
+    refundTo,
+    origin.assetId,
+    destination.assetId,
+    JSON.stringify(liveRequest),
+    user.id,
+    timestamp,
+    timestamp,
+  ).run();
+  if (Number(inserted.meta.changes || 0) !== 1) {
+    const concurrent = await c.env.DB.prepare(
+      "SELECT * FROM payment_attempts WHERE org_id = ? AND idempotency_key = ?",
+    ).bind(user.org_id, idempotencyKey).first<PaymentAttemptRow>();
+    if (concurrent) return c.json({ attempt: concurrent, reused: true });
+    const active = await c.env.DB.prepare(
+      `SELECT * FROM payment_attempts WHERE employee_payment_id = ?
+       AND state IN ('created', 'quoting', 'quoted', 'awaiting_deposit', 'deposit_submitted', 'processing')
+       ORDER BY created_at DESC LIMIT 1`,
+    ).bind(employeePayment.id).first<PaymentAttemptRow>();
+    return c.json({ error: "This employee payment already has an active attempt", code: "ACTIVE_ATTEMPT_EXISTS", attempt: active }, 409);
+  }
+
+  await c.env.DB.prepare("UPDATE payment_attempts SET state = 'quoting', updated_at = ? WHERE id = ? AND state = 'created'")
+    .bind(nowIso(), attemptId).run();
+
+  try {
+    const quote = await requestQuote(c.env, liveRequest);
+    const verifiedQuoteHash = verifyOneClickQuote(c.env, liveRequest, quote);
+    const depositAddress = quote.quote?.depositAddress;
+    if (!depositAddress) throw new Error("1Click quote did not include a deposit address");
+    if (!/^\d+$/.test(String(quote.quote.amountIn || "")) || BigInt(quote.quote.amountIn) <= 0n) {
+      throw new Error("1Click quote input amount is invalid");
+    }
+    if (String(quote.quote.amountOut || "") !== providerAmount) {
+      throw new Error("1Click exact-output quote does not match the compensation amount");
+    }
+    const quoteExpiresAt = String(quote.quote.deadline || "");
+    if (!quoteExpiresAt || !Number.isFinite(Date.parse(quoteExpiresAt)) || Date.parse(quoteExpiresAt) <= Date.now()) {
+      throw new Error("1Click quote is missing a valid future deadline");
+    }
+    const quotedAt = nowIso();
+    await c.env.DB.batch([
+      c.env.DB.prepare(
+        `UPDATE payment_attempts
+         SET state = 'awaiting_deposit', quote_response = ?, quote_hash = ?, correlation_id = ?,
+             deposit_address = ?, deposit_memo = ?, quote_expires_at = ?,
+             last_error = NULL, next_reconcile_at = ?, updated_at = ?
+         WHERE id = ? AND state = 'quoting'`,
+      ).bind(
+        JSON.stringify(quote),
+        verifiedQuoteHash,
+        quote.correlationId || null,
+        depositAddress,
+        quote.quote.depositMemo || null,
+        quoteExpiresAt,
+        quotedAt,
+        quotedAt,
+        attemptId,
+      ),
+      c.env.DB.prepare(
+        `UPDATE employee_payments SET status = 'processing', updated_at = ? WHERE id = ?`,
+      ).bind(quotedAt, employeePayment.id),
+      c.env.DB.prepare(
+        `INSERT INTO chain_records
+         (id, attempt_id, item_id, org_id, employee_name, token, network, amount_minor,
+          origin_chain, dest_chain, confidentiality, status, quote_at)
+         VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_deposit', ?)`,
+      ).bind(
+        uuid(),
+        attemptId,
+        user.org_id,
+        employee.name,
+        destinationToken,
+        destinationNetwork,
+        amountMinor,
+        origin.network,
+        destination.network,
+        confidentiality,
+        quotedAt,
+      ),
+      c.env.DB.prepare(
+        "INSERT INTO audit_log (id, org_id, actor_id, action, detail) VALUES (?, ?, ?, 'payment.quoted', ?)",
+      ).bind(uuid(), user.org_id, user.id, `Quoted Quick Pay for employee ${employee.id} as attempt ${attemptId}`),
+    ]);
+  } catch (error) {
+    const failedAt = nowIso();
+    await c.env.DB.batch([
+      c.env.DB.prepare(
+        "UPDATE payment_attempts SET state = 'failed', last_error = ?, failed_at = ?, updated_at = ? WHERE id = ?",
+      ).bind(providerError(error), failedAt, failedAt, attemptId),
+      c.env.DB.prepare(
+        `UPDATE employee_payments SET status = 'pending', updated_at = ? WHERE id = ?`,
+      ).bind(failedAt, employeePayment.id),
+    ]);
+    return c.json({ error: "Live quote failed", code: "PAYMENT_PROVIDER_ERROR", detail: providerError(error) }, 502);
+  }
+
+  const attempt = await getPaymentAttempt(c.env.DB, attemptId, user.org_id);
+  let quoteResponse: Record<string, unknown> | null = null;
+  try {
+    quoteResponse = attempt?.quote_response ? JSON.parse(String(attempt.quote_response)) as Record<string, unknown> : null;
+  } catch {
+    quoteResponse = null;
+  }
+  const quoteInner = (quoteResponse?.quote || {}) as Record<string, unknown>;
+  return c.json({
+    attempt,
+    reused: false,
+    quote: {
+      amountIn: quoteInner.amountIn,
+      amountOut: quoteInner.amountOut,
+      depositAddress: attempt?.deposit_address,
+      depositMemo: attempt?.deposit_memo,
+      timeEstimate: quoteInner.timeEstimate ?? null,
+      deadline: attempt?.quote_expires_at,
+      originAsset: origin,
+      destinationAsset: destination,
+      confidentiality,
+    },
+  }, 201);
+});
+
+/** Notify 1Click of an ORIGIN_CHAIN deposit transaction hash. */
+paymentRoutes.post("/attempts/:attemptId/deposit", requireRole("admin"), async (c) => {
+  const blocked = liveGateResponse(c);
+  if (blocked) return blocked;
+  const user = c.get("user") as AuthUser;
+  const attemptId = c.req.param("attemptId");
+  let attempt = await getPaymentAttempt(c.env.DB, attemptId, user.org_id);
+  if (!attempt) return c.json({ error: "Payment attempt not found" }, 404);
+  if (!attempt.employee_payment_id) {
+    return c.json({ error: "Deposit submit is only supported for Quick Pay attempts" }, 409);
+  }
+  if (["deposit_submitted", "processing", "confirmed"].includes(attempt.state) && attempt.deposit_tx_hash) {
+    return c.json({ attempt, reused: true });
+  }
+  if (attempt.state !== "awaiting_deposit" && attempt.state !== "quoted") {
+    return c.json({ error: `Cannot submit a deposit from state ${attempt.state}` }, 409);
+  }
+  if (!user.wallet_address || !user.wallet_verified || user.wallet_address.toLowerCase() !== String(attempt.signer_id).toLowerCase()) {
+    return c.json({ error: "The verified payment wallet no longer matches this attempt", code: "PAYMENT_WALLET_CHANGED" }, 409);
+  }
+  if (attempt.quote_expires_at && new Date(String(attempt.quote_expires_at)).getTime() <= Date.now()) {
+    return c.json({ error: "Payment quote has expired; create a new attempt", code: "QUOTE_EXPIRED" }, 409);
+  }
+  const body = await c.req.json().catch(() => null);
+  const txHash = String(body?.txHash || "").trim();
+  if (!/^0x[a-fA-F0-9]{64}$/.test(txHash)) {
+    return c.json({ error: "A valid EVM transaction hash is required" }, 400);
+  }
+  if (!attempt.deposit_address) return c.json({ error: "Payment attempt has no deposit address" }, 500);
+
+  const submittedAt = nowIso();
+  try {
+    await submitDepositTx(c.env, { depositAddress: attempt.deposit_address, txHash });
+  } catch (error) {
+    // Non-fatal: 1Click can still detect the deposit on-chain; store hash and reconcile.
+    await c.env.DB.prepare(
+      `UPDATE payment_attempts
+       SET deposit_tx_hash = ?, state = 'deposit_submitted', provider_status = 'KNOWN_DEPOSIT_TX',
+           last_error = ?, next_reconcile_at = ?, submitted_at = ?, updated_at = ?
+       WHERE id = ? AND state IN ('awaiting_deposit', 'quoted')`,
+    ).bind(txHash, providerError(error), submittedAt, submittedAt, submittedAt, attempt.id).run();
+    attempt = await getPaymentAttempt(c.env.DB, attempt.id, user.org_id);
+    return c.json({ attempt, outcome: "unknown", reused: false }, 202);
+  }
+
+  await c.env.DB.batch([
+    c.env.DB.prepare(
+      `UPDATE payment_attempts
+       SET deposit_tx_hash = ?, state = 'deposit_submitted', provider_status = 'KNOWN_DEPOSIT_TX',
+           last_error = NULL, next_reconcile_at = ?, submitted_at = ?, updated_at = ?
+       WHERE id = ? AND state IN ('awaiting_deposit', 'quoted')`,
+    ).bind(txHash, submittedAt, submittedAt, submittedAt, attempt.id),
+    c.env.DB.prepare(
+      `UPDATE chain_records SET status = 'deposit_submitted', provider_status = 'KNOWN_DEPOSIT_TX', submitted_at = ?, error = NULL
+       WHERE attempt_id = ?`,
+    ).bind(submittedAt, attempt.id),
+    c.env.DB.prepare(
+      "INSERT INTO audit_log (id, org_id, actor_id, action, detail) VALUES (?, ?, ?, 'payment.deposit_submitted', ?)",
+    ).bind(uuid(), user.org_id, user.id, `Deposit ${txHash} for attempt ${attempt.id}`),
+  ]);
+
+  attempt = await getPaymentAttempt(c.env.DB, attempt.id, user.org_id);
+  return c.json({ attempt, reused: false });
 });
 
 paymentRoutes.post("/reconcile", requireRole("admin"), async (c) => {

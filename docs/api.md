@@ -98,6 +98,21 @@ No shared types package. Frontend types in `api.ts` are a hand-maintained subset
 
 ## Payment flow (summary)
 
+### Quick Pay (current admin home)
+
+```mermaid
+flowchart TD
+  dry["POST /employees/:id/quote dry:true"] --> preview[Show amountIn]
+  preview --> live["POST /employees/:id/quote live"]
+  live --> transfer[Admin ERC-20 transfer to depositAddress]
+  transfer --> deposit["POST /attempts/:id/deposit txHash"]
+  deposit --> reconcile["POST /attempts/:id/reconcile or cron"]
+```
+
+Uses `EXACT_OUTPUT` + `depositType: ORIGIN_CHAIN` + `confidentiality` from env `INTENTS_CONFIDENTIALITY` (default `advanced`). Assets resolve dynamically from 1Click `/v0/tokens` (phase-1 EVM USDT/USDC). Records live in `employee_payments` + `payment_attempts`.
+
+### Legacy payroll-run path (still available)
+
 ```mermaid
 flowchart TD
   dry["POST /api/payments/quote dry:true"] --> ready{items OK?}
@@ -132,6 +147,7 @@ Details: [`docs/api/payments.md`](api/payments.md).
 | PATCH | `/api/org` | admin | [org](api/org.md) | `api/src/routes/org.ts` | `api.updateOrg` |
 | PATCH | `/api/org/team` | admin | [org](api/org.md) | `api/src/routes/org.ts` | `api.updateTeam` |
 | GET | `/api/org/employees` | admin | [org](api/org.md) | `api/src/routes/org.ts` | `api.listEmployees` |
+| GET | `/api/org/pay-overview` | admin | [org](api/org.md) | `api/src/routes/org.ts` | `api.payOverview` |
 | POST | `/api/org/employees` | admin | [org](api/org.md) | `api/src/routes/org.ts` | `api.createEmployee` |
 | PATCH | `/api/org/employees/:id` | admin | [org](api/org.md) | `api/src/routes/org.ts` | `api.updateEmployee` |
 | DELETE | `/api/org/employees/:id` | admin | [org](api/org.md) | `api/src/routes/org.ts` | `api.deleteEmployee` |
@@ -149,8 +165,10 @@ Details: [`docs/api/payments.md`](api/payments.md).
 | DELETE | `/api/payroll/:id` | admin | [payroll](api/payroll.md) | `api/src/routes/payroll.ts` | `api.archiveRun` |
 | POST | `/api/payments/quote` | admin | [payments](api/payments.md) | `api/src/routes/payments.ts` | `api.quote` |
 | POST | `/api/payments/items/:itemId/quote` | admin | [payments](api/payments.md) | `api/src/routes/payments.ts` | `api.quotePaymentItem` |
+| POST | `/api/payments/employees/:employeeId/quote` | admin | [payments](api/payments.md) | `api/src/routes/payments.ts` | `api.quoteEmployeePayment` / `quoteEmployeePaymentDry` |
 | POST | `/api/payments/attempts/:attemptId/intent` | admin | [payments](api/payments.md) | `api/src/routes/payments.ts` | `api.generatePaymentIntent` |
 | POST | `/api/payments/attempts/:attemptId/submit` | admin | [payments](api/payments.md) | `api/src/routes/payments.ts` | `api.submitPaymentAttempt` |
+| POST | `/api/payments/attempts/:attemptId/deposit` | admin | [payments](api/payments.md) | `api/src/routes/payments.ts` | `api.submitPaymentDeposit` |
 | POST | `/api/payments/attempts/:attemptId/reconcile` | admin | [payments](api/payments.md) | `api/src/routes/payments.ts` | `api.reconcilePaymentAttempt` |
 | POST | `/api/payments/reconcile` | admin | [payments](api/payments.md) | `api/src/routes/payments.ts` | — |
 | POST | `/api/payments/runs/:runId/reopen-failed` | admin | [payments](api/payments.md) | `api/src/routes/payments.ts` | `api.reopenFailedPayments` |
@@ -233,7 +251,8 @@ Details: [`docs/api/payments.md`](api/payments.md).
 | `MOCK_EMAIL=true` | Skip real email; response may include `inviteUrl` |
 | `INTENTS_API_URL` | 1Click origin (live requires official/loopback) |
 | `INTENTS_API_KEY` | Live payments |
-| `INTENTS_ASSET_MAP` | JSON assetId+decimals map |
+| `INTENTS_ASSET_MAP` | **Deprecated** for Quick Pay (dynamic `/v0/tokens`). Still used by legacy payroll-run quotes |
+| `INTENTS_CONFIDENTIALITY` | `public` \| `basic` \| `advanced` (default `advanced`) for ORIGIN_CHAIN Quick Pay quotes |
 | `INTENTS_QUOTE_PUBLIC_KEY` | Optional quote verify override |
 | `PAYMENTS_MODE` | `disabled` \| `dry-run` \| `live` |
 | `PAYMENTS_EXECUTION_ACK` | `local-test` \| `mainnet-live` |
@@ -246,3 +265,4 @@ Details: [`docs/api/payments.md`](api/payments.md).
 - [payroll](api/payroll.md)
 - [payments](api/payments.md)
 - [records](api/records.md)
+- [pay-status](pay-status.md) — To be paid / Paid / none (period math + aggregates)

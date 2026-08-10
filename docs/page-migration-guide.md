@@ -38,7 +38,7 @@ Do not put Chinese in React components, hooks, stores, API clients, or user-faci
 | Login | `/login` | `src/views/auth/LoginView.tsx` (ported; redesign later) |
 | Register | `/register` | `src/views/auth/RegisterView.tsx` (ported; redesign later) |
 | Accept invite | `/invite/:token?` | `src/views/auth/InviteView.tsx` (ported; redesign later) |
-| Pay (admin home) | `/pay` | `src/views/admin/PayView.tsx` |
+| Pay (admin home) | `/pay` | `src/views/admin/PayView.tsx` (Quick Pay + stats; Figma Decash-Pay) |
 | Recipients | `/recipients` | `src/views/admin/RecipientsView.tsx` |
 | Overview | `/overview` | `src/views/admin/OverviewView.tsx` |
 | Create team | `/teams/create` | `src/views/admin/CreateTeamView.tsx` |

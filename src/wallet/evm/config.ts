@@ -7,8 +7,19 @@
 
 import { getDefaultConfig } from "@rainbow-me/rainbowkit";
 import { http } from "wagmi";
-import { arbitrum, base, bsc, mainnet, optimism, polygon } from "wagmi/chains";
+import {
+  arbitrum,
+  avalanche,
+  base,
+  bsc,
+  gnosis,
+  mainnet,
+  optimism,
+  polygon,
+  scroll,
+} from "wagmi/chains";
 
+/** Chains the admin wallet can switch to for Quick Pay ORIGIN_CHAIN deposits. */
 export const SUPPORTED_CHAINS = [
   { id: "Base", chain: base, icon: "$" },
   { id: "Arbitrum", chain: arbitrum, icon: "$" },
@@ -16,9 +27,12 @@ export const SUPPORTED_CHAINS = [
   { id: "Optimism", chain: optimism, icon: "$" },
   { id: "Ethereum", chain: mainnet, icon: "Ξ" },
   { id: "BNB Chain", chain: bsc, icon: "₿" },
+  { id: "Avalanche", chain: avalanche, icon: "A" },
+  { id: "Gnosis", chain: gnosis, icon: "G" },
+  { id: "Scroll", chain: scroll, icon: "S" },
 ] as const;
 
-const chains = [base, arbitrum, polygon, optimism, mainnet, bsc] as const;
+const chains = [base, arbitrum, polygon, optimism, mainnet, bsc, avalanche, gnosis, scroll] as const;
 
 export const wagmiConfig = getDefaultConfig({
   appName: "DECash",
@@ -31,6 +45,9 @@ export const wagmiConfig = getDefaultConfig({
     [optimism.id]: http(),
     [mainnet.id]: http(),
     [bsc.id]: http(),
+    [avalanche.id]: http(),
+    [gnosis.id]: http(),
+    [scroll.id]: http(),
   },
   ssr: false,
 });

@@ -9,10 +9,20 @@ export type PaymentAttemptState =
   | "awaiting_signature"
   | "submitting"
   | "submitted"
+  | "awaiting_deposit"
+  | "deposit_submitted"
   | "processing"
   | "confirmed"
   | "failed"
   | "refunded";
+
+export type ConfidentialityLevel = "public" | "basic" | "advanced";
+
+export function resolveConfidentiality(env: Env): ConfidentialityLevel {
+  const raw = String(env.INTENTS_CONFIDENTIALITY || "advanced").trim().toLowerCase();
+  if (raw === "public" || raw === "basic" || raw === "advanced") return raw;
+  return "advanced";
+}
 
 export type ProviderPaymentStatus =
   | "PENDING_DEPOSIT"
@@ -170,7 +180,8 @@ export function tokenMinorToAssetAmount(amountMinor: number, decimals: number): 
 }
 
 export function mapProviderStatus(status: string): PaymentAttemptState | null {
-  if (["PENDING_DEPOSIT", "KNOWN_DEPOSIT_TX", "INCOMPLETE_DEPOSIT", "PROCESSING"].includes(status)) return "processing";
+  if (status === "PENDING_DEPOSIT") return "awaiting_deposit";
+  if (["KNOWN_DEPOSIT_TX", "INCOMPLETE_DEPOSIT", "PROCESSING"].includes(status)) return "processing";
   if (status === "SUCCESS") return "confirmed";
   if (status === "REFUNDED") return "refunded";
   if (status === "FAILED") return "failed";
@@ -201,8 +212,25 @@ export function itemStatusForAttempt(state: PaymentAttemptState): "pending" | "p
   if (state === "confirmed") return "paid";
   if (state === "failed") return "failed";
   if (state === "refunded") return "refunded";
-  if (["quoted", "generating", "awaiting_signature", "submitting", "submitted", "processing"].includes(state)) return "processing";
+  if ([
+    "quoted",
+    "generating",
+    "awaiting_signature",
+    "submitting",
+    "submitted",
+    "awaiting_deposit",
+    "deposit_submitted",
+    "processing",
+  ].includes(state)) {
+    return "processing";
+  }
   return "pending";
+}
+
+export function employeePaymentStatusForAttempt(
+  state: PaymentAttemptState,
+): "pending" | "processing" | "paid" | "failed" | "refunded" {
+  return itemStatusForAttempt(state);
 }
 
 export async function syncPayrollRunStatus(db: D1Database, runId: string): Promise<string> {

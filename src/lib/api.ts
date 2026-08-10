@@ -10,6 +10,9 @@ export interface AuthUser {
   wallet_verified: boolean;
 }
 
+export type EmployeeType = "employee" | "contractor";
+export type EmployeePayStatus = "to_be_paid" | "paid" | "none";
+
 export interface Employee {
   id: string;
   user_id: string | null;
@@ -17,6 +20,7 @@ export interface Employee {
   name: string;
   role_title: string;
   location: string;
+  employee_type: EmployeeType;
   token: "USDC" | "USDT";
   network: string;
   amount_minor: number;
@@ -25,6 +29,64 @@ export interface Employee {
   payout_verified_at: string | null;
   last_paid_at: string | null;
   created_at: string;
+  /** Present on listEmployees when team payment prefs are configured. */
+  payStatus?: EmployeePayStatus;
+}
+
+export interface PayOverview {
+  org: { id: string; name: string };
+  period: {
+    periodKey: string;
+    payday: string;
+    paydayDisplay: string;
+    reminderStartsAt: string;
+    inReminderWindow: boolean;
+    cadence: TeamPaymentSchedule;
+    monthLabel: string;
+  };
+  stats: {
+    currentPayrollMinor: number;
+    recipientsCount: number;
+    toBePaidCount: number;
+    paidCount: number;
+    progress: number;
+  };
+  recipients: Array<{
+    id: string;
+    name: string;
+    role_title: string | null;
+    employee_type: EmployeeType;
+    verified: boolean;
+    status: string;
+    created_at: string;
+  }>;
+  highPriority: {
+    payroll: { title: string; readyCount: number; amountMinor: number } | null;
+    verification: { count: number; names: string[] } | null;
+  };
+  payStatuses: Record<string, EmployeePayStatus>;
+}
+
+export interface QuickPayAsset {
+  assetId: string;
+  decimals: number;
+  blockchain: string;
+  network: string;
+  symbol: "USDC" | "USDT";
+  providerSymbol: string;
+  contractAddress: string | null;
+}
+
+export interface QuickPayQuote {
+  amountIn: string;
+  amountOut: string;
+  depositAddress?: string | null;
+  depositMemo?: string | null;
+  timeEstimate?: number | string | null;
+  deadline?: string | null;
+  originAsset: QuickPayAsset;
+  destinationAsset: QuickPayAsset;
+  confidentiality: string;
 }
 
 export interface PayrollRun {
@@ -106,13 +168,27 @@ export interface ChainRecord {
   provider_status?: string | null;
 }
 
-export type PaymentAttemptState = "created" | "quoting" | "quoted" | "generating" | "awaiting_signature" | "submitting" | "submitted" | "processing" | "confirmed" | "failed" | "refunded";
+export type PaymentAttemptState =
+  | "created"
+  | "quoting"
+  | "quoted"
+  | "generating"
+  | "awaiting_signature"
+  | "submitting"
+  | "submitted"
+  | "awaiting_deposit"
+  | "deposit_submitted"
+  | "processing"
+  | "confirmed"
+  | "failed"
+  | "refunded";
 
 export interface PaymentAttempt {
   id: string;
   org_id: string;
-  run_id: string;
-  item_id: string;
+  run_id: string | null;
+  item_id: string | null;
+  employee_payment_id?: string | null;
   idempotency_key: string;
   state: PaymentAttemptState;
   token: "USDC" | "USDT";
@@ -120,12 +196,17 @@ export interface PaymentAttempt {
   amount_minor: number;
   recipient: string;
   signer_id: string;
+  origin_asset_id?: string | null;
+  destination_asset_id?: string | null;
   deposit_address: string | null;
   deposit_memo: string | null;
+  deposit_tx_hash?: string | null;
   intent_hash: string | null;
   provider_status: string | null;
   last_error: string | null;
   quote_request?: string | null;
+  quote_response?: string | null;
+  quote_expires_at?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -209,9 +290,9 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     data = text;
   }
   if (!res.ok) {
-    const payload = data as { error?: string; code?: string } | null;
+    const payload = data as { error?: string; code?: string; detail?: string } | null;
     const msg = payload?.error || `Request failed (${res.status})`;
-    throw new ApiError(msg, res.status, payload?.code);
+    throw new ApiError(msg, res.status, payload?.code, typeof payload?.detail === "string" ? payload.detail : undefined);
   }
   return data as T;
 }
@@ -219,10 +300,13 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 export class ApiError extends Error {
   status: number;
   code?: string;
-  constructor(message: string, status: number, code?: string) {
+  /** Raw provider error body (e.g. 1Click JSON) forwarded by the Worker. */
+  detail?: string;
+  constructor(message: string, status: number, code?: string, detail?: string) {
     super(message);
     this.status = status;
     this.code = code;
+    this.detail = detail;
   }
 }
 
@@ -259,6 +343,7 @@ export const api = {
       body: JSON.stringify(body),
     }),
   listEmployees: () => request<{ employees: Employee[] }>("/org/employees"),
+  payOverview: () => request<PayOverview>("/org/pay-overview"),
   createEmployee: (body: Partial<Employee> & { amount?: string }) => request<{ employee: Employee }>("/org/employees", { method: "POST", body: JSON.stringify(body) }),
   updateEmployee: (id: string, body: Partial<Employee> & { amount?: string }) =>
     request<{ employee: Employee }>(`/org/employees/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
@@ -304,7 +389,7 @@ export const api = {
     request<{ ok: boolean; wallet_address: string; wallet_verified_at: string }>("/records/wallet/verify", { method: "POST", body: JSON.stringify(body) }),
   unbindWallet: () => request<{ ok: boolean }>("/records/wallet", { method: "DELETE" }),
 
-  // payments: dry-run readiness + live confidential 1Click attempts
+  // payments: dry-run readiness + live 1Click attempts
   quote: (body: { runId: string; dry: true }) => request<{ dry: true; mode: "dry-run"; executionAllowed: false; itemCount: number; validatedItemCount: number; checkedAt: string; totals: { usdcMinor: number; usdtMinor: number } }>("/payments/quote", { method: "POST", body: JSON.stringify(body) }),
   listPaymentAttempts: (runId: string) => request<{ attempts: PaymentAttempt[] }>(`/payments/runs/${runId}/attempts`),
   quotePaymentItem: (itemId: string, idempotencyKey: string) =>
@@ -317,4 +402,35 @@ export const api = {
     request<{ attempt: PaymentAttempt; reused: boolean }>(`/payments/attempts/${attemptId}/reconcile`, { method: "POST" }),
   reopenFailedPayments: (runId: string) =>
     request<{ ok: true; reopened: number }>(`/payments/runs/${runId}/reopen-failed`, { method: "POST" }),
+
+  /** Quick Pay dry preview (ORIGIN_CHAIN confidential quote). */
+  quoteEmployeePaymentDry: (employeeId: string, body: {
+    originAsset: string;
+    amount?: string;
+    destinationToken?: string;
+    destinationNetwork?: string;
+  }) =>
+    request<{ dry: true; quote: QuickPayQuote }>(`/payments/employees/${employeeId}/quote`, {
+      method: "POST",
+      body: JSON.stringify({ ...body, dry: true }),
+    }),
+
+  /** Quick Pay live quote — creates employee_payment + attempt awaiting ORIGIN_CHAIN deposit. */
+  quoteEmployeePayment: (employeeId: string, body: {
+    originAsset: string;
+    amount?: string;
+    destinationToken?: string;
+    destinationNetwork?: string;
+    idempotencyKey: string;
+  }) =>
+    request<{ attempt: PaymentAttempt; reused: boolean; quote: QuickPayQuote }>(`/payments/employees/${employeeId}/quote`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  submitPaymentDeposit: (attemptId: string, txHash: string) =>
+    request<{ attempt: PaymentAttempt; reused: boolean; outcome?: "unknown" }>(
+      `/payments/attempts/${attemptId}/deposit`,
+      { method: "POST", body: JSON.stringify({ txHash }) },
+    ),
 };

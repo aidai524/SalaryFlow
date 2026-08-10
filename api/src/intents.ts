@@ -126,9 +126,18 @@ export interface SupportedToken {
   decimals: number;
   blockchain: string;
   symbol: string;
+  price?: number;
+  contractAddress?: string | null;
+  priceUpdatedAt?: string;
 }
 
-export async function getSupportedTokens(env: Env): Promise<SupportedToken[]> {
+const TOKEN_CACHE_TTL_MS = 30 * 60 * 1000;
+let tokenCache: { fetchedAt: number; tokens: SupportedToken[] } | null = null;
+
+export async function getSupportedTokens(env: Env, options: { force?: boolean } = {}): Promise<SupportedToken[]> {
+  if (!options.force && tokenCache && Date.now() - tokenCache.fetchedAt < TOKEN_CACHE_TTL_MS) {
+    return tokenCache.tokens;
+  }
   const path = "/v0/tokens";
   const res = await fetch(`${env.INTENTS_API_URL}${path}`, {
     headers: headers(env, { usePartnerKey: false, json: false }),
@@ -144,7 +153,9 @@ export async function getSupportedTokens(env: Env): Promise<SupportedToken[]> {
   })) {
     throw new Error("1Click returned invalid supported-token metadata");
   }
-  return data as SupportedToken[];
+  const tokens = data as SupportedToken[];
+  tokenCache = { fetchedAt: Date.now(), tokens };
+  return tokens;
 }
 
 export interface GenerateIntentRequest {
@@ -200,6 +211,14 @@ export async function checkSwapStatus(env: Env, depositAddress: string, depositM
   const path = `/v0/status?${query.toString()}`;
   const res = await fetch(`${env.INTENTS_API_URL}${path}`, { headers: headers(env, { json: false }) });
   return parseResponse<SwapStatus>(res, "/v0/status");
+}
+
+/** Notify 1Click that an ORIGIN_CHAIN deposit tx was broadcast. */
+export function submitDepositTx(
+  env: Env,
+  body: { depositAddress: string; txHash: string },
+): Promise<unknown> {
+  return post<unknown>(env, "/v0/deposit/submit", body);
 }
 
 // User-Session token exchange: wallet signs an ownership proof (empty intents array).

@@ -67,6 +67,7 @@ export function buildPayableWorkItems(
   const resumableByItem = new Map<string, PaymentAttempt>();
 
   for (const attempt of attempts) {
+    if (!attempt.item_id) continue;
     if (!RESUMABLE_PAYMENT_STATES.has(attempt.state)) continue;
     const existing = resumableByItem.get(attempt.item_id);
     if (!existing || existing.created_at < attempt.created_at) {
@@ -76,6 +77,7 @@ export function buildPayableWorkItems(
 
   const work: PayableWorkItem[] = [];
   for (const attempt of resumableByItem.values()) {
+    if (!attempt.item_id) continue;
     const item = itemById.get(attempt.item_id);
     work.push({
       itemId: attempt.item_id,

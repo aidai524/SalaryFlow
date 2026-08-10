@@ -11,8 +11,11 @@ export interface Env {
   MOCK_EMAIL?: string;
   INTENTS_API_URL: string;
   INTENTS_API_KEY?: string;
+  /** @deprecated Prefer dynamic /v0/tokens resolution. Kept for legacy payroll-run quotes. */
   INTENTS_ASSET_MAP?: string;
   INTENTS_QUOTE_PUBLIC_KEY?: string;
+  /** Confidential swap level for ORIGIN_CHAIN quotes: public | basic | advanced. Default advanced. */
+  INTENTS_CONFIDENTIALITY?: string;
   PAYMENTS_MODE?: "disabled" | "dry-run" | "live";
   PAYMENTS_EXECUTION_ACK?: "local-test" | "mainnet-live";
   /** Create Team / org payment reminder lead days (monthly). Default 7. */

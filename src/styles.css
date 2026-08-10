@@ -6,6 +6,7 @@
 @import "@fontsource/montserrat/500.css";
 @import "@fontsource/montserrat/600.css";
 @import "@fontsource/space-grotesk/500.css";
+@import "react-toastify/dist/ReactToastify.css";
 
 @font-face {
   font-family: "Montserrat";
@@ -40,6 +41,8 @@
   background: oklch(0.985 0.003 247);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
+  --toastify-toast-right: 0px !important;
+  --toastify-toast-top: 65px !important;
   --background: oklch(0.985 0.003 247);
   --foreground: oklch(0.21 0.025 255);
   --card: oklch(1 0 0);
@@ -211,6 +214,23 @@
 /* Radix Dialog sets body { pointer-events: none }; RainbowKit portals need clicks. */
 [data-rk] {
   pointer-events: auto !important;
+}
+
+.Toastify__toast-container--top-right .decash-toast-top-right.Toastify__toast {
+  padding: 0 0 0 22px;
+  margin-bottom: 10px;
+  min-height: unset;
+}
+
+.Toastify__toast-container--top-right .decash-toast-top-right.Toastify__toast > .Toastify__progress-bar--wrp {
+  pointer-events: none;
+}
+
+@media screen and (max-width: 768px) {
+  .Toastify__toast-container--top-right .decash-toast-top-right.Toastify__toast {
+    padding: 0 var(--toastify-toast-padding);
+    top: 65px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

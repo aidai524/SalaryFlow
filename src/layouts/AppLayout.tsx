@@ -1,11 +1,15 @@
 import { Outlet, useLocation } from "react-router-dom";
+import { ToastContainer } from "react-toastify";
+import { GlobalDrawerHost } from "@/components/drawer/GlobalDrawerHost";
 import { AppHeader } from "@/components/layout/AppHeader";
 import { CREATE_TEAM_BG } from "@/views/admin/create-team/config";
 import { cn } from "@/lib/utils";
+import { useAuthStore } from "@/stores/auth";
 
 export function AppLayout() {
   const location = useLocation();
   const isCreateTeam = location.pathname === "/teams/create";
+  const role = useAuthStore((s) => s.user?.role);
 
   return (
     <div
@@ -23,6 +27,18 @@ export function AppLayout() {
       >
         <Outlet />
       </main>
+      {role === "admin" ? <GlobalDrawerHost /> : null}
+      <ToastContainer
+        position="top-right"
+        autoClose={5000}
+        hideProgressBar
+        theme="light"
+        toastStyle={{ backgroundColor: "transparent", boxShadow: "none" }}
+        newestOnTop
+        rtl={false}
+        pauseOnFocusLoss
+        closeButton={false}
+      />
     </div>
   );
 }
