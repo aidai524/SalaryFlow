@@ -1,7 +1,7 @@
-// Invitations: admin creates (email + role), employee accepts (creates account or links existing)
+// Invitations: admin creates (email + role), employee accepts via token (auto account + session)
 
 import { Hono } from "hono";
-import { hashPassword, signToken, verifyPassword } from "../crypto";
+import { generateRandomPassword, hashPassword, signToken } from "../crypto";
 import { requireRole, setAuthCookie, type AppEnv } from "../middleware";
 import { sendInviteEmail } from "../mail";
 import { normalizeEmployeeType, normalizeRoleTitle } from "../recipient";
@@ -124,7 +124,7 @@ inviteRoutes.post("/", requireRole("admin"), async (c) => {
 inviteRoutes.get("/resolve/:token", async (c) => {
   const token = c.req.param("token");
   const row = await c.env.DB.prepare(
-    "SELECT id, org_id, email, role, status, expires_at FROM invitations WHERE token = ?",
+    "SELECT id, org_id, email, role, name, status, expires_at FROM invitations WHERE token = ?",
   ).bind(token).first<Record<string, unknown>>();
   if (!row) return c.json({ error: "Invitation not found" }, 404);
   if (row.status === "accepted") return c.json({ error: "This invitation has already been used" }, 410);
@@ -136,17 +136,21 @@ inviteRoutes.get("/resolve/:token", async (c) => {
   const org = await c.env.DB.prepare("SELECT name FROM organizations WHERE id = ?").bind(row.org_id).first<{ name: string }>();
   const existingAccount = await c.env.DB.prepare("SELECT id FROM users WHERE email = ?").bind(row.email).first();
   return c.json({
-    invitation: { email: row.email, role: row.role, orgName: org?.name || "", accountExists: !!existingAccount },
+    invitation: {
+      email: String(row.email),
+      name: String(row.name || ""),
+      role: row.role,
+      orgName: org?.name || "",
+      accountExists: !!existingAccount,
+    },
   });
 });
 
-// Public: accept invitation — creates account (or links existing), binds to org
+// Public: accept invitation — creates account with a server-generated default password and sets session.
+// Token-only body: { token }. Name/email come from the invitation row.
 inviteRoutes.post("/accept", async (c) => {
   const body = await c.req.json().catch(() => null);
   const token = String(body?.token || "");
-  const name = String(body?.name || "").trim();
-  const password = String(body?.password || "");
-  const email = String(body?.email || "").trim().toLowerCase();
 
   const invite = await c.env.DB.prepare(
     "SELECT id, org_id, email, role, role_title, name, employee_type, status, expires_at FROM invitations WHERE token = ?",
@@ -157,56 +161,50 @@ inviteRoutes.post("/accept", async (c) => {
     await c.env.DB.prepare("UPDATE invitations SET status = 'expired' WHERE id = ?").bind(invite.id).run();
     return c.json({ error: "This invitation has expired" }, 410);
   }
-  if (email !== String(invite.email)) return c.json({ error: "Email does not match the invitation" }, 400);
-  if (password.length < 8) return c.json({ error: "Password must be at least 8 characters" }, 400);
+
+  const email = String(invite.email).trim().toLowerCase();
   const role = invite.role === "admin" ? "admin" : "employee";
   const existing = await c.env.DB.prepare(
-    "SELECT id, name, password_hash, org_id, wallet_address, wallet_verified_at FROM users WHERE email = ?",
+    "SELECT id, org_id FROM users WHERE email = ?",
   ).bind(email).first<Record<string, unknown>>();
 
-  if (existing?.org_id === invite.org_id) return c.json({ error: "This account is already a member" }, 409);
-  if (existing?.org_id && existing.org_id !== invite.org_id) {
-    return c.json({ error: "This account belongs to another organization; multi-workspace accounts are not supported yet" }, 409);
+  if (existing) {
+    return c.json({
+      error: "An account with this email already exists. Please sign in instead.",
+      code: "ACCOUNT_EXISTS",
+    }, 409);
   }
-  if (existing && !(await verifyPassword(password, String(existing.password_hash)))) {
-    return c.json({ error: "Invalid password for the existing account" }, 401);
-  }
-  const invitePrefillName = String(invite.name || "").trim();
-  if (!existing && !name && !invitePrefillName) return c.json({ error: "Name is required" }, 400);
 
-  const userId = existing ? String(existing.id) : uuid();
-  const displayName = existing
-    ? String(existing.name)
-    : (name || invitePrefillName);
+  const invitePrefillName = String(invite.name || "").trim();
+  if (!invitePrefillName) return c.json({ error: "Name is required on the invitation" }, 400);
+
+  const userId = uuid();
+  const displayName = invitePrefillName;
   const employee = role === "employee"
     ? await c.env.DB.prepare(
       "SELECT id, user_id FROM employees WHERE org_id = ? AND email = ?",
     ).bind(invite.org_id, email).first<Record<string, unknown>>()
     : null;
-  if (employee?.user_id && employee.user_id !== userId) {
+  if (employee?.user_id) {
     return c.json({ error: "This employee profile is already linked to another account" }, 409);
   }
 
-  const statements: D1PreparedStatement[] = [];
-  if (existing) {
-    statements.push(c.env.DB.prepare(
-      "UPDATE users SET org_id = ?, role = ?, status = 'active', updated_at = ? WHERE id = ?",
-    ).bind(invite.org_id, role, nowIso(), userId));
-  } else {
-    let passwordHash: string;
-    try {
-      passwordHash = await hashPassword(password);
-    } catch (error) {
-      console.error("Password hashing failed during invitation acceptance", error instanceof Error ? error.name : "UnknownError");
-      return c.json(
-        { error: "Account security is temporarily unavailable", code: "PASSWORD_HASH_UNAVAILABLE" },
-        503,
-      );
-    }
-    statements.push(c.env.DB.prepare(
-      "INSERT INTO users (id, email, name, password_hash, role, status, org_id, created_at) VALUES (?, ?, ?, ?, ?, 'active', ?, ?)",
-    ).bind(userId, email, displayName, passwordHash, role, invite.org_id, nowIso()));
+  let passwordHash: string;
+  try {
+    passwordHash = await hashPassword(generateRandomPassword());
+  } catch (error) {
+    console.error("Password hashing failed during invitation acceptance", error instanceof Error ? error.name : "UnknownError");
+    return c.json(
+      { error: "Account security is temporarily unavailable", code: "PASSWORD_HASH_UNAVAILABLE" },
+      503,
+    );
   }
+
+  const statements: D1PreparedStatement[] = [
+    c.env.DB.prepare(
+      "INSERT INTO users (id, email, name, password_hash, role, status, org_id, must_change_password, created_at) VALUES (?, ?, ?, ?, ?, 'active', ?, 1, ?)",
+    ).bind(userId, email, displayName, passwordHash, role, invite.org_id, nowIso()),
+  ];
 
   if (role === "employee") {
     const inviteRoleTitle = String(invite.role_title || "");
@@ -263,8 +261,9 @@ inviteRoutes.post("/accept", async (c) => {
     name: displayName,
     role,
     org_id: String(invite.org_id),
-    wallet_address: existing?.wallet_address ? String(existing.wallet_address) : null,
-    wallet_verified: !!existing?.wallet_verified_at,
+    wallet_address: null,
+    wallet_verified: false,
+    must_change_password: true,
   };
   const sessionToken = await signToken({ sub: userId, org: authUser.org_id, role }, c.env);
   setAuthCookie(c, sessionToken, c.env);

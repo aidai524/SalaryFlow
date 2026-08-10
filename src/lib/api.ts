@@ -8,6 +8,7 @@ export interface AuthUser {
   org_id: string | null;
   wallet_address: string | null;
   wallet_verified: boolean;
+  must_change_password: boolean;
 }
 
 export type EmployeeType = "employee" | "contractor";
@@ -338,6 +339,8 @@ export const api = {
   logout: () => request<{ ok: true }>("/auth/logout", { method: "POST" }),
   me: () => request<{ user: AuthUser | null }>("/auth/me"),
   updateMe: (body: { name?: string }) => request<{ user: AuthUser }>("/auth/me", { method: "PATCH", body: JSON.stringify(body) }),
+  changePassword: (body: { currentPassword?: string; newPassword: string }) =>
+    request<{ ok: true; user: AuthUser }>("/auth/change-password", { method: "POST", body: JSON.stringify(body) }),
 
   // invites
   listInvites: () => request<{ invitations: Invitation[] }>("/invites"),
@@ -349,8 +352,11 @@ export const api = {
     employee_type?: EmployeeType;
   }) =>
     request<{ invitation: Invitation; mail: InviteMailResult; inviteUrl?: string }>("/invites", { method: "POST", body: JSON.stringify(body) }),
-  resolveInvite: (token: string) => request<{ invitation: { email: string; role: string; orgName: string; accountExists: boolean } }>(`/invites/resolve/${token}`),
-  acceptInvite: (body: { token: string; email: string; name: string; password: string }) =>
+  resolveInvite: (token: string) =>
+    request<{ invitation: { email: string; name: string; role: string; orgName: string; accountExists: boolean } }>(
+      `/invites/resolve/${token}`,
+    ),
+  acceptInvite: (body: { token: string }) =>
     request<{ ok: boolean; user: AuthUser }>("/invites/accept", { method: "POST", body: JSON.stringify(body) }),
   resendInvite: (id: string) => request<{ ok: boolean; mail: InviteMailResult; inviteUrl?: string }>(`/invites/${id}/resend`, { method: "POST" }),
   revokeInvite: (id: string) => request<{ ok: boolean }>(`/invites/${id}/revoke`, { method: "POST" }),

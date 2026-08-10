@@ -16,8 +16,14 @@ export function useRegisterMutation() {
 
 export function useAcceptInviteMutation() {
   return useMutation({
-    mutationFn: (body: { token: string; email: string; name: string; password: string }) =>
-      api.acceptInvite(body),
+    mutationFn: (body: { token: string }) => api.acceptInvite(body),
+  });
+}
+
+export function useChangePasswordMutation() {
+  return useMutation({
+    mutationFn: (body: { currentPassword?: string; newPassword: string }) =>
+      api.changePassword(body),
   });
 }
 

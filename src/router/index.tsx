@@ -39,12 +39,9 @@ export const router = createBrowserRouter([
     ),
   },
   {
+    // Invite page must stay mountable after auto-accept sets the session cookie.
     path: "/invite/:token?",
-    element: (
-      <RedirectIfAuthed>
-        <InviteView />
-      </RedirectIfAuthed>
-    ),
+    element: <InviteView />,
   },
   {
     element: <RequireAuth />,

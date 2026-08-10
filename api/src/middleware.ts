@@ -59,7 +59,7 @@ export async function loadUser(c: Ctx): Promise<AuthUser | null> {
   const jwt = c.get("jwt");
   if (!jwt) return null;
   const row = await c.env.DB.prepare(
-    "SELECT id, email, name, role, status, org_id, wallet_address, wallet_verified_at, created_at FROM users WHERE id = ?",
+    "SELECT id, email, name, role, status, org_id, wallet_address, wallet_verified_at, must_change_password, created_at FROM users WHERE id = ?",
   ).bind(jwt.sub).first<Record<string, unknown>>();
   if (!row || row.status === "disabled") return null;
   return {
@@ -70,6 +70,7 @@ export async function loadUser(c: Ctx): Promise<AuthUser | null> {
     org_id: row.org_id ? String(row.org_id) : null,
     wallet_address: row.wallet_address ? String(row.wallet_address) : null,
     wallet_verified: !!row.wallet_verified_at,
+    must_change_password: !!row.must_change_password,
   };
 }
 

@@ -46,7 +46,7 @@ Router: `react-router-dom` (`createBrowserRouter` in `src/router/index.tsx`).
 |---|---|---|---|
 | `/login` | `LoginView` | Public | No |
 | `/register` | `RegisterView` | Public | No |
-| `/invite/:token?` | `InviteView` | Public | No |
+| `/invite/:token?` | `InviteView` | Public → auto session | No (invite onboarding) |
 | `/pay` | `PayView` | Admin | Pay |
 | `/recipients` | `RecipientsView` | Admin | Recipients |
 | `/overview` | `OverviewView` | Admin | Overview |
@@ -59,7 +59,7 @@ Guards:
 
 - `RequireAuth` — redirect anonymous users to `/login`
 - `RequireAdmin` / `RequireEmployee` — role isolation
-- `RedirectIfAuthed` — keep logged-in users out of auth pages
+- `RedirectIfAuthed` — keep logged-in users out of `/login` and `/register` (`/invite` stays mountable after auto-accept)
 - Admin without team payment prefs (`paymentConfigured === false`) → `/teams/create`; configured → `/pay`
 - `/` and post-login/register: admin → `adminHomePath(paymentConfigured)`, employee → `/my-pay`
 
@@ -73,16 +73,16 @@ Design-preview bypass remains in `main.tsx` (`/design-preview` or `?preview=deca
 - UI: lime background `#c8e458`, dollar watermarks (`/decash/dollar-mark.svg`), centered `/logo.svg`, Rubik One slogan, Montserrat form; selects use `/icons/to-down.svg`.
 - Header variant `onboarding`: wallet chip + account menu only (no primary nav / header logo).
 
-### Auth views (ported)
+### Auth views
 
-Login / register / accept-invite UI lives under `src/views/auth/` (legacy layout pending Figma redesign).
+Login / register / invite UI lives under `src/views/auth/` (Figma lime shell aligned with Create Team).
 
+- Shared layout: `src/views/auth/AuthShell.tsx` + `config.ts` (`#C8E458`, dollar watermarks, logo, slogan)
 - Shared helpers: `src/views/auth/auth-shared.tsx`
-- API hooks (react-query): `src/hooks/use-auth-api.ts` — `useLoginMutation`, `useRegisterMutation`, `useAcceptInviteMutation`, `useResolveInviteQuery`
-- Org hooks: `src/hooks/use-org-api.ts` — `useUpdateTeamMutation`, `useOrgContextQuery` (query key includes `orgId`)
-- On success, views call `useAuthStore.applyAuthedUser(user)` then navigate via `adminHomePath` / `/my-pay`
+- Invite with token: auto `POST /invites/accept` (server default password) → Welcome + Connect Wallet (payout verify) → `/my-pay` + `ChangePasswordDialog` when `must_change_password`
+- `/invite/:token?` is **not** wrapped in `RedirectIfAuthed` so the session can stay on the Welcome card after accept
+- API hooks: `src/hooks/use-auth-api.ts` — login/register/accept/resolve/`useChangePasswordMutation`
 - Legacy reference: `src/auth/AuthPages.tsx` (not mounted)
-
 ## Org / team model (phase 1)
 
 - **Phase 1:** one organization per admin (`users.org_id`). Auth store keeps `orgId`, `orgName`, `paymentConfigured` for the current workspace.

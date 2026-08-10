@@ -1,36 +1,32 @@
-import { ArrowRight, ShieldCheck } from "lucide-react";
-import { type FormEvent, useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import {
-  Field,
-  FieldDescription,
-  FieldGroup,
-  FieldLabel,
-} from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
-import { Separator } from "@/components/ui/separator";
+import { useAccount, useSignMessage } from "wagmi";
 import { useAcceptInviteMutation, useResolveInviteQuery } from "@/hooks/use-auth-api";
-import { adminHomePath, useAuthStore } from "@/stores/auth";
+import { useOpenWalletModal } from "@/hooks/use-open-wallet-modal";
+import { api, ApiError } from "@/lib/api";
+import { isValidEthereumAddress } from "@/lib/erc191";
+import { useAuthStore } from "@/stores/auth";
+import { AuthShell } from "./AuthShell";
 import {
   AuthError,
   AuthField,
-  Brand,
   authErrorMessage,
+  avatarInitial,
   extractInviteToken,
+  AUTH_BUTTON_CLASS,
+  AUTH_CARD_CLASS,
 } from "./auth-shared";
+import {
+  AUTH_LINK_CLASS,
+  DEFAULT_PAYOUT_NETWORK,
+  DEFAULT_PAYOUT_TOKEN,
+} from "./config";
 
 export function InviteView() {
   const navigate = useNavigate();
   const { token: routeToken } = useParams();
   const applyAuthedUser = useAuthStore((state) => state.applyAuthedUser);
+  const user = useAuthStore((state) => state.user);
 
   const [activeToken, setActiveToken] = useState(() =>
     routeToken ? extractInviteToken(routeToken) : "",
@@ -38,9 +34,6 @@ export function InviteView() {
   const [draftToken, setDraftToken] = useState(() =>
     routeToken ? extractInviteToken(routeToken) : "",
   );
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
 
   const resolveQuery = useResolveInviteQuery(activeToken);
   const acceptMutation = useAcceptInviteMutation();
@@ -51,19 +44,59 @@ export function InviteView() {
     ? authErrorMessage(resolveQuery.error, "Invalid invitation")
     : "";
 
+  const acceptedRef = useRef(false);
+  const [welcomeReady, setWelcomeReady] = useState(false);
+  const [walletError, setWalletError] = useState("");
+  const [verifying, setVerifying] = useState(false);
+  const pendingVerifyRef = useRef(false);
+
+  const { openWalletModal, isConnected } = useOpenWalletModal();
+  const { address } = useAccount();
+  const { signMessageAsync } = useSignMessage();
+
   useEffect(() => {
     if (routeToken) {
       const next = extractInviteToken(routeToken);
       setActiveToken(next);
       setDraftToken(next);
+      acceptedRef.current = false;
+      setWelcomeReady(false);
+    } else {
+      setActiveToken("");
+      setDraftToken("");
+      acceptedRef.current = false;
+      setWelcomeReady(false);
     }
   }, [routeToken]);
 
+  // Auto-accept when invite resolves for a new account.
   useEffect(() => {
-    if (invite?.email) {
-      setEmail(invite.email);
+    if (!activeToken || !invite || invite.accountExists || acceptedRef.current) return;
+    if (user?.email === invite.email) {
+      acceptedRef.current = true;
+      setWelcomeReady(true);
+      return;
     }
-  }, [invite?.email]);
+    if (acceptMutation.isPending) return;
+
+    acceptedRef.current = true;
+    (async () => {
+      try {
+        const { user: nextUser } = await acceptMutation.mutateAsync({ token: activeToken });
+        await applyAuthedUser(nextUser);
+        setWelcomeReady(true);
+      } catch {
+        acceptedRef.current = false;
+      }
+    })();
+  }, [activeToken, invite, user?.email, acceptMutation, applyAuthedUser]);
+
+  // After wallet connects (from Connect Wallet), run ownership verify.
+  useEffect(() => {
+    if (!pendingVerifyRef.current || !isConnected || !address || verifying) return;
+    pendingVerifyRef.current = false;
+    void verifyPayoutWallet(address);
+  }, [isConnected, address, verifying]);
 
   const continueWithToken = () => {
     const next = extractInviteToken(draftToken);
@@ -74,122 +107,175 @@ export function InviteView() {
     }
   };
 
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
+  const verifyPayoutWallet = async (walletAddress: string) => {
+    setWalletError("");
+    if (!isValidEthereumAddress(walletAddress)) {
+      setWalletError("Connect a valid EVM wallet address.");
+      return;
+    }
+
+    setVerifying(true);
     try {
-      const { user } = await acceptMutation.mutateAsync({
-        token: extractInviteToken(activeToken),
-        email,
-        name,
-        password,
+      const challenge = await api.createPayoutChallenge({
+        token: DEFAULT_PAYOUT_TOKEN,
+        network: DEFAULT_PAYOUT_NETWORK,
+        endpoint: walletAddress,
       });
-      await applyAuthedUser(user);
-      const paymentConfigured = useAuthStore.getState().paymentConfigured;
-      navigate(
-        user.role === "admin" ? adminHomePath(paymentConfigured) : "/my-pay",
-        { replace: true },
+      const signature = await signMessageAsync({ message: challenge.message });
+      await api.verifyPayout({
+        challengeId: challenge.challengeId,
+        signature,
+      });
+      navigate("/my-pay", { replace: true, state: { promptChangePassword: true } });
+    } catch (cause) {
+      setWalletError(
+        cause instanceof ApiError
+          ? cause.message
+          : cause instanceof Error
+            ? cause.message
+            : "Wallet verification failed",
       );
-    } catch {
-      // Error rendered from mutation state.
+    } finally {
+      setVerifying(false);
     }
   };
 
-  const formError = authErrorMessage(acceptMutation.error, "") || (!invite ? resolveError : "");
+  const onConnectWallet = () => {
+    setWalletError("");
+    if (isConnected && address) {
+      void verifyPayoutWallet(address);
+      return;
+    }
+    pendingVerifyRef.current = true;
+    openWalletModal();
+  };
+
+  // Paste-link mode (no token)
+  if (!activeToken) {
+    return (
+      <AuthShell>
+        <div className={AUTH_CARD_CLASS}>
+          <h1 className="text-center font-montserrat text-base font-semibold text-black">
+            Accept invitation
+          </h1>
+          <AuthField
+            id="invite-link"
+            label="Invitation link"
+            value={draftToken}
+            onChange={setDraftToken}
+            placeholder="https://example.com/invite/…"
+            autoFocus
+          />
+          <AuthError message={resolveError} />
+          <button
+            type="button"
+            className={AUTH_BUTTON_CLASS}
+            onClick={continueWithToken}
+            disabled={!draftToken.trim()}
+          >
+            Continue
+          </button>
+          <Link to="/login" className={`block ${AUTH_LINK_CLASS}`}>
+            Already have an account? Sign in
+          </Link>
+        </div>
+      </AuthShell>
+    );
+  }
+
+  const formError =
+    authErrorMessage(acceptMutation.error, "")
+    || (!invite && !resolving ? resolveError : "");
+
+  if (resolving || (invite && !invite.accountExists && !welcomeReady && !acceptMutation.error)) {
+    return (
+      <AuthShell>
+        <div className={`${AUTH_CARD_CLASS} items-center py-10`}>
+          <span className="size-5 animate-spin rounded-full border-2 border-black border-r-transparent" />
+          <p className="mt-4 font-montserrat text-sm text-[#606060]">
+            {resolving ? "Checking your invitation…" : "Signing you in…"}
+          </p>
+        </div>
+      </AuthShell>
+    );
+  }
+
+  if (!invite || formError) {
+    return (
+      <AuthShell>
+        <div className={AUTH_CARD_CLASS}>
+          <h1 className="text-center font-montserrat text-base font-semibold text-black">
+            Invitation unavailable
+          </h1>
+          <AuthError message={formError || "Invalid invitation"} />
+          <Link to="/login" className={`block ${AUTH_LINK_CLASS}`}>
+            Back to sign in
+          </Link>
+        </div>
+      </AuthShell>
+    );
+  }
+
+  if (invite.accountExists) {
+    return (
+      <AuthShell>
+        <div className={AUTH_CARD_CLASS}>
+          <h1 className="text-center font-montserrat text-lg font-semibold text-black">
+            Welcome!
+          </h1>
+          <p className="mt-4 text-center font-montserrat text-sm font-medium text-[#606060]">
+            An account for <span className="font-semibold text-black">{invite.email}</span> already
+            exists. Please sign in to continue.
+          </p>
+          <Link
+            to="/login"
+            className={`${AUTH_BUTTON_CLASS} flex items-center justify-center no-underline`}
+          >
+            Sign in
+          </Link>
+        </div>
+      </AuthShell>
+    );
+  }
+
+  const displayName = invite.name || user?.name || invite.email;
+  const initial = avatarInitial(displayName);
 
   return (
-    <main className="auth-screen">
-      <Card className="w-full max-w-md shadow-lg shadow-slate-900/5">
-        <CardHeader className="space-y-4">
-          <Brand />
-          <div className="space-y-1">
-            <CardTitle className="text-2xl">
-              {invite ? "You’re invited" : "Accept an invitation"}
-            </CardTitle>
-            <CardDescription className="leading-6">
-              {resolving
-                ? "Checking your invitation…"
-                : invite
-                  ? `${invite.orgName} invited ${invite.email} to join as ${invite.role === "admin" ? "an administrator" : "a team member"}.`
-                  : "Paste the secure invitation link from your email."}
-            </CardDescription>
-          </div>
-        </CardHeader>
-        <CardContent>
-          {resolving ? (
-            <div className="flex items-center gap-3 rounded-lg border bg-muted/30 p-4 text-sm text-muted-foreground">
-              <span className="size-4 animate-spin rounded-full border-2 border-current border-r-transparent" />
-              Resolving invitation…
-            </div>
-          ) : invite ? (
-            <form className="space-y-5" onSubmit={submit}>
-              <FieldGroup>
-                <AuthField
-                  id="invite-name"
-                  label="Your name"
-                  value={name}
-                  onChange={setName}
-                  placeholder="Your full name"
-                  autoFocus
-                  autoComplete="name"
-                />
-                <AuthField
-                  id="invite-email"
-                  label="Email"
-                  type="email"
-                  value={email}
-                  onChange={setEmail}
-                  readOnly
-                />
-                <AuthField
-                  id="invite-password"
-                  label={invite.accountExists ? "Existing account password" : "Set a password"}
-                  type="password"
-                  value={password}
-                  onChange={setPassword}
-                  placeholder="At least 8 characters"
-                  autoComplete={invite.accountExists ? "current-password" : "new-password"}
-                  description="The invitation is bound to the email shown above."
-                />
-              </FieldGroup>
-              <AuthError message={authErrorMessage(acceptMutation.error, "")} />
-              <Button className="w-full" size="lg" type="submit" disabled={acceptMutation.isPending}>
-                <ShieldCheck data-icon="inline-start" />
-                {acceptMutation.isPending ? "Please wait…" : "Accept invitation"}
-              </Button>
-            </form>
-          ) : (
-            <div className="space-y-5">
-              <Field>
-                <FieldLabel htmlFor="invite-link">Invitation link</FieldLabel>
-                <Input
-                  id="invite-link"
-                  placeholder="https://example.com/invite/…"
-                  value={draftToken}
-                  onChange={(event) => setDraftToken(event.target.value)}
-                  autoFocus
-                />
-                <FieldDescription>Only links issued by your organization can be accepted.</FieldDescription>
-              </Field>
-              <AuthError message={formError} />
-              <Button
-                className="w-full"
-                size="lg"
-                type="button"
-                onClick={continueWithToken}
-                disabled={!draftToken.trim() || resolveQuery.isFetching}
-              >
-                Continue
-                <ArrowRight data-icon="inline-end" />
-              </Button>
-            </div>
-          )}
+    <AuthShell>
+      <div className={`${AUTH_CARD_CLASS} max-w-[350px]`}>
+        <h1 className="text-center font-montserrat text-lg font-semibold text-black">
+          Welcome!
+        </h1>
 
-          <Separator className="my-5" />
-          <Button variant="link" className="w-full" type="button" asChild>
-            <Link to="/login">Already have an account? Sign in</Link>
-          </Button>
-        </CardContent>
-      </Card>
-    </main>
+        <div className="mt-5 flex items-center justify-center gap-2.5">
+          <span className="grid size-8 place-items-center rounded-full bg-[#909090] font-montserrat text-xs font-semibold text-white">
+            {initial}
+          </span>
+          <span className="font-montserrat text-sm font-medium text-[#606060]">
+            {invite.email}
+          </span>
+        </div>
+
+        <p className="mt-5 text-center font-montserrat text-sm font-medium leading-normal text-[#606060]">
+          Welcome to join{" "}
+          <span className="font-semibold text-black">{invite.orgName || "your team"}</span> on{" "}
+          <span className="font-semibold text-black">DeCash</span>.
+          <br />
+          Please connect your wallet to verify for your access.
+        </p>
+
+        <AuthError message={walletError} />
+
+        <button
+          type="button"
+          className={AUTH_BUTTON_CLASS}
+          onClick={onConnectWallet}
+          disabled={verifying}
+        >
+          {verifying ? "Verifying…" : "Connect Wallet"}
+        </button>
+      </div>
+    </AuthShell>
   );
 }

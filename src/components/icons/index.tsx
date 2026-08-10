@@ -6,3 +6,5 @@ export * from "./pay";
 export * from "./pen";
 export * from "./processing";
 export * from "./remove";
+export * from "./calendar";
+export * from "./loading";

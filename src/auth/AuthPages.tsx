@@ -234,7 +234,7 @@ export function InvitePage({
     setError("");
     setBusy(true);
     try {
-      const { user } = await api.acceptInvite({ token: extractInviteToken(token), email, name, password });
+      const { user } = await api.acceptInvite({ token: extractInviteToken(token) });
       onAuthed(user);
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : "Something went wrong");

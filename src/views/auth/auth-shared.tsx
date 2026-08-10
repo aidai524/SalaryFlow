@@ -1,24 +1,17 @@
-import { AlertCircle } from "lucide-react";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import {
-  Field,
-  FieldDescription,
-  FieldLabel,
-} from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
 import { ApiError } from "@/lib/api";
+import {
+  AUTH_BUTTON_CLASS,
+  AUTH_CARD_CLASS,
+  AUTH_INPUT_CLASS,
+  AUTH_LABEL_CLASS,
+} from "./config";
 
-export function Brand() {
+export function AuthError({ message }: { message: string }) {
+  if (!message) return null;
   return (
-    <div className="mb-1 flex items-center gap-3">
-      <span className="grid size-9 place-items-center rounded-lg bg-primary text-xs font-bold text-primary-foreground">
-        DC
-      </span>
-      <div className="flex flex-col leading-tight">
-        <strong className="font-heading text-base">DECash</strong>
-        <small className="text-xs text-muted-foreground">Stablecoin payroll for global teams</small>
-      </div>
-    </div>
+    <p className="mt-3 font-montserrat text-sm font-medium text-red-600" role="alert">
+      {message}
+    </p>
   );
 }
 
@@ -32,7 +25,6 @@ export function AuthField({
   autoFocus,
   readOnly = false,
   autoComplete,
-  description,
 }: {
   id: string;
   label: string;
@@ -43,12 +35,13 @@ export function AuthField({
   autoFocus?: boolean;
   readOnly?: boolean;
   autoComplete?: string;
-  description?: string;
 }) {
   return (
-    <Field>
-      <FieldLabel htmlFor={id}>{label}</FieldLabel>
-      <Input
+    <div className="mt-5 first:mt-0">
+      <label htmlFor={id} className={AUTH_LABEL_CLASS}>
+        {label}
+      </label>
+      <input
         id={id}
         type={type}
         value={value}
@@ -57,19 +50,9 @@ export function AuthField({
         autoFocus={autoFocus}
         readOnly={readOnly}
         autoComplete={autoComplete ?? (type === "password" ? "current-password" : "on")}
+        className={AUTH_INPUT_CLASS}
       />
-      {description && <FieldDescription>{description}</FieldDescription>}
-    </Field>
-  );
-}
-
-export function AuthError({ message }: { message: string }) {
-  if (!message) return null;
-  return (
-    <Alert variant="destructive">
-      <AlertCircle />
-      <AlertDescription>{message}</AlertDescription>
-    </Alert>
+    </div>
   );
 }
 
@@ -84,3 +67,11 @@ export function authErrorMessage(error: unknown, fallback = "Something went wron
   if (error instanceof Error && error.message) return error.message;
   return fallback;
 }
+
+export function avatarInitial(nameOrEmail: string): string {
+  const trimmed = nameOrEmail.trim();
+  if (!trimmed) return "?";
+  return trimmed.charAt(0).toUpperCase();
+}
+
+export { AUTH_BUTTON_CLASS, AUTH_CARD_CLASS };

@@ -1,19 +1,10 @@
-import { ArrowRight } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { FieldGroup } from "@/components/ui/field";
-import { Separator } from "@/components/ui/separator";
 import { useLoginMutation } from "@/hooks/use-auth-api";
 import { adminHomePath, useAuthStore } from "@/stores/auth";
-import { AuthError, AuthField, Brand, authErrorMessage } from "./auth-shared";
+import { AuthShell } from "./AuthShell";
+import { AuthError, AuthField, authErrorMessage, AUTH_BUTTON_CLASS, AUTH_CARD_CLASS } from "./auth-shared";
+import { AUTH_LINK_CLASS } from "./config";
 
 export function LoginView() {
   const navigate = useNavigate();
@@ -39,57 +30,45 @@ export function LoginView() {
   };
 
   return (
-    <main className="auth-screen">
-      <Card className="w-full max-w-md shadow-lg shadow-slate-900/5">
-        <CardHeader className="space-y-4">
-          <Brand />
-          <div className="space-y-1">
-            <CardTitle className="text-2xl">Sign in</CardTitle>
-            <CardDescription className="leading-6">
-              Welcome back. Sign in to your payroll workspace.
-            </CardDescription>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <form className="space-y-5" onSubmit={submit}>
-            <FieldGroup>
-              <AuthField
-                id="email"
-                label="Email"
-                type="email"
-                value={email}
-                onChange={setEmail}
-                placeholder="you@company.com"
-                autoFocus
-                autoComplete="email"
-              />
-              <AuthField
-                id="password"
-                label="Password"
-                type="password"
-                value={password}
-                onChange={setPassword}
-                placeholder="At least 8 characters"
-              />
-            </FieldGroup>
-            <AuthError message={authErrorMessage(loginMutation.error, "")} />
-            <Button className="w-full" size="lg" type="submit" disabled={loginMutation.isPending}>
-              {loginMutation.isPending ? "Please wait…" : "Sign in"}
-              {!loginMutation.isPending && <ArrowRight data-icon="inline-end" />}
-            </Button>
-          </form>
+    <AuthShell>
+      <form onSubmit={submit} className={AUTH_CARD_CLASS}>
+        <h1 className="text-center font-montserrat text-base font-semibold text-black">
+          Sign in
+        </h1>
 
-          <Separator className="my-5" />
-          <div className="flex flex-col items-center gap-1 text-sm">
-            <Button variant="link" type="button" asChild>
-              <Link to="/register">New here? Create an account</Link>
-            </Button>
-            <Button variant="link" type="button" asChild>
-              <Link to="/invite">Have an invitation link? Accept invitation</Link>
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-    </main>
+        <AuthField
+          id="email"
+          label="Email"
+          type="email"
+          value={email}
+          onChange={setEmail}
+          placeholder="you@company.com"
+          autoFocus
+          autoComplete="email"
+        />
+        <AuthField
+          id="password"
+          label="Password"
+          type="password"
+          value={password}
+          onChange={setPassword}
+          placeholder="At least 8 characters"
+        />
+
+        <AuthError message={authErrorMessage(loginMutation.error, "")} />
+
+        <button
+          type="submit"
+          disabled={loginMutation.isPending}
+          className={AUTH_BUTTON_CLASS}
+        >
+          {loginMutation.isPending ? "Please wait…" : "Sign in"}
+        </button>
+
+        <Link to="/register" className={`block ${AUTH_LINK_CLASS}`}>
+          New here, create an account
+        </Link>
+      </form>
+    </AuthShell>
   );
 }

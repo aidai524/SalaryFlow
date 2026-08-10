@@ -68,7 +68,7 @@ Callers: legacy [`src/pages/admin/TeamPayouts.tsx`](../../src/pages/admin/TeamPa
 - **Source** — `api/src/routes/invites.ts`
 - **Client** — `api.resolveInvite`
 - **Request** — path `token`
-- **Response** — `{ invitation: { email, role, orgName, accountExists } }`
+- **Response** — `{ invitation: { email, name, role, orgName, accountExists } }`
 - **Errors**
 
   | Status | When |
@@ -87,16 +87,21 @@ Callers: legacy [`src/pages/admin/TeamPayouts.tsx`](../../src/pages/admin/TeamPa
 
   | Field | Type | Required | Notes |
   |---|---|---|---|
-  | `token` | string | yes | |
-  | `email` | string | yes | must match invite |
-  | `password` | string | yes | min 8; verifies existing account |
-  | `name` | string | if new user | required when account does not exist |
+  | `token` | string | yes | invitation token from email link |
 
-- **Response** — `{ ok: true, user: AuthUser }` + `Set-Cookie`
-- **Errors** — 404/410 invite; 400 email/name/password; 401 wrong password for existing; 409 already member / other org / employee linked elsewhere; 503 `PASSWORD_HASH_UNAVAILABLE`
-- **Rules** — Creates or links user; employee role links/creates `employees` row (`status=pending` if new); marks invite `accepted`.
-- **Gotchas** — Frontend type requires `name` always; backend allows omit when `accountExists`.
+- **Response** — `{ ok: true, user: AuthUser }` + `Set-Cookie` (`must_change_password: true` for new accounts)
+- **Errors**
 
+  | Status | Code | When |
+  |---|---|---|
+  | 404/410 | — | invite missing / invalid / expired |
+  | 400 | — | invitation missing name |
+  | 409 | `ACCOUNT_EXISTS` | email already has an account (sign in instead) |
+  | 409 | — | employee profile already linked |
+  | 503 | `PASSWORD_HASH_UNAVAILABLE` | hash failure |
+
+- **Rules** — Creates user with a **server-generated random default password** (never returned). Prefills name/email/role/type from invitation. Employee role links/creates `employees` row (`status=pending` if new). Marks invite `accepted`. Sets `must_change_password=1`.
+- **Gotchas** — No password/name in the request body; frontend auto-accepts on open invite link, then prompts Connect Wallet + change password.
 ---
 
 ### POST /api/invites/:id/resend

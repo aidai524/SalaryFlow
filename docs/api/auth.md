@@ -11,11 +11,12 @@ Parent index: [`docs/api.md`](../api.md) · Source: [`api/src/routes/auth.ts`](.
 | POST | `/api/auth/logout` | `api.logout` |
 | GET | `/api/auth/me` | `api.me` |
 | PATCH | `/api/auth/me` | `api.updateMe` |
+| POST | `/api/auth/change-password` | `api.changePassword` |
 
 Shared type: `AuthUser` in [`src/lib/api.ts`](../../src/lib/api.ts) and [`api/src/types.ts`](../../api/src/types.ts).
 
 ```ts
-{ id, email, name, role: "admin"|"employee", org_id, wallet_address, wallet_verified }
+{ id, email, name, role: "admin"|"employee", org_id, wallet_address, wallet_verified, must_change_password }
 ```
 
 Callers: [`src/auth/AuthPages.tsx`](../../src/auth/AuthPages.tsx) (legacy), [`src/stores/auth.ts`](../../src/stores/auth.ts) (`me` / logout).
@@ -45,7 +46,7 @@ Callers: [`src/auth/AuthPages.tsx`](../../src/auth/AuthPages.tsx) (legacy), [`sr
   | 409 | — | email already exists |
   | 503 | `PASSWORD_HASH_UNAVAILABLE` | hash failure |
 
-- **Rules** — Creates org + admin user (`role=admin`, `status=active`). One account → one org model.
+- **Rules** — Creates org + admin user (`role=admin`, `status=active`, `must_change_password=0`). One account → one org model.
 - **Gotchas** — Does not create an employee row for the admin.
 
 ---
@@ -101,3 +102,28 @@ Callers: [`src/auth/AuthPages.tsx`](../../src/auth/AuthPages.tsx) (legacy), [`sr
 - **Response** — `{ user: AuthUser | null }`
 - **Errors** — `401` if `loadUser` returns null
 - **Rules** — Only `name` is updatable here. Wallet binding is under `/api/records/wallet/*`.
+
+---
+
+### POST /api/auth/change-password
+
+- **Auth** — JWT
+- **Source** — `api/src/routes/auth.ts`
+- **Client** — `api.changePassword` · callers: `ChangePasswordDialog`
+- **Request**
+
+  | Field | Type | Required | Notes |
+  |---|---|---|---|
+  | `newPassword` | string | yes | min 8 |
+  | `currentPassword` | string | when `must_change_password=false` | required for normal password updates |
+
+- **Response** — `{ ok: true, user: AuthUser }`
+- **Errors**
+
+  | Status | When |
+  |---|---|
+  | 400 | short new password / missing current password when required |
+  | 401 | wrong current password / unauthorized |
+  | 503 | `PASSWORD_HASH_UNAVAILABLE` |
+
+- **Rules** — Invite-created accounts (`must_change_password=true`) may set a new password without `currentPassword`. Clears `must_change_password` on success.

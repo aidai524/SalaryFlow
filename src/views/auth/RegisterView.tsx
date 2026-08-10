@@ -1,19 +1,10 @@
-import { ArrowRight } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { FieldGroup } from "@/components/ui/field";
-import { Separator } from "@/components/ui/separator";
 import { useRegisterMutation } from "@/hooks/use-auth-api";
 import { adminHomePath, useAuthStore } from "@/stores/auth";
-import { AuthError, AuthField, Brand, authErrorMessage } from "./auth-shared";
+import { AuthShell } from "./AuthShell";
+import { AuthError, AuthField, authErrorMessage, AUTH_BUTTON_CLASS, AUTH_CARD_CLASS } from "./auth-shared";
+import { AUTH_LINK_CLASS } from "./config";
 
 export function RegisterView() {
   const navigate = useNavigate();
@@ -46,73 +37,61 @@ export function RegisterView() {
   };
 
   return (
-    <main className="auth-screen">
-      <Card className="w-full max-w-md shadow-lg shadow-slate-900/5">
-        <CardHeader className="space-y-4">
-          <Brand />
-          <div className="space-y-1">
-            <CardTitle className="text-2xl">Create your account</CardTitle>
-            <CardDescription className="leading-6">
-              Create a workspace, then invite your team securely.
-            </CardDescription>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <form className="space-y-5" onSubmit={submit}>
-            <FieldGroup>
-              <AuthField
-                id="name"
-                label="Your name"
-                value={name}
-                onChange={setName}
-                placeholder="Lina Qiao"
-                autoFocus
-                autoComplete="name"
-              />
-              <AuthField
-                id="organization"
-                label="Organization name"
-                value={orgName}
-                onChange={setOrgName}
-                placeholder="Northstar Labs"
-              />
-              <AuthField
-                id="email"
-                label="Email"
-                type="email"
-                value={email}
-                onChange={setEmail}
-                placeholder="you@company.com"
-                autoComplete="email"
-              />
-              <AuthField
-                id="password"
-                label="Password"
-                type="password"
-                value={password}
-                onChange={setPassword}
-                placeholder="At least 8 characters"
-                autoComplete="new-password"
-              />
-            </FieldGroup>
-            <AuthError message={authErrorMessage(registerMutation.error, "")} />
-            <Button className="w-full" size="lg" type="submit" disabled={registerMutation.isPending}>
-              {registerMutation.isPending ? "Please wait…" : "Create account"}
-              {!registerMutation.isPending && <ArrowRight data-icon="inline-end" />}
-            </Button>
-          </form>
+    <AuthShell>
+      <form onSubmit={submit} className={AUTH_CARD_CLASS}>
+        <h1 className="text-center font-montserrat text-base font-semibold text-black">
+          Create account
+        </h1>
 
-          <Separator className="my-5" />
-          <div className="flex flex-col items-center gap-1 text-sm">
-            <Button variant="link" type="button" asChild>
-              <Link to="/login">Already have an account? Sign in</Link>
-            </Button>
-            <Button variant="link" type="button" asChild>
-              <Link to="/invite">Have an invitation link? Accept invitation</Link>
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-    </main>
+        <AuthField
+          id="name"
+          label="Your name"
+          value={name}
+          onChange={setName}
+          placeholder="Lina Qiao"
+          autoFocus
+          autoComplete="name"
+        />
+        <AuthField
+          id="organization"
+          label="Organization name"
+          value={orgName}
+          onChange={setOrgName}
+          placeholder="Northstar Labs"
+        />
+        <AuthField
+          id="email"
+          label="Email"
+          type="email"
+          value={email}
+          onChange={setEmail}
+          placeholder="you@company.com"
+          autoComplete="email"
+        />
+        <AuthField
+          id="password"
+          label="Password"
+          type="password"
+          value={password}
+          onChange={setPassword}
+          placeholder="At least 8 characters"
+          autoComplete="new-password"
+        />
+
+        <AuthError message={authErrorMessage(registerMutation.error, "")} />
+
+        <button
+          type="submit"
+          disabled={registerMutation.isPending}
+          className={AUTH_BUTTON_CLASS}
+        >
+          {registerMutation.isPending ? "Please wait…" : "Create account"}
+        </button>
+
+        <Link to="/login" className={`block ${AUTH_LINK_CLASS}`}>
+          Already have an account? Sign in
+        </Link>
+      </form>
+    </AuthShell>
   );
 }

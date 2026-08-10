@@ -136,6 +136,7 @@ Details: [`docs/api/payments.md`](api/payments.md).
 | POST | `/api/auth/logout` | public | [auth](api/auth.md) | `api/src/routes/auth.ts` | `api.logout` |
 | GET | `/api/auth/me` | JWT | [auth](api/auth.md) | `api/src/routes/auth.ts` | `api.me` |
 | PATCH | `/api/auth/me` | JWT | [auth](api/auth.md) | `api/src/routes/auth.ts` | `api.updateMe` |
+| POST | `/api/auth/change-password` | JWT | [auth](api/auth.md) | `api/src/routes/auth.ts` | `api.changePassword` |
 | GET | `/api/invites` | admin | [invites](api/invites.md) | `api/src/routes/invites.ts` | `api.listInvites` |
 | POST | `/api/invites` | admin | [invites](api/invites.md) | `api/src/routes/invites.ts` | `api.createInvite` |
 | GET | `/api/invites/resolve/:token` | public | [invites](api/invites.md) | `api/src/routes/invites.ts` | `api.resolveInvite` |

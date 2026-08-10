@@ -33,6 +33,7 @@ export interface UserRow {
   org_id: string | null;
   wallet_address: string | null;
   wallet_verified_at: string | null;
+  must_change_password: number;
   created_at: string;
 }
 
@@ -44,6 +45,7 @@ export interface AuthUser {
   org_id: string | null;
   wallet_address: string | null;
   wallet_verified: boolean;
+  must_change_password: boolean;
 }
 
 export interface JwtPayload {
@@ -63,6 +65,7 @@ export function toAuthUser(u: UserRow): AuthUser {
     org_id: u.org_id,
     wallet_address: u.wallet_address,
     wallet_verified: !!u.wallet_verified_at,
+    must_change_password: !!u.must_change_password,
   };
 }
 

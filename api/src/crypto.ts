@@ -48,6 +48,12 @@ export async function verifyPassword(password: string, stored: string): Promise<
   return diff === 0;
 }
 
+/** Cryptographically random password (never returned to clients). */
+export function generateRandomPassword(byteLength = 24): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(byteLength));
+  return toHex(bytes.buffer);
+}
+
 let hmacKeyPromise: Promise<CryptoKey> | null = null;
 let hmacSecret = "";
 
