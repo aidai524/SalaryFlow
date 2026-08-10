@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Archive, CalendarClock, ChevronRight, CircleDollarSign, FileUp, Pause, Pencil, Play, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { CalendarClock, ChevronRight, CircleDollarSign, FileUp, MoreHorizontal, Pause, Pencil, Play, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
@@ -301,6 +308,8 @@ export function PayrollPage({ user }: { user: AuthUser }) {
   const [createError, setCreateError] = useState<string | null>(null);
   const [editingSchedule, setEditingSchedule] = useState<PayrollSchedule | null>(null);
   const [archivingSchedule, setArchivingSchedule] = useState<PayrollSchedule | null>(null);
+  const [editingRun, setEditingRun] = useState<PayrollRun | null>(null);
+  const [archivingRun, setArchivingRun] = useState<PayrollRun | null>(null);
   const [scheduleActionError, setScheduleActionError] = useState<string | null>(null);
 
   const runs = data?.runs ?? [];
@@ -341,7 +350,7 @@ export function PayrollPage({ user }: { user: AuthUser }) {
       <PageHeader
         eyebrow="Payroll"
         title="Payroll runs"
-        description="Enter net amounts per employee, validate payout readiness, then send confidential mainnet payments when the API is unlocked."
+        description="Create a one-time payroll run or a weekly or monthly schedule. Every payment remains a reviewable draft until you approve it."
         actions={(
           <Button variant="outline" type="button" onClick={() => setShowCreate(true)}>
             <Plus data-icon="inline-start" />
@@ -367,32 +376,36 @@ export function PayrollPage({ user }: { user: AuthUser }) {
                   </div>
                   <p className="mt-1 text-xs text-muted-foreground">{CADENCE_LABELS[schedule.cadence]} · next pay date {schedule.next_pay_date}</p>
                 </div>
-                <div className="flex shrink-0 flex-wrap justify-end gap-2">
-                  <Button variant="outline" size="sm" type="button" onClick={() => setEditingSchedule(schedule)} aria-label={`Edit ${schedule.name}`}>
-                    <Pencil data-icon="inline-start" />Edit
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    type="button"
-                    onClick={async () => {
-                      setScheduleActionError(null);
-                      try {
-                        await api.updatePayrollSchedule(schedule.id, { active: !schedule.active });
-                        await refreshSchedules();
-                      } catch (error) {
-                        setScheduleActionError(error instanceof Error ? error.message : "Unable to update schedule");
-                      }
-                    }}
-                    aria-label={`${schedule.active ? "Pause" : "Resume"} ${schedule.name}`}
-                  >
-                    {schedule.active ? <Pause data-icon="inline-start" /> : <Play data-icon="inline-start" />}
-                    {schedule.active ? "Pause" : "Resume"}
-                  </Button>
-                  <Button variant="ghost" size="icon-sm" type="button" onClick={() => setArchivingSchedule(schedule)} aria-label={`Archive ${schedule.name}`}>
-                    <Archive />
-                  </Button>
-                </div>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" size="icon-sm" type="button" aria-label={`Manage recurring payroll ${schedule.name}`}>
+                      <MoreHorizontal aria-hidden="true" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="min-w-44">
+                    <DropdownMenuItem onSelect={() => setEditingSchedule(schedule)}>
+                      <Pencil aria-hidden="true" />Edit schedule
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onSelect={async () => {
+                        setScheduleActionError(null);
+                        try {
+                          await api.updatePayrollSchedule(schedule.id, { active: !schedule.active });
+                          await refreshSchedules();
+                        } catch (error) {
+                          setScheduleActionError(error instanceof Error ? error.message : "Unable to update schedule");
+                        }
+                      }}
+                    >
+                      {schedule.active ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}
+                      {schedule.active ? "Pause schedule" : "Resume schedule"}
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem variant="destructive" onSelect={() => setArchivingSchedule(schedule)}>
+                      <Trash2 aria-hidden="true" />Delete schedule
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
             ))}
             {scheduleActionError && <Alert className="md:col-span-2" variant="destructive"><AlertTitle>Schedule not updated</AlertTitle><AlertDescription>{scheduleActionError}</AlertDescription></Alert>}
@@ -422,7 +435,7 @@ export function PayrollPage({ user }: { user: AuthUser }) {
                   <TableHead>USDC</TableHead>
                   <TableHead>USDT</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead className="w-16 pr-4" />
+                  <TableHead className="w-24 pr-4 text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -452,8 +465,26 @@ export function PayrollPage({ user }: { user: AuthUser }) {
                     <TableCell className="tabular-nums">{formatTokenAmount(run.usdcMinor)}</TableCell>
                     <TableCell className="tabular-nums">{formatTokenAmount(run.usdtMinor)}</TableCell>
                     <TableCell><StatusBadge status={run.status} label={runStatusLabel(run.status)} /></TableCell>
-                    <TableCell className="pr-4 text-right">
-                      <ChevronRight className="ml-auto size-4 text-muted-foreground" aria-hidden="true" />
+                    <TableCell className="pr-4 text-right" onClick={(event) => event.stopPropagation()}>
+                      <span className="inline-flex items-center gap-1">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon-sm" type="button" aria-label={`Manage payroll run ${run.label}`}>
+                              <MoreHorizontal aria-hidden="true" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="min-w-44">
+                            <DropdownMenuItem disabled={run.status !== "draft"} onSelect={() => setEditingRun(run)}>
+                              <Pencil aria-hidden="true" />Edit run
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem disabled={run.status !== "draft"} variant="destructive" onSelect={() => setArchivingRun(run)}>
+                              <Trash2 aria-hidden="true" />Delete run
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                        <ChevronRight className="size-4 text-muted-foreground" aria-hidden="true" />
+                      </span>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -524,12 +555,26 @@ export function PayrollPage({ user }: { user: AuthUser }) {
         />
       )}
       <ScheduleEditDialog key={editingSchedule?.id ?? "closed-schedule"} schedule={editingSchedule} onOpenChange={(open) => { if (!open) setEditingSchedule(null); }} onSaved={refreshSchedules} />
+      <RunEditDialog key={editingRun?.id ?? "closed-list-run"} run={editingRun} onOpenChange={(open) => { if (!open) setEditingRun(null); }} onSaved={refresh} />
+      <ConfirmActionDialog
+        open={!!archivingRun}
+        onOpenChange={(open) => { if (!open) setArchivingRun(null); }}
+        title="Delete this payroll run?"
+        description="This draft will be removed from the payroll list. Its audit history will be retained, and any recurring schedule will continue creating future runs."
+        actionLabel="Delete run"
+        onConfirm={async () => {
+          if (!archivingRun) return;
+          await api.archiveRun(archivingRun.id);
+          if (selectedId === archivingRun.id) setSelectedId(null);
+          await refresh();
+        }}
+      />
       <ConfirmActionDialog
         open={!!archivingSchedule}
         onOpenChange={(open) => { if (!open) setArchivingSchedule(null); }}
-        title="Archive recurring payroll?"
+        title="Delete recurring payroll?"
         description="SalaryFlow will stop creating future drafts. Existing payroll runs and audit history will be retained."
-        actionLabel="Archive schedule"
+        actionLabel="Delete schedule"
         onConfirm={async () => {
           if (!archivingSchedule) return;
           await api.archivePayrollSchedule(archivingSchedule.id);
@@ -638,7 +683,7 @@ function RunDetail({ runId, employees, onChanged, onArchived }: { runId: string;
             {run.status === "draft" && <Button variant="outline" size="sm" type="button" onClick={() => setShowAdd((current) => !current)}>
               <Plus data-icon="inline-start" />Add payment
             </Button>}
-            {run.status === "draft" && <Button variant="ghost" size="icon-sm" type="button" onClick={() => setArchivingRun(true)} aria-label={`Archive ${run.label}`}><Archive /></Button>}
+            {run.status === "draft" && <Button variant="ghost" size="icon-sm" type="button" onClick={() => setArchivingRun(true)} aria-label={`Delete ${run.label}`}><Trash2 /></Button>}
           </div>
         </CardAction>
       </CardHeader>
@@ -786,9 +831,9 @@ function RunDetail({ runId, employees, onChanged, onArchived }: { runId: string;
       <ConfirmActionDialog
         open={archivingRun}
         onOpenChange={setArchivingRun}
-        title="Archive this payroll run?"
+        title="Delete this payroll run?"
         description="The draft will leave the active payroll list. Its audit history will be retained."
-        actionLabel="Archive run"
+        actionLabel="Delete run"
         onConfirm={async () => { await api.archiveRun(runId); await onArchived(); }}
       />
     </Card>
