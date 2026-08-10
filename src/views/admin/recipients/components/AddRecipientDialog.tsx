@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { PayoutOwnershipActions } from "@/components/PayoutOwnershipActions";
 import {
   Dialog,
   DialogContent,
@@ -14,20 +16,31 @@ import {
 } from "@/components/ui/select";
 import { PHASE1_CHAINS } from "@/config/chains";
 import {
+  myPayoutQueryKey,
+  useUpdateMyProfileMutation,
+} from "@/hooks/use-employee-api";
+import { usePayoutOwnership } from "@/hooks/use-payout-ownership";
+import {
+  employeeDetailQueryKey,
   useCreateEmployeeMutation,
   useUpdateEmployeeMutation,
 } from "@/hooks/use-recipients-api";
 import useToast from "@/hooks/use-toast";
 import {
+  api,
   type ContractorPaymentCadence,
   type Employee,
   type EmployeeType,
+  type MyPayout,
   type RecipientRoleTitle,
   type TeamPaymentDateKey,
   type TeamPaymentSchedule,
 } from "@/lib/api";
 import { formatTokenMinor } from "@/lib/format";
+import { notifyPayoutUpdated } from "@/lib/payout-events";
+import { preventRainbowKitDialogDismiss } from "@/lib/rainbowkit-overlay";
 import { cn } from "@/lib/utils";
+import { useAuthStore } from "@/stores/auth";
 import {
   defaultPaymentDateForSchedule,
   paymentDateOptionsForSchedule,
@@ -38,6 +51,53 @@ import {
   TOKEN_OPTIONS,
 } from "../config";
 
+function toSavedPayout(emp: Employee, totalReceivedMinor = 0): MyPayout {
+  return {
+    id: emp.id,
+    name: emp.name,
+    email: emp.email,
+    role_title: emp.role_title,
+    employee_type: emp.employee_type,
+    token: emp.token,
+    network: emp.network,
+    amount_minor: emp.amount_minor,
+    endpoint: emp.endpoint,
+    status: emp.status,
+    payout_verified_at: emp.payout_verified_at,
+    last_paid_at: emp.last_paid_at,
+    created_at: emp.created_at,
+    payment_cadence: emp.payment_cadence,
+    payment_date_key: emp.payment_date_key,
+    nextPayday: emp.nextPayday,
+    nextPaydayDisplay: emp.nextPaydayDisplay,
+    totalReceivedMinor,
+  };
+}
+
+function employeeFromMyPayout(payout: MyPayout, userId: string | null): Employee {
+  return {
+    id: payout.id,
+    user_id: userId,
+    email: payout.email,
+    name: payout.name,
+    role_title: payout.role_title || "",
+    location: "",
+    employee_type: payout.employee_type,
+    token: payout.token,
+    network: payout.network,
+    amount_minor: payout.amount_minor,
+    endpoint: payout.endpoint,
+    status: payout.status,
+    payout_verified_at: payout.payout_verified_at,
+    last_paid_at: payout.last_paid_at,
+    created_at: payout.created_at,
+    payment_cadence: payout.payment_cadence,
+    payment_date_key: payout.payment_date_key,
+    nextPayday: payout.nextPayday,
+    nextPaydayDisplay: payout.nextPaydayDisplay,
+  };
+}
+
 const SELECT_ICON = (
   <img src="/icons/to-down.svg" alt="" width={10} height={4} className="pointer-events-none size-auto shrink-0" />
 );
@@ -46,6 +106,8 @@ export interface AddRecipientDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   mode: "add" | "edit";
+  /** admin = full form; self = employee profile edit (limited fields). */
+  variant?: "admin" | "self";
   employee?: Employee | null;
   teamCadence: TeamPaymentSchedule;
   teamPaymentDate: TeamPaymentDateKey;
@@ -112,23 +174,146 @@ export function AddRecipientDialog({
   open,
   onOpenChange,
   mode,
+  variant = "admin",
   employee,
   teamCadence,
   teamPaymentDate,
 }: AddRecipientDialogProps) {
   const toast = useToast();
+  const queryClient = useQueryClient();
+  const setUser = useAuthStore((s) => s.setUser);
+  const user = useAuthStore((s) => s.user);
+  const orgId = useAuthStore((s) => s.orgId);
   const createMutation = useCreateEmployeeMutation();
   const updateMutation = useUpdateEmployeeMutation();
+  const selfUpdateMutation = useUpdateMyProfileMutation();
+  const isSelf = variant === "self";
   const [form, setForm] = useState<FormState>(() => emptyForm(teamCadence, teamPaymentDate));
+  const [savedPayout, setSavedPayout] = useState<MyPayout | null>(null);
+  const [needsVerify, setNeedsVerify] = useState(false);
+  const [formReady, setFormReady] = useState(false);
+  const [loadError, setLoadError] = useState("");
+
+  // Fetch latest profile whenever the dialog opens (admin GET by id / employee myPayout).
+  useEffect(() => {
+    if (!open) {
+      setFormReady(false);
+      setLoadError("");
+      return;
+    }
+
+    let cancelled = false;
+
+    const seedFromEmployee = (emp: Employee, payout?: MyPayout | null) => {
+      setForm(fromEmployee(emp, teamCadence, teamPaymentDate));
+      if (isSelf) {
+        const next = payout ?? toSavedPayout(emp);
+        setSavedPayout(next);
+        setNeedsVerify(!(next.payout_verified_at && next.status === "ready"));
+      } else {
+        setSavedPayout(null);
+        setNeedsVerify(false);
+      }
+    };
+
+    (async () => {
+      setFormReady(false);
+      setLoadError("");
+      try {
+        if (mode === "add") {
+          if (cancelled) return;
+          setForm(emptyForm(teamCadence, teamPaymentDate));
+          setSavedPayout(null);
+          setNeedsVerify(false);
+          setFormReady(true);
+          return;
+        }
+
+        if (isSelf) {
+          const data = await queryClient.fetchQuery({
+            queryKey: myPayoutQueryKey(orgId),
+            queryFn: () => api.myPayout(),
+          });
+          if (cancelled) return;
+          if (!data.payout) {
+            setLoadError("Unable to load your profile");
+            setFormReady(true);
+            return;
+          }
+          seedFromEmployee(
+            employeeFromMyPayout(data.payout, user?.id ?? null),
+            data.payout,
+          );
+          setFormReady(true);
+          return;
+        }
+
+        const employeeId = employee?.id;
+        if (!employeeId) {
+          setLoadError("Employee not found");
+          setFormReady(true);
+          return;
+        }
+        const data = await queryClient.fetchQuery({
+          queryKey: employeeDetailQueryKey(orgId, employeeId),
+          queryFn: () => api.getEmployee(employeeId),
+        });
+        if (cancelled) return;
+        seedFromEmployee(data.employee);
+        setFormReady(true);
+      } catch (cause) {
+        if (cancelled) return;
+        setLoadError(cause instanceof Error ? cause.message : "Unable to load profile");
+        // Fallback to prop so the dialog is still usable offline-ish.
+        if (mode === "edit" && employee) {
+          seedFromEmployee(employee, isSelf ? toSavedPayout(employee) : null);
+        }
+        setFormReady(true);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // Intentionally seed only when the dialog opens or the edit target changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, mode, isSelf, employee?.id]);
+
+  const setEndpoint = (value: string) => {
+    setForm((prev) => ({ ...prev, endpoint: value }));
+  };
+
+  const ownership = usePayoutOwnership({
+    token: form.token,
+    network: form.network,
+    endpoint: form.endpoint,
+    setEndpoint,
+    savedPayout,
+    onVerified: async (next) => {
+      setSavedPayout(next);
+      setNeedsVerify(false);
+      notifyPayoutUpdated();
+      if (user) {
+        setUser({
+          ...user,
+          name: next.name || user.name,
+          email: next.email || user.email,
+          wallet_address: next.endpoint,
+          wallet_verified: true,
+        });
+      }
+      toast.success({ title: "Wallet ownership verified" });
+      onOpenChange(false);
+    },
+    onDirty: () => setNeedsVerify(true),
+  });
 
   useEffect(() => {
-    if (!open) return;
-    if (mode === "edit" && employee) {
-      setForm(fromEmployee(employee, teamCadence, teamPaymentDate));
-    } else {
-      setForm(emptyForm(teamCadence, teamPaymentDate));
-    }
-  }, [open, mode, employee, teamCadence, teamPaymentDate]);
+    ownership.setNotice("");
+    ownership.setError("");
+    // Reset prompt state whenever the dialog opens/closes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   const isEmployee = form.employee_type === "employee";
   const scheduleLocked = isEmployee;
@@ -143,10 +328,20 @@ export function AddRecipientDialog({
   const displayCadence = isEmployee ? teamCadence : form.payment_cadence;
   const displayDate = isEmployee ? teamPaymentDate : form.payment_date_key;
 
-  const busy = createMutation.isPending || updateMutation.isPending;
+  const busy =
+    !formReady
+    || createMutation.isPending
+    || updateMutation.isPending
+    || selfUpdateMutation.isPending
+    || ownership.verifying;
 
   const setField = <K extends keyof FormState>(key: K, value: FormState[K]) => {
     setForm((prev) => ({ ...prev, [key]: value }));
+    if (isSelf && (key === "token" || key === "network" || key === "endpoint")) {
+      setNeedsVerify(true);
+      ownership.setNotice("");
+      ownership.setError("");
+    }
   };
 
   const onTypeChange = (type: EmployeeType) => {
@@ -169,7 +364,45 @@ export function AddRecipientDialog({
     }));
   };
 
-  const submit = async (event: FormEvent) => {
+  const submitSelf = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!form.name.trim()) {
+      toast.fail({ title: "Name is required" });
+      return;
+    }
+    if (!form.token || !form.network) {
+      toast.fail({ title: "Token and network are required" });
+      return;
+    }
+    if (!form.endpoint.trim()) {
+      toast.fail({ title: "Wallet address is required" });
+      return;
+    }
+
+    try {
+      const result = await selfUpdateMutation.mutateAsync({
+        name: form.name.trim(),
+        email: form.email.trim() || null,
+        token: form.token,
+        network: form.network,
+        endpoint: form.endpoint.trim(),
+      });
+      if (result.payout) setSavedPayout(result.payout);
+      if (result.payoutChanged) {
+        setNeedsVerify(true);
+        toast.info({ title: "Profile saved. Verify wallet ownership to activate payout." });
+        return;
+      }
+      toast.success({ title: "Profile updated" });
+      onOpenChange(false);
+    } catch (cause) {
+      toast.fail({
+        title: cause instanceof Error ? cause.message : "Failed to save profile",
+      });
+    }
+  };
+
+  const submitAdmin = async (event: FormEvent) => {
     event.preventDefault();
     if (!form.name.trim()) {
       toast.fail({ title: "Name is required" });
@@ -217,19 +450,46 @@ export function AddRecipientDialog({
     }
   };
 
+  const title = isSelf
+    ? "Edit Profile"
+    : mode === "edit"
+      ? "Edit Recipient"
+      : "Add Recipient";
+  const submitLabel = isSelf
+    ? "Save"
+    : mode === "edit"
+      ? "Update"
+      : "Add Recipient";
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         showCloseButton
         className="max-h-[90vh] max-w-[600px] gap-0 overflow-y-auto rounded-[24px] p-0 sm:max-w-[600px]"
+        onPointerDownOutside={isSelf ? preventRainbowKitDialogDismiss : undefined}
+        onInteractOutside={isSelf ? preventRainbowKitDialogDismiss : undefined}
+        onFocusOutside={isSelf ? preventRainbowKitDialogDismiss : undefined}
       >
         <DialogHeader className="px-6 pt-6 pb-2">
           <DialogTitle className="font-montserrat text-[20px] font-semibold text-black">
-            {mode === "edit" ? "Edit Recipient" : "Add Recipient"}
+            {title}
           </DialogTitle>
         </DialogHeader>
 
-        <form onSubmit={submit} className="px-6 pb-6">
+        <form onSubmit={isSelf ? submitSelf : submitAdmin} className="px-6 pb-6">
+          {!formReady ? (
+            <p className="py-16 text-center font-montserrat text-[14px] text-[#909090]">
+              Loading profile…
+            </p>
+          ) : null}
+
+          {formReady && loadError ? (
+            <p className="mb-4 rounded-[12px] bg-[#fff1f1] px-3 py-2 font-montserrat text-[12px] text-red-600">
+              {loadError}. Showing last known values.
+            </p>
+          ) : null}
+
+          <div className={cn(!formReady && "pointer-events-none invisible h-0 overflow-hidden")}>
           <div className="mb-5 flex flex-col items-center">
             <button
               type="button"
@@ -252,38 +512,44 @@ export function AddRecipientDialog({
                 required
               />
             </Field>
-            <Field label="Type">
-              <Select
-                value={form.employee_type}
-                onValueChange={(v) => onTypeChange(v as EmployeeType)}
-              >
-                <SelectTrigger icon={SELECT_ICON} className={selectTriggerClass}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="employee">Employee</SelectItem>
-                  <SelectItem value="contractor">Contractor</SelectItem>
-                </SelectContent>
-              </Select>
-            </Field>
-            <Field label="Role">
-              <Select
-                value={form.role_title}
-                onValueChange={(v) => setField("role_title", v as RecipientRoleTitle)}
-              >
-                <SelectTrigger icon={SELECT_ICON} className={selectTriggerClass}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {ROLE_OPTIONS.map((opt) => (
-                    <SelectItem key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
-            <Field label="Email">
+
+            {!isSelf && (
+              <>
+                <Field label="Type">
+                  <Select
+                    value={form.employee_type}
+                    onValueChange={(v) => onTypeChange(v as EmployeeType)}
+                  >
+                    <SelectTrigger icon={SELECT_ICON} className={selectTriggerClass}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="employee">Employee</SelectItem>
+                      <SelectItem value="contractor">Contractor</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </Field>
+                <Field label="Role">
+                  <Select
+                    value={form.role_title}
+                    onValueChange={(v) => setField("role_title", v as RecipientRoleTitle)}
+                  >
+                    <SelectTrigger icon={SELECT_ICON} className={selectTriggerClass}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {ROLE_OPTIONS.map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+              </>
+            )}
+
+            <Field label="Email" className={isSelf ? "sm:col-span-2" : undefined}>
               <input
                 type="email"
                 value={form.email}
@@ -292,69 +558,75 @@ export function AddRecipientDialog({
                 placeholder="name@company.com"
               />
             </Field>
-            <Field label="Compensation">
-              <div className="relative">
-                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 font-montserrat text-[14px] text-[#909090]">
-                  $
-                </span>
-                <input
-                  value={form.amount}
-                  onChange={(e) => setField("amount", e.target.value)}
-                  className={cn(fieldInputClass, "pl-7")}
-                  placeholder="5,000"
-                  inputMode="decimal"
-                  required
-                />
-              </div>
-            </Field>
-            <Field label="Schedule">
-              <Select
-                value={displayCadence}
-                onValueChange={(v) => onScheduleChange(v as ContractorPaymentCadence)}
-                disabled={scheduleLocked}
-              >
-                <SelectTrigger
-                  icon={SELECT_ICON}
-                  className={cn(selectTriggerClass, scheduleLocked && "opacity-60")}
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {(isEmployee
-                    ? CONTRACTOR_SCHEDULE_OPTIONS.filter((o) => o.value !== "on_demand")
-                    : CONTRACTOR_SCHEDULE_OPTIONS
-                  ).map((opt) => (
-                    <SelectItem key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
-            {(isEmployee || showPaymentDate) && (
-              <Field label="Payment Date">
-                <Select
-                  value={displayDate}
-                  onValueChange={(v) => setField("payment_date_key", v as TeamPaymentDateKey)}
-                  disabled={scheduleLocked}
-                >
-                  <SelectTrigger
-                    icon={SELECT_ICON}
-                    className={cn(selectTriggerClass, scheduleLocked && "opacity-60")}
+
+            {!isSelf && (
+              <>
+                <Field label="Compensation">
+                  <div className="relative">
+                    <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 font-montserrat text-[14px] text-[#909090]">
+                      $
+                    </span>
+                    <input
+                      value={form.amount}
+                      onChange={(e) => setField("amount", e.target.value)}
+                      className={cn(fieldInputClass, "pl-7")}
+                      placeholder="5,000"
+                      inputMode="decimal"
+                      required
+                    />
+                  </div>
+                </Field>
+                <Field label="Schedule">
+                  <Select
+                    value={displayCadence}
+                    onValueChange={(v) => onScheduleChange(v as ContractorPaymentCadence)}
+                    disabled={scheduleLocked}
                   >
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {dateOptions.map((opt) => (
-                      <SelectItem key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
+                    <SelectTrigger
+                      icon={SELECT_ICON}
+                      className={cn(selectTriggerClass, scheduleLocked && "opacity-60")}
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(isEmployee
+                        ? CONTRACTOR_SCHEDULE_OPTIONS.filter((o) => o.value !== "on_demand")
+                        : CONTRACTOR_SCHEDULE_OPTIONS
+                      ).map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+                {(isEmployee || showPaymentDate) && (
+                  <Field label="Payment Date">
+                    <Select
+                      value={displayDate}
+                      onValueChange={(v) => setField("payment_date_key", v as TeamPaymentDateKey)}
+                      disabled={scheduleLocked}
+                    >
+                      <SelectTrigger
+                        icon={SELECT_ICON}
+                        className={cn(selectTriggerClass, scheduleLocked && "opacity-60")}
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {dateOptions.map((opt) => (
+                          <SelectItem key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                )}
+              </>
             )}
-            <Field label="Token">
+
+            <Field label={isSelf ? "Received Token (Required)" : "Token"}>
               <Select
                 value={form.token}
                 onValueChange={(v) => setField("token", v as "USDC" | "USDT")}
@@ -371,7 +643,7 @@ export function AddRecipientDialog({
                 </SelectContent>
               </Select>
             </Field>
-            <Field label="Network">
+            <Field label={isSelf ? "Network (Required)" : "Network"}>
               <Select value={form.network} onValueChange={(v) => setField("network", v)}>
                 <SelectTrigger icon={SELECT_ICON} className={selectTriggerClass}>
                   <SelectValue />
@@ -385,23 +657,57 @@ export function AddRecipientDialog({
                 </SelectContent>
               </Select>
             </Field>
-            <Field label="Wallet" className="sm:col-span-2">
+            <Field
+              label={isSelf ? "Wallet Address (Required)" : "Wallet"}
+              className="sm:col-span-2"
+            >
               <input
                 value={form.endpoint}
                 onChange={(e) => setField("endpoint", e.target.value)}
                 className={fieldInputClass}
                 placeholder="0x…"
+                required={isSelf}
               />
             </Field>
           </div>
+
+          {isSelf && (needsVerify || !ownership.ownershipVerified) && (
+            <div className="mt-5 rounded-[16px] border border-black/10 bg-[#f6f6f6] p-4">
+              <p className="font-montserrat text-[14px] font-medium text-black">
+                Verify wallet ownership
+              </p>
+              <p className="mt-1 font-montserrat text-[12px] leading-5 text-[#606060]">
+                Sign a one-time message to prove you control this address. It cannot move funds.
+              </p>
+              <PayoutOwnershipActions
+                ownershipVerified={ownership.ownershipVerified}
+                connectedAddressMatches={ownership.connectedAddressMatches}
+                isConnected={ownership.isConnected}
+                address={ownership.address}
+                verifiedEndpoint={ownership.verifiedEndpoint}
+                verifying={ownership.verifying}
+                onConnect={ownership.connectWallet}
+                onChangeWallet={ownership.changeConnectedWallet}
+                onUseAddress={ownership.useConnectedAddress}
+                onVerify={ownership.verifyWallet}
+              />
+              {ownership.error ? (
+                <p className="mt-2 font-montserrat text-[12px] text-red-600">{ownership.error}</p>
+              ) : null}
+              {ownership.notice ? (
+                <p className="mt-2 font-montserrat text-[12px] text-[#0cb400]">{ownership.notice}</p>
+              ) : null}
+            </div>
+          )}
 
           <button
             type="submit"
             disabled={busy}
             className="mt-6 inline-flex h-12 w-full items-center justify-center rounded-[24px] bg-black font-montserrat text-[15px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
           >
-            {busy ? "Saving…" : mode === "edit" ? "Update" : "Add Recipient"}
+            {!formReady ? "Loading…" : busy ? "Saving…" : submitLabel}
           </button>
+          </div>
         </form>
       </DialogContent>
     </Dialog>

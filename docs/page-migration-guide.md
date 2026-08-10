@@ -43,7 +43,7 @@ Do not put Chinese in React components, hooks, stores, API clients, or user-faci
 | Overview | `/overview` | `src/views/admin/OverviewView.tsx` |
 | Create team | `/teams/create` | `src/views/admin/CreateTeamView.tsx` |
 | Payment history | `/payments` | `src/views/admin/PaymentHistoryView.tsx` |
-| My pay (employee) | `/my-pay` | `src/views/employee/MyPayView.tsx` |
+| My pay (employee) | `/my-pay` | `src/views/employee/MyPayView.tsx` (Figma Decash employee home) |
 
 Auth API hooks: `src/hooks/use-auth-api.ts`. Session writes go through `useAuthStore.applyAuthedUser`.
 

@@ -1,11 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAccount, useSignMessage } from "wagmi";
 import { useOpenWalletModal } from "@/hooks/use-open-wallet-modal";
-import { api, ApiError, type Employee } from "@/lib/api";
+import { api, ApiError, type MyPayout } from "@/lib/api";
 import { isValidEthereumAddress } from "@/lib/erc191";
 
 type SavedPayout = Pick<
-  Employee,
+  MyPayout,
   "token" | "network" | "endpoint" | "status" | "payout_verified_at"
 >;
 
@@ -23,7 +23,7 @@ export function usePayoutOwnership({
   endpoint: string;
   setEndpoint: (value: string) => void;
   savedPayout: SavedPayout | null | undefined;
-  onVerified?: (payout: Employee) => void | Promise<void>;
+  onVerified?: (payout: MyPayout) => void | Promise<void>;
   onDirty?: () => void;
 }) {
   const { openWalletModal, isConnected } = useOpenWalletModal();
@@ -47,6 +47,16 @@ export function usePayoutOwnership({
     && savedPayout?.status === "ready"
     && savedPayout.payout_verified_at,
   );
+
+  // Drop stale "verified / ready" copy when the form no longer matches a verified payout.
+  useEffect(() => {
+    if (ownershipVerified) return;
+    setNotice((prev) => {
+      if (!prev) return prev;
+      const staleSuccess = /ownership verified|payout method is ready|already verified/i.test(prev);
+      return staleSuccess ? "" : prev;
+    });
+  }, [token, network, endpoint, ownershipVerified]);
 
   const connectWallet = () => {
     setError("");
@@ -105,8 +115,9 @@ export function usePayoutOwnership({
         signature,
       });
       setEndpoint(result.payout.endpoint);
-      setNotice("Wallet ownership verified. This payout method is ready.");
       await onVerified?.(result.payout);
+      // Only show success after parent has accepted the verified payout.
+      setNotice("Wallet ownership verified. This payout method is ready.");
     } catch (cause) {
       setError(
         cause instanceof ApiError

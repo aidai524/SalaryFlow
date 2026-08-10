@@ -1,17 +1,12 @@
 import { useState } from "react";
 import { useAccount, useDisconnect, useSignMessage } from "wagmi";
-import { AlertCircle, ShieldCheck, WalletCards } from "lucide-react";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
+import { IconCheck } from "@/components/icons/check";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { StatusBadge } from "@/components/WorkspaceUI";
 import { useOpenWalletModal } from "@/hooks/use-open-wallet-modal";
 import { formatAddress } from "@/lib/address";
 import { api, ApiError, type AuthUser } from "@/lib/api";
@@ -23,8 +18,8 @@ export function WalletConnectDialog({
   onClose,
   onBound,
   onUnbound,
-  title = "Account wallet",
-  description = "Bind one EVM wallet to this email account. Ownership is proven by a one-time message that cannot initiate a transaction.",
+  title = "Payment wallet",
+  description = "Bind one EVM wallet to this account. Ownership is proven by a one-time message that cannot initiate a transaction.",
 }: {
   user: AuthUser;
   onClose: () => void;
@@ -77,82 +72,109 @@ export function WalletConnectDialog({
   return (
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent
-        className="sm:max-w-lg"
+        showCloseButton
+        className="max-w-[440px] gap-0 overflow-hidden rounded-[24px] p-0 sm:max-w-[440px]"
         onPointerDownOutside={preventRainbowKitDialogDismiss}
         onInteractOutside={preventRainbowKitDialogDismiss}
         onFocusOutside={preventRainbowKitDialogDismiss}
       >
-        <DialogHeader className="pr-8">
-          <span className="mb-1 grid size-10 place-items-center rounded-xl bg-primary/10 text-primary">
-            <WalletCards className="size-5" />
-          </span>
-          <DialogTitle className="text-lg">{title}</DialogTitle>
-          <DialogDescription className="leading-6">{description}</DialogDescription>
+        <DialogHeader className="px-6 pt-6 pb-2">
+          <DialogTitle className="font-montserrat text-[20px] font-semibold text-black">
+            {title}
+          </DialogTitle>
+          <p className="mt-1 font-montserrat text-[13px] leading-5 text-[#606060]">
+            {description}
+          </p>
         </DialogHeader>
 
-        {boundAddress ? (
-          <div className="space-y-4">
-            <div className="rounded-lg border bg-muted/20 p-4">
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-sm font-medium">Verified wallet</span>
-                <StatusBadge status="ready" label="Ownership verified" />
+        <div className="space-y-4 px-6 pb-6">
+          {boundAddress ? (
+            <>
+              <div className="rounded-[16px] border border-black/10 bg-[#f6f6f6] p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-montserrat text-[14px] font-medium text-black">
+                    Verified wallet
+                  </span>
+                  <span className="inline-flex h-6 items-center gap-1 rounded-[12px] bg-[#0ed000]/10 px-2 font-montserrat text-[12px] text-[#0cb400]">
+                    <IconCheck className="size-2" />
+                    Verified
+                  </span>
+                </div>
+                <p className="mt-3 break-all font-montserrat text-[14px] text-black">
+                  {boundAddress}
+                </p>
+                <p className="mt-2 font-montserrat text-[12px] leading-5 text-[#606060]">
+                  This address is the only wallet currently linked to this account.
+                </p>
               </div>
-              <p className="mono-value mt-4 break-all text-sm">{boundAddress}</p>
-              <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                This address is the only wallet currently linked to this account.
-              </p>
-            </div>
-            {error && (
-              <Alert variant="destructive">
-                <AlertCircle />
-                <AlertTitle>Wallet update failed</AlertTitle>
-                <AlertDescription>{error}</AlertDescription>
-              </Alert>
-            )}
-            <DialogFooter>
-              <Button variant="outline" type="button" onClick={removeBinding}>Use a different wallet</Button>
-              <Button type="button" onClick={onClose}>Done</Button>
-            </DialogFooter>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <Button type="button" variant="outline" className="flex-1" onClick={connectOrSwitch}>
-                <WalletCards data-icon="inline-start" />
+              {error ? (
+                <p className="font-montserrat text-[12px] text-red-600">{error}</p>
+              ) : null}
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <button
+                  type="button"
+                  onClick={removeBinding}
+                  className="inline-flex h-12 flex-1 items-center justify-center rounded-[24px] border border-black/15 bg-white font-montserrat text-[15px] font-medium text-black transition-colors hover:bg-black/5"
+                >
+                  Use a different wallet
+                </button>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="inline-flex h-12 flex-1 items-center justify-center rounded-[24px] bg-black font-montserrat text-[15px] font-medium text-white transition-opacity hover:opacity-90"
+                >
+                  Done
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={connectOrSwitch}
+                className="inline-flex h-12 w-full items-center justify-center rounded-[24px] border border-black/15 bg-white font-montserrat text-[15px] font-medium text-black transition-colors hover:bg-black/5"
+              >
                 {isConnected ? "Switch wallet" : "Connect wallet"}
-              </Button>
-            </div>
+              </button>
 
-            {address && (
-              <div className="rounded-lg border bg-muted/20 p-3">
-                <p className="text-xs text-muted-foreground">Connected address</p>
-                <p className="mono-value mt-1 break-all text-sm">{address}</p>
-                <p className="mt-1 text-xs text-muted-foreground">{formatAddress(address)}</p>
+              {address ? (
+                <div className="rounded-[16px] border border-black/10 bg-[#f6f6f6] p-4">
+                  <p className="font-montserrat text-[12px] text-[#606060]">Connected address</p>
+                  <p className="mt-1 break-all font-montserrat text-[14px] text-black">{address}</p>
+                  <p className="mt-1 font-montserrat text-[12px] text-[#909090]">
+                    {formatAddress(address)}
+                  </p>
+                </div>
+              ) : null}
+
+              {error ? (
+                <p className="font-montserrat text-[12px] text-red-600">{error}</p>
+              ) : null}
+
+              <p className="font-montserrat text-[12px] leading-5 text-[#606060]">
+                The one-time message cannot transfer funds or authorize a payroll payment.
+              </p>
+
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="inline-flex h-12 flex-1 items-center justify-center rounded-[24px] border border-black/15 bg-white font-montserrat text-[15px] font-medium text-black transition-colors hover:bg-black/5"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={!address || verifying}
+                  onClick={bind}
+                  className="inline-flex h-12 flex-1 items-center justify-center rounded-[24px] bg-black font-montserrat text-[15px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+                >
+                  {verifying ? "Waiting…" : "Verify ownership"}
+                </button>
               </div>
-            )}
-            {error && (
-              <Alert variant="destructive">
-                <AlertCircle />
-                <AlertTitle>Wallet verification failed</AlertTitle>
-                <AlertDescription>{error}</AlertDescription>
-              </Alert>
-            )}
-
-            <Alert>
-              <ShieldCheck />
-              <AlertTitle>Ownership signature only</AlertTitle>
-              <AlertDescription>The one-time message cannot transfer funds or authorize a payroll payment.</AlertDescription>
-            </Alert>
-
-            <DialogFooter>
-              <Button variant="outline" type="button" onClick={onClose}>Cancel</Button>
-              <Button type="button" disabled={!address || verifying} onClick={bind}>
-                <ShieldCheck data-icon="inline-start" />
-                {verifying ? "Waiting for signature…" : "Verify ownership"}
-              </Button>
-            </DialogFooter>
-          </div>
-        )}
+            </>
+          )}
+        </div>
       </DialogContent>
     </Dialog>
   );

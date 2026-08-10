@@ -1,21 +1,17 @@
 import { useEffect, useState } from "react";
-import { AlertCircle, ShieldCheck, WalletCards } from "lucide-react";
 import { PayoutOwnershipActions } from "@/components/PayoutOwnershipActions";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
+import { IconCheck } from "@/components/icons/check";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { StatusBadge } from "@/components/WorkspaceUI";
 import { usePayoutOwnership } from "@/hooks/use-payout-ownership";
-import { api, ApiError, type Employee } from "@/lib/api";
+import { api, ApiError, type MyPayout } from "@/lib/api";
 import { notifyPayoutUpdated } from "@/lib/payout-events";
 import { preventRainbowKitDialogDismiss } from "@/lib/rainbowkit-overlay";
+import { cn } from "@/lib/utils";
 
 export function EmployeePayoutWalletDialog({
   onClose,
@@ -24,7 +20,7 @@ export function EmployeePayoutWalletDialog({
   onClose: () => void;
   onBound: (address: string) => void;
 }) {
-  const [payout, setPayout] = useState<Employee | null>(null);
+  const [payout, setPayout] = useState<MyPayout | null>(null);
   const [endpoint, setEndpoint] = useState("");
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -68,94 +64,109 @@ export function EmployeePayoutWalletDialog({
   return (
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent
-        className="sm:max-w-xl"
+        showCloseButton
+        className="max-w-[440px] gap-0 overflow-hidden rounded-[24px] p-0 sm:max-w-[440px]"
         onPointerDownOutside={preventRainbowKitDialogDismiss}
         onInteractOutside={preventRainbowKitDialogDismiss}
         onFocusOutside={preventRainbowKitDialogDismiss}
       >
-        <DialogHeader className="pr-8">
-          <span className="mb-1 grid size-10 place-items-center rounded-xl bg-primary/10 text-primary">
-            <WalletCards className="size-5" />
-          </span>
-          <DialogTitle className="text-lg">Payout wallet</DialogTitle>
-          <DialogDescription className="leading-6">
+        <DialogHeader className="px-6 pt-6 pb-2">
+          <DialogTitle className="font-montserrat text-[20px] font-semibold text-black">
+            Payout wallet
+          </DialogTitle>
+          <p className="mt-1 font-montserrat text-[13px] leading-5 text-[#606060]">
             Verify the EVM wallet that receives your pay. Ownership is proven by a one-time message that cannot move funds.
-          </DialogDescription>
+          </p>
         </DialogHeader>
 
-        {loading ? (
-          <p className="text-sm text-muted-foreground">Loading payout method…</p>
-        ) : loadError ? (
-          <div className="space-y-4">
-            <Alert variant="destructive">
-              <AlertCircle />
-              <AlertTitle>Unable to load payout method</AlertTitle>
-              <AlertDescription>{loadError}</AlertDescription>
-            </Alert>
-            <DialogFooter>
-              <Button type="button" onClick={onClose}>Done</Button>
-            </DialogFooter>
-          </div>
-        ) : !payout ? (
-          <div className="space-y-4">
-            <Alert>
-              <AlertCircle />
-              <AlertTitle>Payout method not set up</AlertTitle>
-              <AlertDescription>
-                Choose your stablecoin and network on the Payout method page before verifying a wallet here.
-              </AlertDescription>
-            </Alert>
-            <DialogFooter>
-              <Button type="button" onClick={onClose}>Done</Button>
-            </DialogFooter>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            <div className="rounded-lg border bg-muted/20 p-4">
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-sm font-medium">Verify wallet ownership</span>
-                <StatusBadge
-                  status={ownership.ownershipVerified ? "ready" : "update_required"}
-                  label={ownership.ownershipVerified ? "Ready" : "Needs verification"}
+        <div className="px-6 pb-6">
+          {loading ? (
+            <p className="py-6 font-montserrat text-[14px] text-[#909090]">Loading payout method…</p>
+          ) : loadError ? (
+            <div className="space-y-4">
+              <p className="rounded-[16px] bg-[#fff1f1] px-4 py-3 font-montserrat text-[13px] text-red-600">
+                {loadError}
+              </p>
+              <button
+                type="button"
+                onClick={onClose}
+                className="inline-flex h-12 w-full items-center justify-center rounded-[24px] bg-black font-montserrat text-[15px] font-medium text-white"
+              >
+                Done
+              </button>
+            </div>
+          ) : !payout ? (
+            <div className="space-y-4">
+              <p className="rounded-[16px] bg-[#f6f6f6] px-4 py-3 font-montserrat text-[13px] text-[#606060]">
+                Choose your stablecoin and network on Edit Profile before verifying a wallet here.
+              </p>
+              <button
+                type="button"
+                onClick={onClose}
+                className="inline-flex h-12 w-full items-center justify-center rounded-[24px] bg-black font-montserrat text-[15px] font-medium text-white"
+              >
+                Done
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="rounded-[16px] border border-black/10 bg-[#f6f6f6] p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-montserrat text-[14px] font-medium text-black">
+                    Verify wallet ownership
+                  </span>
+                  <span
+                    className={cn(
+                      "inline-flex h-6 items-center gap-1 rounded-[12px] px-2 font-montserrat text-[12px]",
+                      ownership.ownershipVerified
+                        ? "bg-[#0ed000]/10 text-[#0cb400]"
+                        : "bg-[#aaa]/10 text-[#aaa]",
+                    )}
+                  >
+                    {ownership.ownershipVerified ? (
+                      <>
+                        <IconCheck className="size-2" />
+                        Ready
+                      </>
+                    ) : (
+                      "Needs verification"
+                    )}
+                  </span>
+                </div>
+                <p className="mt-2 font-montserrat text-[12px] leading-5 text-[#606060]">
+                  {payout.token} on {payout.network}. Sign a one-time message — it cannot authorize payment.
+                </p>
+                <PayoutOwnershipActions
+                  ownershipVerified={ownership.ownershipVerified}
+                  connectedAddressMatches={ownership.connectedAddressMatches}
+                  isConnected={ownership.isConnected}
+                  address={ownership.address}
+                  verifiedEndpoint={ownership.verifiedEndpoint}
+                  verifying={ownership.verifying}
+                  onConnect={ownership.connectWallet}
+                  onChangeWallet={ownership.changeConnectedWallet}
+                  onUseAddress={ownership.useConnectedAddress}
+                  onVerify={ownership.verifyWallet}
                 />
               </div>
-              <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                {payout.token} on {payout.network}. Sign a one-time message — it cannot authorize payment.
-              </p>
-              <PayoutOwnershipActions
-                ownershipVerified={ownership.ownershipVerified}
-                connectedAddressMatches={ownership.connectedAddressMatches}
-                isConnected={ownership.isConnected}
-                address={ownership.address}
-                verifiedEndpoint={ownership.verifiedEndpoint}
-                verifying={ownership.verifying}
-                onConnect={ownership.connectWallet}
-                onChangeWallet={ownership.changeConnectedWallet}
-                onUseAddress={ownership.useConnectedAddress}
-                onVerify={ownership.verifyWallet}
-              />
+
+              {ownership.notice ? (
+                <p className="font-montserrat text-[12px] text-[#0cb400]">{ownership.notice}</p>
+              ) : null}
+              {ownership.error ? (
+                <p className="font-montserrat text-[12px] text-red-600">{ownership.error}</p>
+              ) : null}
+
+              <button
+                type="button"
+                onClick={onClose}
+                className="inline-flex h-12 w-full items-center justify-center rounded-[24px] border border-black/15 bg-white font-montserrat text-[15px] font-medium text-black transition-colors hover:bg-black/5"
+              >
+                Close
+              </button>
             </div>
-
-            {ownership.notice && (
-              <Alert>
-                <ShieldCheck />
-                <AlertTitle>Payout wallet</AlertTitle>
-                <AlertDescription>{ownership.notice}</AlertDescription>
-              </Alert>
-            )}
-            {ownership.error && (
-              <Alert variant="destructive">
-                <AlertCircle />
-                <AlertTitle>Wallet verification failed</AlertTitle>
-                <AlertDescription>{ownership.error}</AlertDescription>
-              </Alert>
-            )}
-
-            <DialogFooter>
-              <Button variant="outline" type="button" onClick={onClose}>Close</Button>
-            </DialogFooter>
-          </div>
-        )}
+          )}
+        </div>
       </DialogContent>
     </Dialog>
   );

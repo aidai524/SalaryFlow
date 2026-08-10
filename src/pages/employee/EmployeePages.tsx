@@ -61,7 +61,7 @@ export function EmployeeHomePage({ user, orgName }: { user: AuthUser; orgName: s
   }, []);
 
   const employee = payout?.payout;
-  const recent = records?.records[0];
+  const recent = records?.payments[0];
   // Profile default is often 0 after invite; prefer the latest payroll row.
   const netAmountMinor = recent?.amount_minor ?? employee?.amount_minor;
   const netToken = recent?.token ?? employee?.token ?? "USDC";
@@ -156,7 +156,7 @@ export function EmployeeHomePage({ user, orgName }: { user: AuthUser; orgName: s
 
 export function EmployeeHistoryPage() {
   const { data, loading } = useApi(() => api.myRecords(), []);
-  const records = data?.records ?? [];
+  const records = data?.payments ?? [];
 
   return (
     <EmployeeFrame>
@@ -174,15 +174,15 @@ export function EmployeeHistoryPage() {
           </CardHeader>
           <CardContent className="px-0">
             <Table>
-              <TableHeader><TableRow><TableHead className="pl-4">Pay period</TableHead><TableHead>Net amount</TableHead><TableHead>Network</TableHead><TableHead>Status</TableHead><TableHead className="pr-4">Intent</TableHead></TableRow></TableHeader>
+              <TableHeader><TableRow><TableHead className="pl-4">Period</TableHead><TableHead>Net amount</TableHead><TableHead>Network</TableHead><TableHead>Status</TableHead><TableHead className="pr-4">Tx</TableHead></TableRow></TableHeader>
               <TableBody>
                 {records.map((record) => (
                   <TableRow key={record.id}>
-                    <TableCell className="pl-4 font-medium">{record.employee_name}</TableCell>
+                    <TableCell className="pl-4 font-medium">{record.period_key}</TableCell>
                     <TableCell className="font-medium tabular-nums">{formatTokenAmount(record.amount_minor)} {record.token}</TableCell>
                     <TableCell><TokenCell token={record.token} network={record.network} /></TableCell>
                     <TableCell><StatusBadge status={record.status} /></TableCell>
-                    <TableCell className="mono-value pr-4 text-xs text-muted-foreground">{record.intent_hash ? `${record.intent_hash.slice(0, 14)}…` : "—"}</TableCell>
+                    <TableCell className="mono-value pr-4 text-xs text-muted-foreground">{record.txHash ? `${record.txHash.slice(0, 14)}…` : "—"}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>

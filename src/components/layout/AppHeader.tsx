@@ -1,4 +1,4 @@
-import { LogOut } from "lucide-react";
+import { KeyRound, LogOut } from "lucide-react";
 import { useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import { EmployeePayoutWalletDialog } from "@/components/EmployeePayoutWalletDialog";
@@ -15,6 +15,7 @@ import {
 import { formatAddress } from "@/lib/address";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth";
+import { ChangePasswordDialog } from "@/views/auth/ChangePasswordDialog";
 
 const ADMIN_NAV = [
   { to: "/pay", label: "Pay" },
@@ -78,7 +79,11 @@ function HeaderWalletChip() {
   );
 }
 
-function HeaderAccountMenu() {
+function HeaderAccountMenu({
+  onChangePassword,
+}: {
+  onChangePassword: () => void;
+}) {
   const navigate = useNavigate();
   const user = useAuthStore((state) => state.user);
   const logout = useAuthStore((state) => state.logout);
@@ -118,6 +123,13 @@ function HeaderAccountMenu() {
         </DropdownMenuLabel>
         <DropdownMenuSeparator className="mx-1 bg-black/10" />
         <DropdownMenuItem
+          onSelect={onChangePassword}
+          className="cursor-pointer rounded-xl px-2.5 py-2 text-sm focus:bg-black/5"
+        >
+          <KeyRound className="size-4" />
+          Change password
+        </DropdownMenuItem>
+        <DropdownMenuItem
           variant="destructive"
           onSelect={handleSignOut}
           className="cursor-pointer rounded-xl px-2.5 py-2 text-sm focus:bg-black/5"
@@ -143,6 +155,7 @@ export function AppHeader({
   const navItems = isAdmin ? ADMIN_NAV : EMPLOYEE_NAV;
   const homePath = isAdmin ? (paymentConfigured ? "/pay" : "/teams/create") : "/my-pay";
   const isOnboarding = variant === "onboarding";
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false);
 
   return (
     <header
@@ -175,7 +188,7 @@ export function AppHeader({
         )}
       >
         <HeaderWalletChip />
-        <HeaderAccountMenu />
+        <HeaderAccountMenu onChangePassword={() => setChangePasswordOpen(true)} />
       </div>
 
       {!isOnboarding && (
@@ -202,6 +215,11 @@ export function AppHeader({
           ))}
         </nav>
       )}
+
+      <ChangePasswordDialog
+        open={changePasswordOpen}
+        onOpenChange={setChangePasswordOpen}
+      />
     </header>
   );
 }

@@ -570,6 +570,63 @@ orgRoutes.get("/payments", requireRole("admin"), async (c) => {
   });
 });
 
+type EmployeeRow = Record<string, unknown> & {
+  id: string;
+  email: string | null;
+  name: string;
+  endpoint: string | null;
+  employee_type: string;
+  created_at: string;
+  payment_cadence: string | null;
+  payment_date_key: string | null;
+};
+
+function enrichEmployeeRow(
+  emp: EmployeeRow,
+  org: {
+    payment_cadence: string | null;
+    payment_date_key: string | null;
+    payment_configured_at: string | null;
+  } | null,
+  now: Date = new Date(),
+) {
+  const teamCadence = (org?.payment_cadence as TeamPaymentSchedule | null) || null;
+  const teamDateKey = (org?.payment_date_key as TeamPaymentDateKey | null) || null;
+  const teamConfigured = !!(org?.payment_configured_at && teamCadence && teamDateKey);
+  const employeeType = ((emp.employee_type || "employee") as EmployeeType);
+  const schedule = resolveRecipientSchedule({
+    employeeType,
+    teamCadence,
+    teamDateKey,
+    paymentCadence: emp.payment_cadence,
+    paymentDateKey: emp.payment_date_key,
+  });
+
+  let nextPayday: string | null = null;
+  let displayCadence: string | null = schedule?.cadence ?? null;
+  let displayDateKey: string | null = schedule?.dateKey ?? null;
+
+  if (schedule?.scheduled && schedule.dateKey && (schedule.cadence === "monthly" || schedule.cadence === "weekly")) {
+    try {
+      nextPayday = resolveNextPeriod(schedule.cadence, schedule.dateKey, now).payday;
+    } catch {
+      nextPayday = null;
+    }
+  } else if (employeeType === "employee" && !teamConfigured) {
+    displayCadence = teamCadence;
+    displayDateKey = teamDateKey;
+  }
+
+  return {
+    ...emp,
+    employee_type: employeeType,
+    payment_cadence: displayCadence,
+    payment_date_key: displayDateKey,
+    nextPayday,
+    nextPaydayDisplay: nextPayday ? formatPaydayDisplay(nextPayday) : null,
+  };
+}
+
 // Employee directory (linked to org; can be pre-provisioned before account acceptance)
 orgRoutes.get("/employees", requireRole("admin"), async (c) => {
   const user = c.get("user") as AuthUser;
@@ -595,59 +652,10 @@ orgRoutes.get("/employees", requireRole("admin"), async (c) => {
             amount_minor, endpoint, status, payout_verified_at, last_paid_at, created_at,
             payment_cadence, payment_date_key
      FROM employees WHERE org_id = ? ORDER BY created_at DESC`,
-  ).bind(user.org_id).all<Record<string, unknown> & {
-    id: string;
-    email: string | null;
-    name: string;
-    endpoint: string | null;
-    employee_type: string;
-    created_at: string;
-    payment_cadence: string | null;
-    payment_date_key: string | null;
-  }>();
+  ).bind(user.org_id).all<EmployeeRow>();
 
-  const teamCadence = (org?.payment_cadence as TeamPaymentSchedule | null) || null;
-  const teamDateKey = (org?.payment_date_key as TeamPaymentDateKey | null) || null;
   const now = new Date();
-  const teamConfigured = !!(org?.payment_configured_at && teamCadence && teamDateKey);
-
-  const enriched = rows.results.map((emp) => {
-    const employeeType = ((emp.employee_type || "employee") as EmployeeType);
-    const schedule = resolveRecipientSchedule({
-      employeeType,
-      teamCadence,
-      teamDateKey,
-      paymentCadence: emp.payment_cadence,
-      paymentDateKey: emp.payment_date_key,
-    });
-
-    let nextPayday: string | null = null;
-    let displayCadence: string | null = schedule?.cadence ?? null;
-    let displayDateKey: string | null = schedule?.dateKey ?? null;
-
-    if (schedule?.scheduled && schedule.dateKey && (schedule.cadence === "monthly" || schedule.cadence === "weekly")) {
-      const cadence = schedule.cadence;
-      const dateKey = schedule.dateKey;
-      try {
-        const next = resolveNextPeriod(cadence, dateKey, now);
-        nextPayday = next.payday;
-      } catch {
-        nextPayday = null;
-      }
-    } else if (employeeType === "employee" && !teamConfigured) {
-      displayCadence = teamCadence;
-      displayDateKey = teamDateKey;
-    }
-
-    return {
-      ...emp,
-      employee_type: employeeType,
-      payment_cadence: displayCadence,
-      payment_date_key: displayDateKey,
-      nextPayday,
-      nextPaydayDisplay: nextPayday ? formatPaydayDisplay(nextPayday) : null,
-    };
-  });
+  const enriched = rows.results.map((emp) => enrichEmployeeRow(emp, org, now));
 
   const counts = {
     all: enriched.length,
@@ -681,6 +689,30 @@ orgRoutes.get("/employees", requireRole("admin"), async (c) => {
     counts,
   });
 });
+
+orgRoutes.get("/employees/:id", requireRole("admin"), async (c) => {
+  const user = c.get("user") as AuthUser;
+  const employeeId = c.req.param("id");
+  const org = await c.env.DB.prepare(
+    `SELECT payment_cadence, payment_date_key, payment_configured_at
+     FROM organizations WHERE id = ?`,
+  ).bind(user.org_id).first<{
+    payment_cadence: string | null;
+    payment_date_key: string | null;
+    payment_configured_at: string | null;
+  }>();
+
+  const emp = await c.env.DB.prepare(
+    `SELECT id, user_id, email, name, role_title, location, employee_type, token, network,
+            amount_minor, endpoint, status, payout_verified_at, last_paid_at, created_at,
+            payment_cadence, payment_date_key
+     FROM employees WHERE id = ? AND org_id = ?`,
+  ).bind(employeeId, user.org_id).first<EmployeeRow>();
+  if (!emp) return c.json({ error: "Employee not found" }, 404);
+
+  return c.json({ employee: enrichEmployeeRow(emp, org) });
+});
+
 orgRoutes.get("/employees/:id/payments", requireRole("admin"), async (c) => {
   const user = c.get("user") as AuthUser;
   const employeeId = c.req.param("id");
@@ -902,24 +934,26 @@ orgRoutes.patch("/employees/:id", requireRole("admin"), async (c) => {
   if (body?.token !== undefined) {
     const token = normalizePayoutToken(body.token);
     if (!token) return c.json({ error: "Only USDC and USDT are supported" }, 400);
+    if (token !== existing.token) payoutChanged = true;
     fields.push("token = ?");
     values.push(token);
-    payoutChanged = true;
   }
   if (body?.network !== undefined) {
     const network = normalizePayoutNetwork(body.network);
     if (!network) return c.json({ error: "Unsupported EVM payout network" }, 400);
+    if (network !== existing.network) payoutChanged = true;
     fields.push("network = ?");
     values.push(network);
-    payoutChanged = true;
   }
   if (body?.endpoint !== undefined) {
     const endpointInput = String(body.endpoint).trim();
     const endpoint = endpointInput ? normalizePayoutAddress(endpointInput) : "";
     if (endpoint === null) return c.json({ error: "A valid EVM payout address is required" }, 400);
+    if (String(endpoint).toLowerCase() !== String(existing.endpoint || "").toLowerCase()) {
+      payoutChanged = true;
+    }
     fields.push("endpoint = ?");
     values.push(endpoint);
-    payoutChanged = true;
   }
   if (payoutChanged) {
     fields.push("status = 'update_required'", "payout_verified_at = NULL");

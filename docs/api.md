@@ -109,7 +109,7 @@ flowchart TD
   deposit --> reconcile["POST /attempts/:id/reconcile or cron"]
 ```
 
-Uses `EXACT_OUTPUT` + `depositType: ORIGIN_CHAIN` + `confidentiality` from env `INTENTS_CONFIDENTIALITY` (default `advanced`). Assets resolve dynamically from 1Click `/v0/tokens` (phase-1 EVM USDT/USDC). Records live in `employee_payments` + `payment_attempts`.
+Uses `EXACT_OUTPUT` + `depositType: ORIGIN_CHAIN` + `confidentiality` from env `INTENTS_CONFIDENTIALITY` (default `advanced`). Assets resolve dynamically from 1Click `/v0/tokens` (phase-1 EVM USDT/USDC). Each live quote creates a new `employee_payments` row (multiple transfers per period); records also live in `payment_attempts`.
 
 ### Legacy payroll-run path (still available)
 
@@ -148,6 +148,7 @@ Details: [`docs/api/payments.md`](api/payments.md).
 | PATCH | `/api/org` | admin | [org](api/org.md) | `api/src/routes/org.ts` | `api.updateOrg` |
 | PATCH | `/api/org/team` | admin | [org](api/org.md) | `api/src/routes/org.ts` | `api.updateTeam` |
 | GET | `/api/org/employees` | admin | [org](api/org.md) | `api/src/routes/org.ts` | `api.listEmployees` |
+| GET | `/api/org/employees/:id` | admin | [org](api/org.md) | `api/src/routes/org.ts` | `api.getEmployee` |
 | GET | `/api/org/employees/:id/payments` | admin | [org](api/org.md) | `api/src/routes/org.ts` | `api.listEmployeePayments` |
 | GET | `/api/org/pay-overview` | admin | [org](api/org.md) | `api/src/routes/org.ts` | `api.payOverview` |
 | GET | `/api/org/overview` | admin | [org](api/org.md) | `api/src/routes/org.ts` | `api.orgOverview` |
@@ -183,6 +184,7 @@ Details: [`docs/api/payments.md`](api/payments.md).
 | GET | `/api/records` | admin | [records](api/records.md) | `api/src/routes/records.ts` | `api.listRecords` |
 | GET | `/api/records/me` | employee | [records](api/records.md) | `api/src/routes/records.ts` | `api.myRecords` |
 | GET | `/api/records/me/payout` | employee | [records](api/records.md) | `api/src/routes/records.ts` | `api.myPayout` |
+| PATCH | `/api/records/me/profile` | employee | [records](api/records.md) | `api/src/routes/records.ts` | `api.updateMyProfile` |
 | PUT | `/api/records/me/payout` | employee | [records](api/records.md) | `api/src/routes/records.ts` | `api.updatePayout` |
 | POST | `/api/records/me/payout/challenge` | employee | [records](api/records.md) | `api/src/routes/records.ts` | `api.createPayoutChallenge` |
 | POST | `/api/records/me/payout/verify` | employee | [records](api/records.md) | `api/src/routes/records.ts` | `api.verifyPayout` |

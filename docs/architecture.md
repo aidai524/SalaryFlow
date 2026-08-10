@@ -102,8 +102,16 @@ Header specs (Figma `59:11715`):
 - Header controls height `42px`, vertical padding ~`20px`
 - Logo: `/logo.svg`
 - Admin nav pills: Pay / Recipients / Overview inside a white capsule; active = black pill + white text
-- Wallet chip: `IdentityAvatar` + truncated address (`Space Grotesk`)
-- Menu button: `/icons/menu.svg` (no panel content yet)
+- Wallet chip: `IdentityAvatar` + truncated address (`Space Grotesk`); opens Decash-styled wallet dialog (employee payout verify / admin payment wallet)
+- Menu button: `/icons/menu.svg` — account menu with **Change password** + Sign out (admin and employee)
+- Invite / `must_change_password`: `MyPayView` still auto-opens `ChangePasswordDialog` and blocks dismiss
+
+### My Pay (employee)
+
+- Route: `/my-pay` · view: `src/views/employee/MyPayView.tsx` + `my-pay/*`
+- Data: `GET /api/records/me/payout` (profile + schedule + `totalReceivedMinor`), `GET /api/records/me` (`employee_payments` history)
+- Edit profile: `AddRecipientDialog` `variant="self"` → `PATCH /api/records/me/profile`; payout changes require ownership re-verify
+- UI: greeting, 4-up stats (`StatCell`), profile card, payment history table; icons `IconCheck` / `IconPen`
 
 ### Responsive breakpoints
 

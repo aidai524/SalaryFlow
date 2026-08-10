@@ -11,6 +11,7 @@ Parent index: [`docs/api.md`](../api.md) · Source: [`api/src/routes/org.ts`](..
 | PATCH | `/api/org` | `api.updateOrg` |
 | PATCH | `/api/org/team` | `api.updateTeam` |
 | GET | `/api/org/employees` | `api.listEmployees` |
+| GET | `/api/org/employees/:id` | `api.getEmployee` |
 | GET | `/api/org/employees/:id/payments` | `api.listEmployeePayments` |
 | GET | `/api/org/pay-overview` | `api.payOverview` |
 | GET | `/api/org/overview` | `api.orgOverview` |
@@ -151,6 +152,16 @@ Employee `status`: `pending` \| `ready` \| `update_required` — set by payout v
 
 ---
 
+### GET /api/org/employees/:id
+
+- **Auth** — admin
+- **Client** — `api.getEmployee`
+- **Response** — `{ employee }` — same enriched shape as list rows (`payment_cadence`, `payment_date_key`, `nextPayday`, `nextPaydayDisplay`)
+- **Errors** — 404 not found
+- **Rules** — Fresh single-row read for edit dialogs; employees inherit team schedule.
+
+---
+
 ### GET /api/org/employees/:id/payments
 
 - **Auth** — admin
@@ -196,8 +207,8 @@ Employee `status`: `pending` \| `ready` \| `update_required` — set by payout v
 - **Request** — any of create fields above — **not** `status`
 - **Response** — `{ employee }`
 - **Errors** — 400 if `status` sent / invalid fields; 409 duplicate email
-- **Rules** — Changing token/network/endpoint → `status=update_required`, clears `payout_verified_at`. Switching to employee clears personal cadence.
-- **Gotchas** — Admin cannot force `ready`; employee must re-verify via `/api/records/me/payout/*`.
+- **Rules** — Changing token/network/endpoint **to a different value** → `status=update_required`, clears `payout_verified_at`. Unchanged payout fields do not reset verification. Switching to employee clears personal cadence.
+- **Gotchas** — Admin cannot force `ready`; employee must re-verify via `/api/records/me/payout/*`. Endpoint compare is case-insensitive.
 
 ---
 

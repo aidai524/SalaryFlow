@@ -3,10 +3,118 @@
 import { Hono } from "hono";
 import { verifyMessage, type Address, type Hex } from "viem";
 import { requireRole, type AppEnv } from "../middleware";
+import {
+  type TeamPaymentDateKey,
+  type TeamPaymentSchedule,
+} from "../org-payment";
+import { formatPaydayDisplay, resolveNextPeriod } from "../pay-period";
 import { normalizePayoutAddress, normalizePayoutNetwork, normalizePayoutToken } from "../payout";
+import { resolveRecipientSchedule, type EmployeeType } from "../recipient";
 import { nowIso, uuid, type AuthUser } from "../types";
 
 export const recordRoutes = new Hono<AppEnv>();
+
+type EmpRow = {
+  id: string;
+  name: string;
+  email: string | null;
+  role_title: string | null;
+  employee_type: string;
+  token: string;
+  network: string;
+  amount_minor: number;
+  endpoint: string | null;
+  status: string;
+  payout_verified_at: string | null;
+  last_paid_at: string | null;
+  created_at: string;
+  payment_cadence: string | null;
+  payment_date_key: string | null;
+};
+
+function explorerUrlForTx(network: string, txHash: string): string | null {
+  const n = network.toLowerCase();
+  const hash = txHash.startsWith("0x") ? txHash : `0x${txHash}`;
+  if (n.includes("arbitrum")) return `https://arbiscan.io/tx/${hash}`;
+  if (n.includes("base")) return `https://basescan.org/tx/${hash}`;
+  if (n.includes("polygon")) return `https://polygonscan.com/tx/${hash}`;
+  if (n.includes("optimism")) return `https://optimistic.etherscan.io/tx/${hash}`;
+  if (n.includes("ethereum") || n === "eth" || n === "mainnet") return `https://etherscan.io/tx/${hash}`;
+  return `https://basescan.org/tx/${hash}`;
+}
+
+async function loadEnrichedPayout(db: D1Database, userId: string, orgId: string) {
+  const emp = await db.prepare(
+    `SELECT id, name, email, role_title, employee_type, token, network, amount_minor, endpoint,
+            status, payout_verified_at, last_paid_at, created_at, payment_cadence, payment_date_key
+     FROM employees WHERE user_id = ? AND org_id = ?`,
+  ).bind(userId, orgId).first<EmpRow>();
+  if (!emp) return null;
+
+  const org = await db.prepare(
+    `SELECT payment_cadence, payment_date_key, payment_configured_at
+     FROM organizations WHERE id = ?`,
+  ).bind(orgId).first<{
+    payment_cadence: string | null;
+    payment_date_key: string | null;
+    payment_configured_at: string | null;
+  }>();
+
+  const teamCadence = (org?.payment_cadence as TeamPaymentSchedule | null) || null;
+  const teamDateKey = (org?.payment_date_key as TeamPaymentDateKey | null) || null;
+  const teamConfigured = !!(org?.payment_configured_at && teamCadence && teamDateKey);
+  const employeeType = ((emp.employee_type || "employee") as EmployeeType);
+
+  const schedule = resolveRecipientSchedule({
+    employeeType,
+    teamCadence,
+    teamDateKey,
+    paymentCadence: emp.payment_cadence,
+    paymentDateKey: emp.payment_date_key,
+  });
+
+  let nextPayday: string | null = null;
+  let displayCadence: string | null = schedule?.cadence ?? null;
+  let displayDateKey: string | null = schedule?.dateKey ?? null;
+
+  if (schedule?.scheduled && schedule.dateKey && (schedule.cadence === "monthly" || schedule.cadence === "weekly")) {
+    try {
+      nextPayday = resolveNextPeriod(schedule.cadence, schedule.dateKey, new Date()).payday;
+    } catch {
+      nextPayday = null;
+    }
+  } else if (employeeType === "employee" && !teamConfigured) {
+    displayCadence = teamCadence;
+    displayDateKey = teamDateKey;
+  }
+
+  const paid = await db.prepare(
+    `SELECT COALESCE(SUM(amount_minor), 0) AS total
+     FROM employee_payments
+     WHERE employee_id = ? AND org_id = ? AND status = 'paid'`,
+  ).bind(emp.id, orgId).first<{ total: number }>();
+
+  return {
+    id: emp.id,
+    name: emp.name,
+    email: emp.email,
+    role_title: emp.role_title,
+    employee_type: employeeType,
+    token: emp.token,
+    network: emp.network,
+    amount_minor: emp.amount_minor,
+    endpoint: emp.endpoint || "",
+    status: emp.status,
+    payout_verified_at: emp.payout_verified_at,
+    last_paid_at: emp.last_paid_at,
+    created_at: emp.created_at,
+    payment_cadence: displayCadence,
+    payment_date_key: displayDateKey,
+    nextPayday,
+    nextPaydayDisplay: nextPayday ? formatPaydayDisplay(nextPayday) : null,
+    totalReceivedMinor: Number(paid?.total || 0),
+  };
+}
 
 // Admin: all chain records for org
 recordRoutes.get("/", requireRole("admin"), async (c) => {
@@ -17,25 +125,173 @@ recordRoutes.get("/", requireRole("admin"), async (c) => {
   return c.json({ records: rows.results });
 });
 
-// Employee: own payment records (via linked employee profile)
+// Employee: own payment history (Quick Pay employee_payments)
 recordRoutes.get("/me", requireRole("employee"), async (c) => {
   const user = c.get("user") as AuthUser;
-  const emp = await c.env.DB.prepare("SELECT id FROM employees WHERE user_id = ?").bind(user.id).first<{ id: string }>();
-  if (!emp) return c.json({ records: [] });
+  if (!user.org_id) return c.json({ payments: [] });
+  const emp = await c.env.DB.prepare(
+    "SELECT id FROM employees WHERE user_id = ? AND org_id = ?",
+  ).bind(user.id, user.org_id).first<{ id: string }>();
+  if (!emp) return c.json({ payments: [] });
+
+  const limit = Math.min(50, Math.max(1, Number.parseInt(String(c.req.query("limit") || "50"), 10) || 50));
   const rows = await c.env.DB.prepare(
-    "SELECT * FROM payrun_items WHERE employee_id = ? AND removed_at IS NULL ORDER BY created_at DESC",
-  ).bind(emp.id).all<Record<string, unknown>>();
-  return c.json({ records: rows.results });
+    `SELECT ep.id, ep.paid_at, ep.amount_minor, ep.token, ep.network, ep.period_key, ep.status, ep.created_at,
+            pa.deposit_tx_hash AS tx_hash, u.wallet_address AS from_address
+     FROM employee_payments ep
+     LEFT JOIN payment_attempts pa ON pa.employee_payment_id = ep.id AND pa.state = 'confirmed'
+     LEFT JOIN users u ON u.id = pa.signer_id
+     WHERE ep.org_id = ? AND ep.employee_id = ?
+     ORDER BY COALESCE(ep.paid_at, ep.created_at) DESC, ep.id DESC
+     LIMIT ?`,
+  ).bind(user.org_id, emp.id, limit).all<{
+    id: string;
+    paid_at: string | null;
+    amount_minor: number;
+    token: string;
+    network: string;
+    period_key: string;
+    status: string;
+    created_at: string;
+    tx_hash: string | null;
+    from_address: string | null;
+  }>();
+
+  return c.json({
+    payments: rows.results.map((r) => ({
+      id: r.id,
+      paid_at: r.paid_at || r.created_at,
+      amount_minor: r.amount_minor,
+      token: r.token,
+      network: r.network,
+      period_key: r.period_key,
+      status: r.status,
+      txHash: r.tx_hash,
+      explorerUrl: r.tx_hash && r.network ? explorerUrlForTx(r.network, r.tx_hash) : null,
+      fromAddress: r.from_address,
+    })),
+  });
 });
 
-// Employee: own payout method
+// Employee: own payout / profile summary
 recordRoutes.get("/me/payout", requireRole("employee"), async (c) => {
   const user = c.get("user") as AuthUser;
-  const emp = await c.env.DB.prepare(
-    "SELECT id, name, token, network, amount_minor, endpoint, status, payout_verified_at, last_paid_at FROM employees WHERE user_id = ?",
-  ).bind(user.id).first();
-  if (!emp) return c.json({ payout: null });
-  return c.json({ payout: emp });
+  if (!user.org_id) return c.json({ payout: null });
+  const payout = await loadEnrichedPayout(c.env.DB, user.id, user.org_id);
+  return c.json({ payout });
+});
+
+// Employee: update own profile (name/email/payout). Changing payout clears verification.
+recordRoutes.patch("/me/profile", requireRole("employee"), async (c) => {
+  const user = c.get("user") as AuthUser;
+  if (!user.org_id) return c.json({ error: "No organization on this account" }, 400);
+  const orgId = user.org_id;
+  const body = await c.req.json().catch(() => null);
+  const existing = await c.env.DB.prepare(
+    `SELECT id, name, email, token, network, endpoint
+     FROM employees WHERE user_id = ? AND org_id = ?`,
+  ).bind(user.id, orgId).first<{
+    id: string;
+    name: string;
+    email: string | null;
+    token: string;
+    network: string;
+    endpoint: string | null;
+  }>();
+  if (!existing) return c.json({ error: "No employee profile linked to this account" }, 404);
+
+  const fields: string[] = [];
+  const values: unknown[] = [];
+  let syncUserName: string | null = null;
+  let syncUserEmail: string | null = null;
+  let payoutChanged = false;
+
+  if (body?.name !== undefined) {
+    const name = String(body.name || "").trim();
+    if (!name) return c.json({ error: "Name is required" }, 400);
+    fields.push("name = ?");
+    values.push(name);
+    syncUserName = name;
+  }
+
+  if (body?.email !== undefined) {
+    const emailRaw = String(body.email || "").trim().toLowerCase();
+    if (emailRaw) {
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailRaw)) {
+        return c.json({ error: "A valid email is required" }, 400);
+      }
+      const dupEmp = await c.env.DB.prepare(
+        "SELECT id FROM employees WHERE org_id = ? AND email = ? AND id != ?",
+      ).bind(orgId, emailRaw, existing.id).first();
+      if (dupEmp) return c.json({ error: "An employee with this email already exists" }, 409);
+      const dupUser = await c.env.DB.prepare(
+        "SELECT id FROM users WHERE org_id = ? AND email = ? AND id != ?",
+      ).bind(orgId, emailRaw, user.id).first();
+      if (dupUser) return c.json({ error: "An account with this email already exists" }, 409);
+      fields.push("email = ?");
+      values.push(emailRaw);
+      syncUserEmail = emailRaw;
+    } else {
+      fields.push("email = ?");
+      values.push(null);
+    }
+  }
+
+  if (body?.token !== undefined) {
+    const token = normalizePayoutToken(body.token);
+    if (!token) return c.json({ error: "Only USDC and USDT are supported" }, 400);
+    if (token !== existing.token) payoutChanged = true;
+    fields.push("token = ?");
+    values.push(token);
+  }
+  if (body?.network !== undefined) {
+    const network = normalizePayoutNetwork(body.network);
+    if (!network) return c.json({ error: "Unsupported EVM payout network" }, 400);
+    if (network !== existing.network) payoutChanged = true;
+    fields.push("network = ?");
+    values.push(network);
+  }
+  if (body?.endpoint !== undefined) {
+    const endpoint = normalizePayoutAddress(body.endpoint);
+    if (!endpoint) return c.json({ error: "A valid EVM payout address is required" }, 400);
+    if (endpoint.toLowerCase() !== String(existing.endpoint || "").toLowerCase()) payoutChanged = true;
+    fields.push("endpoint = ?");
+    values.push(endpoint);
+  }
+
+  if (payoutChanged) {
+    fields.push("status = 'update_required'", "payout_verified_at = NULL");
+  }
+  if (fields.length === 0) return c.json({ error: "Nothing to update" }, 400);
+
+  const statements = [
+    c.env.DB.prepare(
+      `UPDATE employees SET ${fields.join(", ")} WHERE id = ? AND user_id = ? AND org_id = ?`,
+    ).bind(...values, existing.id, user.id, orgId),
+  ];
+  if (syncUserName !== null || syncUserEmail !== null) {
+    const userFields: string[] = [];
+    const userValues: unknown[] = [];
+    if (syncUserName !== null) {
+      userFields.push("name = ?");
+      userValues.push(syncUserName);
+    }
+    if (syncUserEmail !== null) {
+      userFields.push("email = ?");
+      userValues.push(syncUserEmail);
+    }
+    userFields.push("updated_at = ?");
+    userValues.push(nowIso());
+    statements.push(
+      c.env.DB.prepare(
+        `UPDATE users SET ${userFields.join(", ")} WHERE id = ? AND org_id = ?`,
+      ).bind(...userValues, user.id, orgId),
+    );
+  }
+  await c.env.DB.batch(statements);
+
+  const payout = await loadEnrichedPayout(c.env.DB, user.id, orgId);
+  return c.json({ payout, payoutChanged });
 });
 
 recordRoutes.put("/me/payout", requireRole("employee"), async (c) => {
@@ -140,9 +396,8 @@ recordRoutes.post("/me/payout/verify", requireRole("employee"), async (c) => {
     return c.json({ error: "Verification challenge has already been used" }, 409);
   }
 
-  const payout = await c.env.DB.prepare(
-    "SELECT id, name, token, network, amount_minor, endpoint, status, payout_verified_at, last_paid_at FROM employees WHERE id = ? AND user_id = ?",
-  ).bind(challenge.employee_id, user.id).first();
+  if (!user.org_id) return c.json({ ok: true, payout: null });
+  const payout = await loadEnrichedPayout(c.env.DB, user.id, user.org_id);
   return c.json({ ok: true, payout });
 });
 

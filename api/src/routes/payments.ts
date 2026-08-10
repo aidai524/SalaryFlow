@@ -642,16 +642,12 @@ paymentRoutes.post("/employees/:employeeId/quote", requireRole("admin"), async (
 
   const timestamp = nowIso();
   const paymentId = uuid();
-  await c.env.DB.prepare(
+  // Each live Quick Pay creates a new employee_payments row so paid/processing
+  // periods can still receive additional transfers. Period "paid" flags use EXISTS status=paid.
+  const insertedPayment = await c.env.DB.prepare(
     `INSERT INTO employee_payments
      (id, org_id, employee_id, period_key, amount_minor, token, network, status, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
-     ON CONFLICT(org_id, employee_id, period_key) DO UPDATE SET
-       amount_minor = excluded.amount_minor,
-       token = excluded.token,
-       network = excluded.network,
-       updated_at = excluded.updated_at
-     WHERE employee_payments.status IN ('pending', 'failed')`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
   ).bind(
     paymentId,
     user.org_id,
@@ -663,16 +659,8 @@ paymentRoutes.post("/employees/:employeeId/quote", requireRole("admin"), async (
     timestamp,
     timestamp,
   ).run();
-
-  const employeePayment = await c.env.DB.prepare(
-    `SELECT * FROM employee_payments WHERE org_id = ? AND employee_id = ? AND period_key = ?`,
-  ).bind(user.org_id, employee.id, period.periodKey).first<{
-    id: string;
-    status: string;
-  }>();
-  if (!employeePayment) return c.json({ error: "Could not create employee payment row" }, 500);
-  if (employeePayment.status === "paid" || employeePayment.status === "processing") {
-    return c.json({ error: "This period is already paid or processing", code: "ITEM_NOT_PENDING" }, 409);
+  if (Number(insertedPayment.meta.changes || 0) !== 1) {
+    return c.json({ error: "Could not create employee payment row" }, 500);
   }
 
   const attemptId = uuid();
@@ -686,7 +674,7 @@ paymentRoutes.post("/employees/:employeeId/quote", requireRole("admin"), async (
   ).bind(
     attemptId,
     user.org_id,
-    employeePayment.id,
+    paymentId,
     idempotencyKey,
     destinationToken,
     destinationNetwork,
@@ -709,7 +697,7 @@ paymentRoutes.post("/employees/:employeeId/quote", requireRole("admin"), async (
       `SELECT * FROM payment_attempts WHERE employee_payment_id = ?
        AND state IN ('created', 'quoting', 'quoted', 'awaiting_deposit', 'deposit_submitted', 'processing')
        ORDER BY created_at DESC LIMIT 1`,
-    ).bind(employeePayment.id).first<PaymentAttemptRow>();
+    ).bind(paymentId).first<PaymentAttemptRow>();
     return c.json({ error: "This employee payment already has an active attempt", code: "ACTIVE_ATTEMPT_EXISTS", attempt: active }, 409);
   }
 
@@ -752,7 +740,7 @@ paymentRoutes.post("/employees/:employeeId/quote", requireRole("admin"), async (
       ),
       c.env.DB.prepare(
         `UPDATE employee_payments SET status = 'processing', updated_at = ? WHERE id = ?`,
-      ).bind(quotedAt, employeePayment.id),
+      ).bind(quotedAt, paymentId),
       c.env.DB.prepare(
         `INSERT INTO chain_records
          (id, attempt_id, item_id, org_id, employee_name, token, network, amount_minor,
@@ -783,7 +771,7 @@ paymentRoutes.post("/employees/:employeeId/quote", requireRole("admin"), async (
       ).bind(providerError(error), failedAt, failedAt, attemptId),
       c.env.DB.prepare(
         `UPDATE employee_payments SET status = 'pending', updated_at = ? WHERE id = ?`,
-      ).bind(failedAt, employeePayment.id),
+      ).bind(failedAt, paymentId),
     ]);
     return c.json({ error: "Live quote failed", code: "PAYMENT_PROVIDER_ERROR", detail: providerError(error) }, 502);
   }

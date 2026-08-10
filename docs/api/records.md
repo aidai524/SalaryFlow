@@ -9,6 +9,7 @@ Parent index: [`docs/api.md`](../api.md) · Source: [`api/src/routes/records.ts`
 | GET | `/api/records` | `api.listRecords` |
 | GET | `/api/records/me` | `api.myRecords` |
 | GET | `/api/records/me/payout` | `api.myPayout` |
+| PATCH | `/api/records/me/profile` | `api.updateMyProfile` |
 | PUT | `/api/records/me/payout` | `api.updatePayout` |
 | POST | `/api/records/me/payout/challenge` | `api.createPayoutChallenge` |
 | POST | `/api/records/me/payout/verify` | `api.verifyPayout` |
@@ -47,8 +48,10 @@ Challenges expire in **10 minutes**. Signature format: `0x` + 130 hex.
 
 - **Auth** — employee
 - **Client** — `api.myRecords`
-- **Response** — `{ records: PayrunItem[] }` for linked employee; `[]` if no employee profile
-- **Gotchas** — Returns **payrun_items**, not `chain_records`. Client types them as `PayrunItem[]`.
+- **Request** (query) — optional `limit` (default 50, max 50)
+- **Response** — `{ payments: [{ id, paid_at, amount_minor, token, network, period_key, status, txHash, explorerUrl, fromAddress }] }`
+- **Rules** — Own `employee_payments` rows (all statuses). Joins confirmed `payment_attempts` for `txHash` / explorer URL and signer `users.wallet_address` as `fromAddress`. Empty `payments` if no linked employee.
+- **Gotchas** — Replaces the previous `payrun_items` payload (`records` key). Callers must use `payments`.
 
 ---
 
@@ -56,8 +59,21 @@ Challenges expire in **10 minutes**. Signature format: `0x` + 130 hex.
 
 - **Auth** — employee
 - **Client** — `api.myPayout`
-- **Response** — `{ payout: EmployeeSubset | null }` — fields: `id, name, token, network, amount_minor, endpoint, status, payout_verified_at, last_paid_at` (not full `Employee`)
-- **Gotchas** — Frontend types as `Employee | null`; missing email/role_title/etc. at runtime.
+- **Response** — `{ payout: MyPayout | null }` with profile + schedule + totals:
+  - Profile: `id, name, email, role_title, employee_type, token, network, amount_minor, endpoint, status, payout_verified_at, last_paid_at, created_at`
+  - Schedule: `payment_cadence, payment_date_key, nextPayday, nextPaydayDisplay` (employees inherit team schedule)
+  - Aggregate: `totalReceivedMinor` (sum of paid `employee_payments`)
+
+---
+
+### PATCH /api/records/me/profile
+
+- **Auth** — employee
+- **Client** — `api.updateMyProfile`
+- **Request** — partial `{ name?, email?, token?, network?, endpoint? }`
+- **Response** — `{ payout, payoutChanged: boolean }` (`payout` same shape as `GET /me/payout`)
+- **Errors** — 400 validation; 404 no employee; 409 duplicate email
+- **Rules** — Updates `employees`. Syncs `users.name` / `users.email` when those fields change. Changing token/network/endpoint sets `status=update_required` and clears `payout_verified_at` (must challenge+verify again).
 
 ---
 

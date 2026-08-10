@@ -1,5 +1,4 @@
-import { CheckCircle2, ShieldCheck } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { IconCheck } from "@/components/icons/check";
 import { formatAddress } from "@/lib/address";
 
 export function PayoutOwnershipActions({
@@ -30,37 +29,74 @@ export function PayoutOwnershipActions({
       <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center">
         {ownershipVerified && (!isConnected || connectedAddressMatches) ? (
           <>
-            <span className="mono-value min-w-0 flex-1 truncate text-xs text-emerald-700">
-              {formatAddress(verifiedEndpoint)} · address verified
+            <span className="min-w-0 flex-1 truncate font-montserrat text-[12px] text-[#0cb400]">
+              {formatAddress(verifiedEndpoint || "")} · address verified
             </span>
-            <span role="status" className="inline-flex items-center gap-1.5 text-sm font-medium text-emerald-700">
-              <CheckCircle2 className="size-4" aria-hidden="true" />Ownership verified
+            <span
+              role="status"
+              className="inline-flex items-center gap-1.5 font-montserrat text-[13px] font-medium text-[#0cb400]"
+            >
+              <IconCheck className="size-2.5" aria-hidden="true" />
+              Ownership verified
             </span>
-            <Button variant="ghost" type="button" onClick={onChangeWallet}>Change wallet</Button>
+            <button
+              type="button"
+              onClick={onChangeWallet}
+              className="font-montserrat text-[13px] text-[#606060] underline-offset-2 hover:underline"
+            >
+              Change wallet
+            </button>
           </>
         ) : !isConnected ? (
-          <Button variant="outline" type="button" onClick={onConnect}>
+          <button
+            type="button"
+            onClick={onConnect}
+            className="inline-flex h-10 items-center justify-center rounded-[20px] border border-black/15 bg-white px-4 font-montserrat text-[14px] font-medium text-black shadow-[0_0_6px_rgba(0,0,0,0.06)] transition-colors hover:bg-black/5"
+          >
             Connect wallet
-          </Button>
+          </button>
         ) : (
           <>
-            <span className={`mono-value min-w-0 flex-1 truncate text-xs ${connectedAddressMatches ? "text-emerald-700" : "text-amber-700"}`}>
-              {formatAddress(address)} · {connectedAddressMatches ? "address matches" : "does not match"}
+            <span
+              className={`min-w-0 flex-1 truncate font-montserrat text-[12px] ${
+                connectedAddressMatches ? "text-[#0cb400]" : "text-[#e89300]"
+              }`}
+            >
+              {formatAddress(address || "")} ·{" "}
+              {connectedAddressMatches ? "address matches" : "does not match"}
             </span>
             {connectedAddressMatches ? (
-              <Button variant="outline" type="button" disabled={verifying} onClick={onVerify}>
-                <ShieldCheck data-icon="inline-start" />{verifying ? "Waiting…" : "Verify ownership"}
-              </Button>
+              <button
+                type="button"
+                disabled={verifying}
+                onClick={onVerify}
+                className="inline-flex h-10 items-center justify-center rounded-[20px] bg-black px-4 font-montserrat text-[14px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+              >
+                {verifying ? "Waiting…" : "Verify ownership"}
+              </button>
             ) : (
-              <Button variant="outline" type="button" onClick={onUseAddress}>Use this address</Button>
+              <button
+                type="button"
+                onClick={onUseAddress}
+                className="inline-flex h-10 items-center justify-center rounded-[20px] border border-black/15 bg-white px-4 font-montserrat text-[14px] font-medium text-black transition-colors hover:bg-black/5"
+              >
+                Use this address
+              </button>
             )}
-            <Button variant="ghost" type="button" disabled={verifying} onClick={onChangeWallet}>Change wallet</Button>
+            <button
+              type="button"
+              disabled={verifying}
+              onClick={onChangeWallet}
+              className="font-montserrat text-[13px] text-[#606060] underline-offset-2 hover:underline disabled:opacity-50"
+            >
+              Change wallet
+            </button>
           </>
         )}
       </div>
       {isConnected && !connectedAddressMatches && (
-        <p className="mt-2 text-xs leading-5 text-muted-foreground">
-          Use the connected address above, or disconnect it and connect a different wallet. Either choice requires a new ownership signature.
+        <p className="mt-2 font-montserrat text-[12px] leading-5 text-[#606060]">
+          Use the connected address above, or connect a different wallet. Either choice requires a new ownership signature.
         </p>
       )}
     </>

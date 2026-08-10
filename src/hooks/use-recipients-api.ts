@@ -67,6 +67,26 @@ export function useEmployeePaymentsInfiniteQuery(employeeId: string | null | und
   });
 }
 
+export function employeeDetailQueryKey(
+  orgId: string | null | undefined,
+  employeeId: string | null | undefined,
+) {
+  return ["employee-detail", orgId ?? "none", employeeId ?? "none"] as const;
+}
+
+export function useEmployeeQuery(
+  employeeId: string | null | undefined,
+  options?: { enabled?: boolean },
+) {
+  const orgId = useAuthStore((s) => s.orgId);
+  const enabled = options?.enabled ?? true;
+  return useQuery({
+    queryKey: employeeDetailQueryKey(orgId, employeeId),
+    queryFn: () => api.getEmployee(employeeId!),
+    enabled: !!orgId && !!employeeId && enabled,
+  });
+}
+
 type EmployeeWriteBody = Partial<Employee> & {
   amount?: string;
   employee_type?: EmployeeType;
@@ -91,8 +111,13 @@ export function useUpdateEmployeeMutation() {
   return useMutation({
     mutationFn: ({ id, body }: { id: string; body: EmployeeWriteBody }) =>
       api.updateEmployee(id, body),
-    onSuccess: async () => {
-      await invalidateRecipientLists(queryClient, orgId);
+    onSuccess: async (_data, variables) => {
+      await Promise.all([
+        invalidateRecipientLists(queryClient, orgId),
+        queryClient.invalidateQueries({
+          queryKey: employeeDetailQueryKey(orgId, variables.id),
+        }),
+      ]);
     },
   });
 }

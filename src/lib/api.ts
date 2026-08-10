@@ -70,6 +70,42 @@ export interface EmployeePaymentHistoryItem {
   explorerUrl: string | null;
 }
 
+/** Employee self-service payout / profile summary from GET /records/me/payout. */
+export interface MyPayout {
+  id: string;
+  name: string;
+  email: string | null;
+  role_title: string | null;
+  employee_type: EmployeeType;
+  token: "USDC" | "USDT";
+  network: string;
+  amount_minor: number;
+  endpoint: string;
+  status: "ready" | "pending" | "update_required";
+  payout_verified_at: string | null;
+  last_paid_at: string | null;
+  created_at: string;
+  payment_cadence?: ContractorPaymentCadence | TeamPaymentSchedule | null;
+  payment_date_key?: TeamPaymentDateKey | null;
+  nextPayday?: string | null;
+  nextPaydayDisplay?: string | null;
+  totalReceivedMinor: number;
+}
+
+/** Employee self-service payment history row from GET /records/me. */
+export interface MyPaymentHistoryItem {
+  id: string;
+  paid_at: string;
+  amount_minor: number;
+  token: string;
+  network: string;
+  period_key: string;
+  status: "pending" | "processing" | "paid" | "failed" | "refunded";
+  txHash: string | null;
+  explorerUrl: string | null;
+  fromAddress: string | null;
+}
+
 export interface ListEmployeesParams {
   q?: string;
   type?: EmployeeType | "";
@@ -481,6 +517,7 @@ export const api = {
     const query = qs.toString();
     return request<EmployeeListResult>(`/org/employees${query ? `?${query}` : ""}`);
   },
+  getEmployee: (id: string) => request<{ employee: Employee }>(`/org/employees/${id}`),
   listEmployeePayments: (id: string, params?: { limit?: number; cursor?: string | null }) => {
     const qs = new URLSearchParams();
     if (params?.limit) qs.set("limit", String(params.limit));
@@ -544,14 +581,30 @@ export const api = {
 
   // records
   listRecords: () => request<{ records: ChainRecord[] }>("/records"),
-  myRecords: () => request<{ records: PayrunItem[] }>("/records/me"),
-  myPayout: () => request<{ payout: Employee | null }>("/records/me/payout"),
+  myRecords: (params?: { limit?: number }) => {
+    const q = new URLSearchParams();
+    if (params?.limit != null) q.set("limit", String(params.limit));
+    const qs = q.toString();
+    return request<{ payments: MyPaymentHistoryItem[] }>(`/records/me${qs ? `?${qs}` : ""}`);
+  },
+  myPayout: () => request<{ payout: MyPayout | null }>("/records/me/payout"),
+  updateMyProfile: (body: {
+    name?: string;
+    email?: string | null;
+    token?: string;
+    network?: string;
+    endpoint?: string;
+  }) =>
+    request<{ payout: MyPayout | null; payoutChanged: boolean }>("/records/me/profile", {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
   updatePayout: (body: { token: string; network: string; endpoint: string }) =>
     request<{ ok: boolean }>("/records/me/payout", { method: "PUT", body: JSON.stringify(body) }),
   createPayoutChallenge: (body: { token: string; network: string; endpoint: string }) =>
     request<{ challengeId: string; message: string; address: string; expiresAt: string }>("/records/me/payout/challenge", { method: "POST", body: JSON.stringify(body) }),
   verifyPayout: (body: { challengeId: string; signature: string }) =>
-    request<{ ok: boolean; payout: Employee }>("/records/me/payout/verify", { method: "POST", body: JSON.stringify(body) }),
+    request<{ ok: boolean; payout: MyPayout }>("/records/me/payout/verify", { method: "POST", body: JSON.stringify(body) }),
   signConsent: (payload: unknown) => request<{ ok: boolean; signedAt: string }>("/records/consents", { method: "POST", body: JSON.stringify(payload) }),
   myConsent: () => request<{ signed: boolean; signedAt: string | null }>("/records/consents/me"),
   createPaymentWalletChallenge: (address: string) =>

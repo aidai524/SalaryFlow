@@ -124,8 +124,8 @@ Frontend type `PaymentAttemptState` includes both. Quick Pay rows set `employee_
 - **Request** — `{ originAsset, amount?, destinationToken?, destinationNetwork?, idempotencyKey?, dry? }`
 - **Response (dry)** — `{ dry: true, quote: { amountIn, amountOut, timeEstimate, deadline, originAsset, destinationAsset, confidentiality } }`
 - **Response (live)** — `201` `{ attempt, quote, reused }` — attempt state `awaiting_deposit`
-- **Rules** — `EXACT_OUTPUT`, `depositType: ORIGIN_CHAIN`, `recipientType: DESTINATION_CHAIN`, `refundType: ORIGIN_CHAIN`, `confidentiality` from `INTENTS_CONFIDENTIALITY` (default `advanced`). Upserts `employee_payments` for the current team `period_key`.
-- **Errors** — 422 payout/token; 409 period already paid/processing; live gate on non-dry; 502 provider
+- **Rules** — `EXACT_OUTPUT`, `depositType: ORIGIN_CHAIN`, `recipientType: DESTINATION_CHAIN`, `refundType: ORIGIN_CHAIN`, `confidentiality` from `INTENTS_CONFIDENTIALITY` (default `advanced`). Each live quote inserts a new `employee_payments` row for the current team `period_key` (multiple transfers per period allowed). Period “paid” for Pay overview is still any `status=paid` row for that employee+period.
+- **Errors** — 422 payout/token; 409 idempotency/active attempt; live gate on non-dry; 502 provider
 
 ---
 
