@@ -3,14 +3,10 @@
 
 import type { TeamPaymentDateKey, TeamPaymentSchedule } from "./org-payment";
 
-export type EmployeePayStatus = "to_be_paid" | "paid" | "none";
-
 export interface PeriodWindow {
   periodKey: string;
   /** ISO date YYYY-MM-DD (UTC) of the payday for this period. */
   payday: string;
-  /** ISO datetime: reminder window opens at this UTC midnight. */
-  reminderStartsAt: string;
   cadence: TeamPaymentSchedule;
 }
 
@@ -84,7 +80,6 @@ function nextWeekdayOnOrAfter(fromYmd: string, weekday: number): string {
 export function resolveCurrentPeriod(
   cadence: TeamPaymentSchedule,
   dateKey: TeamPaymentDateKey,
-  reminderLeadDays: number,
   now: Date = new Date(),
 ): PeriodWindow {
   const today = utcYmd(now);
@@ -99,8 +94,7 @@ export function resolveCurrentPeriod(
       payday = monthlyPaydayInMonth(next.y, next.m, dateKey);
     }
     const periodKey = payday.slice(0, 7); // YYYY-MM
-    const reminderStartsAt = `${addUtcDays(payday, -Math.max(0, reminderLeadDays))}T00:00:00.000Z`;
-    return { periodKey, payday, reminderStartsAt, cadence };
+    return { periodKey, payday, cadence };
   }
 
   const weekday = weekdayFromKey(dateKey);
@@ -109,8 +103,7 @@ export function resolveCurrentPeriod(
   }
   const payday = nextWeekdayOnOrAfter(today, weekday);
   const periodKey = isoWeekKey(utcMidnight(payday));
-  const reminderStartsAt = `${addUtcDays(payday, -Math.max(0, reminderLeadDays))}T00:00:00.000Z`;
-  return { periodKey, payday, reminderStartsAt, cadence };
+  return { periodKey, payday, cadence };
 }
 
 /** Alias for team or contractor monthly/weekly cadence. */
@@ -122,107 +115,11 @@ export const resolvePeriodForCadence = resolveCurrentPeriod;
 export function resolveNextPeriod(
   cadence: TeamPaymentSchedule,
   dateKey: TeamPaymentDateKey,
-  reminderLeadDays: number,
   now: Date = new Date(),
 ): PeriodWindow {
-  const current = resolveCurrentPeriod(cadence, dateKey, reminderLeadDays, now);
+  const current = resolveCurrentPeriod(cadence, dateKey, now);
   const dayAfter = utcMidnight(addUtcDays(current.payday, 1));
-  return resolveCurrentPeriod(cadence, dateKey, reminderLeadDays, dayAfter);
-}
-
-/**
- * Pay-status badge relative to a selected period key (Recipients period picker).
- */
-export function computeEmployeePayStatusForPeriod(opts: {
-  selectedPeriodKey: string;
-  current: PeriodWindow;
-  now?: Date;
-  paidByPeriod: Map<string, boolean>;
-  periodKeysSinceJoin: string[];
-}): EmployeePayStatus {
-  if (opts.paidByPeriod.get(opts.selectedPeriodKey)) return "paid";
-  if (opts.selectedPeriodKey === opts.current.periodKey) {
-    return computeEmployeePayStatus({
-      current: opts.current,
-      now: opts.now,
-      paidByPeriod: opts.paidByPeriod,
-      periodKeysSinceJoin: opts.periodKeysSinceJoin,
-    });
-  }
-  if (opts.periodKeysSinceJoin.includes(opts.selectedPeriodKey)) {
-    return "to_be_paid";
-  }
-  return "none";
-}
-
-/** All period keys from employee join date through (but not including) current, plus current. */
-export function enumeratePeriodsSince(
-  cadence: TeamPaymentSchedule,
-  dateKey: TeamPaymentDateKey,
-  reminderLeadDays: number,
-  sinceIso: string,
-  now: Date = new Date(),
-): PeriodWindow[] {
-  const since = new Date(sinceIso);
-  if (!Number.isFinite(since.getTime())) return [resolveCurrentPeriod(cadence, dateKey, reminderLeadDays, now)];
-
-  const windows: PeriodWindow[] = [];
-  const seen = new Set<string>();
-  // Walk forward from join month/week up to current period.
-  const cursor = new Date(since);
-  // Cap iterations to avoid runaway loops.
-  for (let i = 0; i < 260; i++) {
-    const window = resolveCurrentPeriod(cadence, dateKey, reminderLeadDays, cursor);
-    if (!seen.has(window.periodKey)) {
-      // Only include periods whose payday is on/after the join day.
-      if (window.payday >= utcYmd(since)) {
-        windows.push(window);
-        seen.add(window.periodKey);
-      }
-    }
-    const current = resolveCurrentPeriod(cadence, dateKey, reminderLeadDays, now);
-    if (window.periodKey === current.periodKey && cursor >= now) break;
-
-    if (cadence === "monthly") {
-      cursor.setUTCMonth(cursor.getUTCMonth() + 1);
-      cursor.setUTCDate(1);
-    } else {
-      cursor.setUTCDate(cursor.getUTCDate() + 7);
-    }
-    if (cursor.getTime() > now.getTime() + 14 * 86400000) break;
-  }
-
-  const current = resolveCurrentPeriod(cadence, dateKey, reminderLeadDays, now);
-  if (!seen.has(current.periodKey)) windows.push(current);
-  return windows;
-}
-
-export function isInReminderWindow(window: PeriodWindow, now: Date = new Date()): boolean {
-  return now.getTime() >= Date.parse(window.reminderStartsAt);
-}
-
-/**
- * Compute employee pay status badge for the current period.
- * - to_be_paid: in reminder window and unpaid for current, OR any past unpaid period since join
- * - paid: no arrears and current period is paid
- * - none: before reminder window and current unpaid, with no past arrears
- */
-export function computeEmployeePayStatus(opts: {
-  current: PeriodWindow;
-  now?: Date;
-  /** period_key → paid boolean for periods since join */
-  paidByPeriod: Map<string, boolean>;
-  periodKeysSinceJoin: string[];
-}): EmployeePayStatus {
-  const now = opts.now ?? new Date();
-  const pastKeys = opts.periodKeysSinceJoin.filter((k) => k !== opts.current.periodKey);
-  const hasArrears = pastKeys.some((k) => !opts.paidByPeriod.get(k));
-  if (hasArrears) return "to_be_paid";
-
-  const currentPaid = !!opts.paidByPeriod.get(opts.current.periodKey);
-  if (currentPaid) return "paid";
-  if (isInReminderWindow(opts.current, now)) return "to_be_paid";
-  return "none";
+  return resolveCurrentPeriod(cadence, dateKey, dayAfter);
 }
 
 export function formatPaydayDisplay(paydayYmd: string): string {

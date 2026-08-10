@@ -6,7 +6,6 @@ import { IconCheck } from "@/components/icons/check";
 import { QuickPayPanel } from "@/components/quick-pay/QuickPayPanel";
 import { usePayOverviewQuery } from "@/hooks/use-pay-api";
 import { formatCurrencyFromMinor, formatDate } from "@/lib/format";
-import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth";
 import { useIntentsTokensStore } from "@/stores/intents-tokens";
 
@@ -114,7 +113,7 @@ export function PayView() {
       ) : null}
 
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,776fr)_minmax(0,604fr)]">
-        <QuickPayPanel monthLabel={period?.monthLabel} />
+        <QuickPayPanel />
 
         <div className="flex flex-col gap-5">
           {/* Recipients card */}
@@ -182,43 +181,13 @@ export function PayView() {
             </div>
 
             <ul className="flex flex-col">
-              {data?.highPriority.payroll ? (
-                <li>
-                  {/* TODO(high-priority): detail navigation not designed yet. */}
-                  <button
-                    type="button"
-                    disabled
-                    className="flex w-full items-center gap-3 border-b border-black/10 py-4 text-left opacity-90"
-                  >
-                    <span className="inline-flex size-8 items-center justify-center rounded-full bg-[#4a7dff]/15">
-                      <img src="/icons/payroll.svg" alt="" className="size-4" />
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block font-montserrat text-[14px] font-medium text-black">
-                        {data.highPriority.payroll.title}
-                      </span>
-                      <span className="block font-montserrat text-[10px] text-[#606060]">
-                        {data.highPriority.payroll.readyCount} payments ready
-                      </span>
-                    </span>
-                    <span className="font-montserrat text-[14px] font-medium text-black">
-                      {formatCurrencyFromMinor(data.highPriority.payroll.amountMinor)}
-                    </span>
-                    <img src="/icons/to-down.svg" alt="" className="size-2.5 -rotate-90 opacity-40" />
-                  </button>
-                </li>
-              ) : null}
-
               {data?.highPriority.verification ? (
                 <li>
                   {/* TODO(high-priority): detail navigation not designed yet. */}
                   <button
                     type="button"
                     disabled
-                    className={cn(
-                      "flex w-full items-center gap-3 py-4 text-left opacity-90",
-                      data.highPriority.payroll && "border-t-0",
-                    )}
+                    className="flex w-full items-center gap-3 py-4 text-left opacity-90"
                   >
                     <span className="inline-flex size-8 items-center justify-center rounded-full bg-[#e89300]/15 text-[#e89300]">
                       <IconAlert className="size-3" />
@@ -236,9 +205,7 @@ export function PayView() {
                 </li>
               ) : null}
 
-              {!isLoading
-                && !data?.highPriority.payroll
-                && !data?.highPriority.verification && (
+              {!isLoading && !data?.highPriority.verification && (
                 <li className="py-6 font-montserrat text-[14px] text-[#606060]">
                   Nothing needs attention
                 </li>

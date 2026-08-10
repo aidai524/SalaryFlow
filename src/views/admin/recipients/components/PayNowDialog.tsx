@@ -11,14 +11,12 @@ export interface PayNowDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   employeeId: string | null;
-  monthLabel?: string;
 }
 
 export function PayNowDialog({
   open,
   onOpenChange,
   employeeId,
-  monthLabel,
 }: PayNowDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -44,7 +42,6 @@ export function PayNowDialog({
             {employeeId ? (
               <QuickPayPanel
                 initialEmployeeId={employeeId}
-                monthLabel={monthLabel}
                 hideTitle
                 recipientLocked
                 compensationLayout="centered"

@@ -11,8 +11,6 @@ import { cn } from "@/lib/utils";
 import {
   formatCompensation,
   isVerified,
-  payStatusClass,
-  payStatusLabel,
   roleBadgeAbbrev,
   roleBadgeColor,
   scheduleLabel,
@@ -52,7 +50,6 @@ export function RecipientDetailCard({
   const [tab, setTab] = useState<DetailTab>("details");
   const verified = isVerified(employee);
   const chain = getChainByNetwork(employee.network);
-  const statusText = payStatusLabel(employee.payStatus);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const paymentsQuery = useEmployeePaymentsInfiniteQuery(

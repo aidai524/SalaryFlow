@@ -1,18 +1,13 @@
 import { IdentityAvatar } from "@/components/IdentityAvatar";
 import { IconAlert } from "@/components/icons/alert";
 import { IconCheck } from "@/components/icons/check";
-import { getChainByNetwork } from "@/config/chains";
 import type { Employee } from "@/lib/api";
-import { formatAddress } from "@/lib/format";
-import { chainLogoUrl, tokenLogoUrl } from "@/lib/logo";
+import { tokenLogoUrl } from "@/lib/logo";
 import { cn } from "@/lib/utils";
 import {
   formatCompensation,
   isVerified,
-  payStatusClass,
-  payStatusLabel,
   roleBadgeAbbrev,
-  roleBadgeColor,
   scheduleLabel,
   typeLabel,
 } from "../utils";
@@ -60,8 +55,6 @@ export function RecipientsTable({
           {employees.map((emp) => {
             const verified = isVerified(emp);
             const selected = selectedId === emp.id;
-            const chain = getChainByNetwork(emp.network);
-            const statusText = payStatusLabel(emp.payStatus);
             return (
               <tr
                 key={emp.id}

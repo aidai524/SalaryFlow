@@ -4,24 +4,17 @@ import { Hono } from "hono";
 import { requireRole, type AppEnv } from "../middleware";
 import { parseTokenAmount } from "../money";
 import {
-  getReminderLeadDefaults,
   isPaymentDateValidForSchedule,
   normalizeTeamPaymentDateKey,
   normalizeTeamPaymentSchedule,
-  reminderLeadDaysForSchedule,
   type TeamPaymentDateKey,
   type TeamPaymentSchedule,
 } from "../org-payment";
 import {
-  computeEmployeePayStatus,
-  computeEmployeePayStatusForPeriod,
-  enumeratePeriodsSince,
   formatPaydayDisplay,
-  isInReminderWindow,
   monthLabelForPayday,
   resolveCurrentPeriod,
   resolveNextPeriod,
-  type EmployeePayStatus,
 } from "../pay-period";
 import { normalizePayoutAddress, normalizePayoutNetwork, normalizePayoutToken } from "../payout";
 import {
@@ -69,7 +62,6 @@ orgRoutes.get("/context", requireRole("admin", "employee"), async (c) => {
     },
     memberCount: Number(memberCount?.n || 0),
     paymentConfigured: !!org.payment_configured_at,
-    reminderLeadDefaults: getReminderLeadDefaults(c.env),
   });
 });
 
@@ -119,21 +111,20 @@ orgRoutes.patch("/team", requireRole("admin"), async (c) => {
     return c.json({ error: "Payment date does not match the selected schedule" }, 400);
   }
 
-  const reminderLeadDays = reminderLeadDaysForSchedule(paymentSchedule, c.env);
   const configuredAt = nowIso();
   await c.env.DB.batch([
     c.env.DB.prepare(
       `UPDATE organizations
-       SET payment_cadence = ?, payment_date_key = ?, reminder_lead_days = ?, payment_configured_at = ?
+       SET payment_cadence = ?, payment_date_key = ?, reminder_lead_days = NULL, payment_configured_at = ?
        WHERE id = ?`,
-    ).bind(paymentSchedule, paymentDate, reminderLeadDays, configuredAt, user.org_id),
+    ).bind(paymentSchedule, paymentDate, configuredAt, user.org_id),
     c.env.DB.prepare(
       "INSERT INTO audit_log (id, org_id, actor_id, action, detail) VALUES (?, ?, ?, 'org.team_payment_updated', ?)",
     ).bind(
       uuid(),
       user.org_id,
       user.id,
-      `Team payment → ${paymentSchedule}, ${paymentDate}, remind ${reminderLeadDays}d`,
+      `Team payment → ${paymentSchedule}, ${paymentDate}`,
     ),
   ]);
 
@@ -149,14 +140,13 @@ orgRoutes.patch("/team", requireRole("admin"), async (c) => {
 orgRoutes.get("/pay-overview", requireRole("admin"), async (c) => {
   const user = c.get("user") as AuthUser;
   const org = await c.env.DB.prepare(
-    `SELECT id, name, payment_cadence, payment_date_key, reminder_lead_days, payment_configured_at
+    `SELECT id, name, payment_cadence, payment_date_key, payment_configured_at
      FROM organizations WHERE id = ?`,
   ).bind(user.org_id).first<{
     id: string;
     name: string;
     payment_cadence: string | null;
     payment_date_key: string | null;
-    reminder_lead_days: number | null;
     payment_configured_at: string | null;
   }>();
   if (!org) return c.json({ error: "Organization not found" }, 404);
@@ -166,9 +156,8 @@ orgRoutes.get("/pay-overview", requireRole("admin"), async (c) => {
 
   const cadence = org.payment_cadence as TeamPaymentSchedule;
   const dateKey = org.payment_date_key as TeamPaymentDateKey;
-  const leadDays = Number(org.reminder_lead_days ?? 0);
   const now = new Date();
-  const current = resolveCurrentPeriod(cadence, dateKey, leadDays, now);
+  const current = resolveCurrentPeriod(cadence, dateKey, now);
 
   const employees = await c.env.DB.prepare(
     `SELECT id, name, role_title, employee_type, amount_minor, token, network, endpoint,
@@ -189,44 +178,18 @@ orgRoutes.get("/pay-overview", requireRole("admin"), async (c) => {
     created_at: string;
   }>();
 
-  const payments = await c.env.DB.prepare(
-    `SELECT employee_id, period_key, status FROM employee_payments WHERE org_id = ?`,
-  ).bind(user.org_id).all<{ employee_id: string; period_key: string; status: string }>();
-
-  const paidMap = new Map<string, Map<string, boolean>>();
-  for (const row of payments.results) {
-    if (!paidMap.has(row.employee_id)) paidMap.set(row.employee_id, new Map());
-    paidMap.get(row.employee_id)!.set(row.period_key, row.status === "paid");
-  }
+  const paidThisPeriod = await c.env.DB.prepare(
+    `SELECT employee_id FROM employee_payments
+     WHERE org_id = ? AND period_key = ? AND status = 'paid'`,
+  ).bind(user.org_id, current.periodKey).all<{ employee_id: string }>();
+  const paidIds = new Set(paidThisPeriod.results.map((r) => r.employee_id));
 
   const fullTime = employees.results.filter((e) => (e.employee_type || "employee") === "employee");
   let currentPayrollMinor = 0;
-  let toBePaidCount = 0;
   let paidCount = 0;
-  let readyToPayMinor = 0;
-  let readyToPayCount = 0;
-  const payStatuses: Record<string, EmployeePayStatus> = {};
-
   for (const emp of fullTime) {
     currentPayrollMinor += Number(emp.amount_minor || 0);
-    const windows = enumeratePeriodsSince(cadence, dateKey, leadDays, emp.created_at, now);
-    const keys = windows.map((w) => w.periodKey);
-    const status = computeEmployeePayStatus({
-      current,
-      now,
-      paidByPeriod: paidMap.get(emp.id) || new Map(),
-      periodKeysSinceJoin: keys,
-    });
-    payStatuses[emp.id] = status;
-    if (status === "to_be_paid") {
-      toBePaidCount += 1;
-      if (emp.status === "ready" && emp.payout_verified_at) {
-        readyToPayCount += 1;
-        readyToPayMinor += Number(emp.amount_minor || 0);
-      }
-    } else if (status === "paid") {
-      paidCount += 1;
-    }
+    if (paidIds.has(emp.id)) paidCount += 1;
   }
 
   const recipientsCount = fullTime.length;
@@ -244,35 +207,22 @@ orgRoutes.get("/pay-overview", requireRole("admin"), async (c) => {
     created_at: e.created_at,
   }));
 
-  const inReminder = isInReminderWindow(current, now);
-
   return c.json({
     org: { id: org.id, name: org.name },
     period: {
       periodKey: current.periodKey,
       payday: current.payday,
       paydayDisplay: formatPaydayDisplay(current.payday),
-      reminderStartsAt: current.reminderStartsAt,
-      inReminderWindow: inReminder,
       cadence,
       monthLabel: monthLabelForPayday(current.payday),
     },
     stats: {
       currentPayrollMinor,
       recipientsCount,
-      toBePaidCount,
-      paidCount,
       progress,
     },
     recipients: recent,
     highPriority: {
-      payroll: inReminder && toBePaidCount > 0
-        ? {
-            title: `${monthLabelForPayday(current.payday)} payroll`,
-            readyCount: readyToPayCount,
-            amountMinor: readyToPayMinor,
-          }
-        : null,
       verification: unverified.length > 0
         ? {
             count: unverified.length,
@@ -280,7 +230,6 @@ orgRoutes.get("/pay-overview", requireRole("admin"), async (c) => {
           }
         : null,
     },
-    payStatuses,
   });
 });
 
@@ -289,7 +238,6 @@ orgRoutes.get("/employees", requireRole("admin"), async (c) => {
   const user = c.get("user") as AuthUser;
   const q = String(c.req.query("q") || "").trim().toLowerCase();
   const typeFilter = String(c.req.query("type") || "").trim().toLowerCase();
-  const periodKeyParam = String(c.req.query("periodKey") || "").trim();
   const pageRaw = c.req.query("page");
   const pageSizeRaw = c.req.query("pageSize");
   const paginate = pageRaw !== undefined || pageSizeRaw !== undefined;
@@ -297,12 +245,11 @@ orgRoutes.get("/employees", requireRole("admin"), async (c) => {
   const pageSize = Math.min(100, Math.max(1, Number.parseInt(String(pageSizeRaw || "10"), 10) || 10));
 
   const org = await c.env.DB.prepare(
-    `SELECT payment_cadence, payment_date_key, reminder_lead_days, payment_configured_at
+    `SELECT payment_cadence, payment_date_key, payment_configured_at
      FROM organizations WHERE id = ?`,
   ).bind(user.org_id).first<{
     payment_cadence: string | null;
     payment_date_key: string | null;
-    reminder_lead_days: number | null;
     payment_configured_at: string | null;
   }>();
 
@@ -324,18 +271,8 @@ orgRoutes.get("/employees", requireRole("admin"), async (c) => {
 
   const teamCadence = (org?.payment_cadence as TeamPaymentSchedule | null) || null;
   const teamDateKey = (org?.payment_date_key as TeamPaymentDateKey | null) || null;
-  const leadDays = Number(org?.reminder_lead_days ?? 0);
   const now = new Date();
   const teamConfigured = !!(org?.payment_configured_at && teamCadence && teamDateKey);
-
-  const payments = await c.env.DB.prepare(
-    `SELECT employee_id, period_key, status FROM employee_payments WHERE org_id = ?`,
-  ).bind(user.org_id).all<{ employee_id: string; period_key: string; status: string }>();
-  const paidMap = new Map<string, Map<string, boolean>>();
-  for (const row of payments.results) {
-    if (!paidMap.has(row.employee_id)) paidMap.set(row.employee_id, new Map());
-    paidMap.get(row.employee_id)!.set(row.period_key, row.status === "paid");
-  }
 
   const enriched = rows.results.map((emp) => {
     const employeeType = ((emp.employee_type || "employee") as EmployeeType);
@@ -347,7 +284,6 @@ orgRoutes.get("/employees", requireRole("admin"), async (c) => {
       paymentDateKey: emp.payment_date_key,
     });
 
-    let payStatus: EmployeePayStatus = "none";
     let nextPayday: string | null = null;
     let displayCadence: string | null = schedule?.cadence ?? null;
     let displayDateKey: string | null = schedule?.dateKey ?? null;
@@ -355,32 +291,11 @@ orgRoutes.get("/employees", requireRole("admin"), async (c) => {
     if (schedule?.scheduled && schedule.dateKey && (schedule.cadence === "monthly" || schedule.cadence === "weekly")) {
       const cadence = schedule.cadence;
       const dateKey = schedule.dateKey;
-      const reminder = teamConfigured
-        ? (employeeType === "employee" ? leadDays : reminderLeadDaysForSchedule(cadence, c.env))
-        : reminderLeadDaysForSchedule(cadence, c.env);
       try {
-        const current = resolveCurrentPeriod(cadence, dateKey, reminder, now);
-        const windows = enumeratePeriodsSince(cadence, dateKey, reminder, emp.created_at, now);
-        const keys = windows.map((w) => w.periodKey);
-        const selectedKey = periodKeyParam || current.periodKey;
-        payStatus = periodKeyParam
-          ? computeEmployeePayStatusForPeriod({
-              selectedPeriodKey: selectedKey,
-              current,
-              now,
-              paidByPeriod: paidMap.get(emp.id) || new Map(),
-              periodKeysSinceJoin: keys,
-            })
-          : computeEmployeePayStatus({
-              current,
-              now,
-              paidByPeriod: paidMap.get(emp.id) || new Map(),
-              periodKeysSinceJoin: keys,
-            });
-        const next = resolveNextPeriod(cadence, dateKey, reminder, now);
+        const next = resolveNextPeriod(cadence, dateKey, now);
         nextPayday = next.payday;
       } catch {
-        payStatus = "none";
+        nextPayday = null;
       }
     } else if (employeeType === "employee" && !teamConfigured) {
       displayCadence = teamCadence;
@@ -392,7 +307,6 @@ orgRoutes.get("/employees", requireRole("admin"), async (c) => {
       employee_type: employeeType,
       payment_cadence: displayCadence,
       payment_date_key: displayDateKey,
-      payStatus,
       nextPayday,
       nextPaydayDisplay: nextPayday ? formatPaydayDisplay(nextPayday) : null,
     };

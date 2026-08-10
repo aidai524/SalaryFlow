@@ -86,7 +86,7 @@ Login / register / accept-invite UI lives under `src/views/auth/` (legacy layout
 ## Org / team model (phase 1)
 
 - **Phase 1:** one organization per admin (`users.org_id`). Auth store keeps `orgId`, `orgName`, `paymentConfigured` for the current workspace.
-- Team payment fields live on `organizations` (`payment_cadence`, `payment_date_key`, `reminder_lead_days`, `payment_configured_at`) — separate from `payroll_runs` / schedules.
+- Team payment fields live on `organizations` (`payment_cadence`, `payment_date_key`, `payment_configured_at`; legacy unused `reminder_lead_days`) — separate from `payroll_runs` / schedules.
 - **Future multi-org:** memberships + `activeOrgId`; keep query keys scoped by `orgId` (already `["org-context", orgId]`).
 
 ## Layout
@@ -151,11 +151,11 @@ Rules:
 ### Pay (admin home)
 
 - Route `/pay` → `src/views/admin/PayView.tsx`
-- Quick Pay module: `src/components/quick-pay/QuickPayPanel.tsx` (reusable; Pay Now dialog uses `recipientLocked` + `compensationLayout="centered"` + `destinationTokenLocked`)
+- Quick Pay module: `src/components/quick-pay/QuickPayPanel.tsx` (capsule recipient select on `/pay`; Pay Now dialog uses `recipientLocked` + `compensationLayout="centered"` + `destinationTokenLocked`)
 - Token/network picker: `src/components/token-network-dialog/TokenNetworkDialog.tsx`
-- Recipient drawer: `src/components/drawer/RecipientPickerDrawer.tsx`
+- Recipient drawer: `src/components/drawer/RecipientPickerDrawer.tsx` (kept mounted; Quick Pay no longer opens it)
 - Overview data: `GET /api/org/pay-overview` via `src/hooks/use-pay-api.ts`
-- **Pay status (To be paid / Paid / none):** [`docs/pay-status.md`](pay-status.md) — source of truth for period math, badges, and overview aggregates (`api/src/pay-period.ts`)
+- Period helpers (payday / `period_key`): `api/src/pay-period.ts`
 - Recipients deep link: overview list → `/recipients?selected=<employeeId>`
 
 Team switcher control next to the greeting is **disabled** until multi-team lands.

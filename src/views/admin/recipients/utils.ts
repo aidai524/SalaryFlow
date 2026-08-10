@@ -47,15 +47,3 @@ export function isVerified(emp: Pick<Employee, "payout_verified_at" | "status">)
 export function typeLabel(type: Employee["employee_type"]): string {
   return type === "contractor" ? "Contractor" : "Employee";
 }
-
-export function payStatusLabel(status: Employee["payStatus"]): string | null {
-  if (status === "to_be_paid") return "To be paid";
-  if (status === "paid") return "Paid";
-  return null;
-}
-
-export function payStatusClass(status: Employee["payStatus"]): string {
-  if (status === "to_be_paid") return "bg-[#9a7bff]/15 text-[#9a7bff]";
-  if (status === "paid") return "bg-[#0ed000]/15 text-[#0ed000]";
-  return "";
-}

@@ -266,4 +266,3 @@ Details: [`docs/api/payments.md`](api/payments.md).
 - [payroll](api/payroll.md)
 - [payments](api/payments.md)
 - [records](api/records.md)
-- [pay-status](pay-status.md) — To be paid / Paid / none (period math + aggregates)

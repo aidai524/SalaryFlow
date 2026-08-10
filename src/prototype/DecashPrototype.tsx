@@ -45,7 +45,7 @@ type Scene =
   | "dashboard";
 
 type PrimaryView = "team" | "payment" | "dashboard";
-type TeamFilter = "all" | "monthly" | "weekly" | "paid" | "due";
+type TeamFilter = "all" | "monthly" | "weekly";
 
 const SCENES = new Set<Scene>([
   "team",
@@ -250,7 +250,6 @@ function TeamFilters({
   filter: TeamFilter;
   onFilter: (filter: TeamFilter) => void;
 }) {
-  const paid = members.filter((member) => member.paid).length;
   const monthly = members.filter((member) => member.frequency === "Monthly").length;
   const weekly = members.length - monthly;
   const items: Array<{ id: TeamFilter; label: string; count: number; tone?: string }> = [
@@ -274,21 +273,6 @@ function TeamFilters({
         <span className="dc-filter-separator" />
         <button className="dc-filter dc-disabled" type="button" disabled>Daily (0)</button>
         <button className="dc-filter dc-disabled" type="button" disabled>Flexible (0)</button>
-        <span className="dc-filter-separator" />
-        <button
-          className={cx("dc-filter", "is-success", filter === "paid" && "is-active")}
-          type="button"
-          onClick={() => onFilter("paid")}
-        >
-          Paid ({paid})
-        </button>
-        <button
-          className={cx("dc-filter", "is-due", filter === "due" && "is-active")}
-          type="button"
-          onClick={() => onFilter("due")}
-        >
-          To be paid ({members.length - paid})
-        </button>
       </div>
       <button className="dc-month-filter" type="button">
         2026 Aug <ChevronDown aria-hidden="true" />
@@ -424,8 +408,6 @@ function TeamPage({
   const filtered = displayMembers.filter((member) => {
     if (filter === "monthly") return member.frequency === "Monthly";
     if (filter === "weekly") return member.frequency === "Weekly";
-    if (filter === "paid") return member.paid;
-    if (filter === "due") return !member.paid;
     return true;
   });
 
@@ -732,7 +714,7 @@ function PaymentPage({
       <PaymentSummary empty={empty} onHistory={(show) => onScene(show ? "history" : "payment")} />
       <section className="dc-payment-layout">
         <aside className="dc-side-group is-due">
-          <h2 className="dc-side-heading">To be paid ({empty ? members.length : due.length})</h2>
+          <h2 className="dc-side-heading">Recipients ({empty ? members.length : due.length})</h2>
           <div className="dc-avatar-rail">
             {empty ? (
               <>

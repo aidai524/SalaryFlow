@@ -11,7 +11,6 @@ export interface AuthUser {
 }
 
 export type EmployeeType = "employee" | "contractor";
-export type EmployeePayStatus = "to_be_paid" | "paid" | "none";
 export type TeamPaymentSchedule = "monthly" | "weekly";
 export type ContractorPaymentCadence = TeamPaymentSchedule | "on_demand";
 export type RecipientRoleTitle = "Developer" | "Product" | "Growth" | "Finance" | "Operations";
@@ -47,8 +46,6 @@ export interface Employee {
   /** Effective schedule (team for employees; own for contractors). */
   payment_cadence?: ContractorPaymentCadence | TeamPaymentSchedule | null;
   payment_date_key?: TeamPaymentDateKey | null;
-  /** Present on listEmployees when schedule can be resolved. */
-  payStatus?: EmployeePayStatus;
   nextPayday?: string | null;
   nextPaydayDisplay?: string | null;
 }
@@ -75,7 +72,6 @@ export interface EmployeePaymentHistoryItem {
 export interface ListEmployeesParams {
   q?: string;
   type?: EmployeeType | "";
-  periodKey?: string;
   page?: number;
   pageSize?: number;
 }
@@ -86,16 +82,12 @@ export interface PayOverview {
     periodKey: string;
     payday: string;
     paydayDisplay: string;
-    reminderStartsAt: string;
-    inReminderWindow: boolean;
     cadence: TeamPaymentSchedule;
     monthLabel: string;
   };
   stats: {
     currentPayrollMinor: number;
     recipientsCount: number;
-    toBePaidCount: number;
-    paidCount: number;
     progress: number;
   };
   recipients: Array<{
@@ -108,10 +100,8 @@ export interface PayOverview {
     created_at: string;
   }>;
   highPriority: {
-    payroll: { title: string; readyCount: number; amountMinor: number } | null;
     verification: { count: number; names: string[] } | null;
   };
-  payStatuses: Record<string, EmployeePayStatus>;
 }
 
 export interface QuickPayAsset {
@@ -283,11 +273,6 @@ export interface OrgPaymentFields {
   payment_configured_at: string | null;
 }
 
-export interface ReminderLeadDefaults {
-  monthly: number;
-  weekly: number;
-}
-
 export interface OrgContext {
   org: {
     id: string;
@@ -296,8 +281,6 @@ export interface OrgContext {
   } & OrgPaymentFields;
   memberCount: number;
   paymentConfigured: boolean;
-  /** From Worker env REMINDER_LEAD_DAYS_MONTHLY / WEEKLY (defaults 7 / 3). */
-  reminderLeadDefaults: ReminderLeadDefaults;
 }
 
 export interface OrgInfo {
@@ -388,7 +371,6 @@ export const api = {
     const qs = new URLSearchParams();
     if (params?.q) qs.set("q", params.q);
     if (params?.type) qs.set("type", params.type);
-    if (params?.periodKey) qs.set("periodKey", params.periodKey);
     if (params?.page !== undefined) qs.set("page", String(params.page));
     if (params?.pageSize !== undefined) qs.set("pageSize", String(params.pageSize));
     const query = qs.toString();

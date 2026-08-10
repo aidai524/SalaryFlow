@@ -3,20 +3,16 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type Address, type Hex } from "viem";
 import { useSendTransaction, useSwitchChain } from "wagmi";
 import { IdentityAvatar } from "@/components/IdentityAvatar";
-import { IconAlert } from "@/components/icons/alert";
-import { IconCheck } from "@/components/icons/check";
-import { IconClose } from "@/components/icons/close";
 import { TokenNetworkDialog } from "@/components/token-network-dialog/TokenNetworkDialog";
 import { getChainByNetwork, networkToChainId } from "@/config/chains";
 import { useEvmWalletInfo } from "@/hooks/use-evm-wallet-info";
 import { useEmployeesQuery } from "@/hooks/use-pay-api";
 import useToast from "@/hooks/use-toast";
-import { api, type EmployeePayStatus } from "@/lib/api";
-import { formatAddress, formatCurrencyFromMinor, formatNumber, formatTokenMinor } from "@/lib/format";
+import { api } from "@/lib/api";
+import { formatAddress, formatNumber, formatTokenMinor } from "@/lib/format";
 import { chainLogoUrl, routeLogoUrl, tokenLogoUrl } from "@/lib/logo";
 import { formatQuoteErrorMessage } from "@/lib/quote-error";
 import { cn } from "@/lib/utils";
-import { useDrawerStore } from "@/stores/drawer";
 import { useIntentsTokensStore, type IntentsToken } from "@/stores/intents-tokens";
 import { useQuickPayPrefsStore } from "@/stores/quick-pay-prefs";
 import { useWallet } from "@/wallet";
@@ -30,31 +26,6 @@ class BalanceGateError extends Error {
   }
 }
 
-function VerifiedBadge({ verified }: { verified: boolean }) {
-  if (verified) {
-    return (
-      <span className="inline-flex h-6 items-center gap-1 rounded-[12px] bg-[#0ed000]/10 px-2 font-montserrat text-[12px] text-[#0ed000]">
-        <span className="inline-flex size-3 items-center justify-center rounded-full bg-[#0ed000] text-white">
-          <IconCheck className="size-2" />
-        </span>
-        Verified
-      </span>
-    );
-  }
-  return (
-    <span className="inline-flex h-6 items-center rounded-[12px] bg-[#aaa]/10 px-2 font-montserrat text-[12px] text-[#aaa]">
-      Unverified
-    </span>
-  );
-}
-
-function roleBadgeColor(role: string): string {
-  const key = role.toLowerCase();
-  if (key.includes("market") || key === "mkt") return "bg-[#e89300]/10 text-[#e89300]";
-  if (key.includes("dev")) return "bg-[#4a7dff]/10 text-[#4a7dff]";
-  return "bg-black/5 text-[#909090]";
-}
-
 function parseCompensationInput(raw: string): string | null {
   const cleaned = raw.replace(/,/g, "").trim();
   if (!cleaned) return null;
@@ -66,10 +37,9 @@ export interface QuickPayPanelProps {
   className?: string;
   /** Optional preselected employee id. */
   initialEmployeeId?: string | null;
-  monthLabel?: string;
   /** Hide the "Quick Pay" heading (e.g. when embedded in Pay Now dialog). */
   hideTitle?: boolean;
-  /** Lock recipient — no Change / clear / empty picker. */
+  /** Lock recipient — no capsule picker. */
   recipientLocked?: boolean;
   /** Centered compensation block; destination token shown without picker. */
   compensationLayout?: "row" | "centered";
@@ -80,7 +50,6 @@ export interface QuickPayPanelProps {
 export function QuickPayPanel({
   className,
   initialEmployeeId = null,
-  monthLabel,
   hideTitle = false,
   recipientLocked = false,
   compensationLayout = "row",
@@ -91,7 +60,6 @@ export function QuickPayPanel({
   const queryClient = useQueryClient();
   const toast = useToast();
   const { data: employees = [] } = useEmployeesQuery();
-  const openRecipientPicker = useDrawerStore((s) => s.openRecipientPicker);
   const ensureFresh = useIntentsTokensStore((s) => s.ensureFresh);
   const findByChainAndSymbol = useIntentsTokensStore((s) => s.findByChainAndSymbol);
   const findByAssetId = useIntentsTokensStore((s) => s.findByAssetId);
@@ -200,7 +168,6 @@ export function QuickPayPanel({
     refetchInterval: 20_000,
   });
 
-  const payStatus = (employee?.payStatus || "none") as EmployeePayStatus;
   const verified = !!employee?.payout_verified_at && employee.status === "ready";
 
   const settleMutation = useMutation({
@@ -330,87 +297,39 @@ export function QuickPayPanel({
           <div className="mb-5 font-montserrat text-[14px] text-[#606060]">Recipient unavailable</div>
         )
       ) : (
-        <>
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <p className="font-montserrat text-[14px] font-medium text-[#606060]">Recipient</p>
-            <button
-              type="button"
-              onClick={() =>
-                openRecipientPicker({
-                  selectedId: employeeId,
-                  onSelect: (id) => {
-                    setEmployeeId(id);
-                    setPhase("idle");
-                    setError(null);
-                    setLiveAttemptId(null);
-                  },
-                })
-              }
-              className="inline-flex h-9 items-center gap-2 rounded-[18px] border border-black/10 px-4 font-montserrat text-[14px] font-medium text-black transition-colors hover:bg-black/5"
-            >
-              Change
-              <img src="/icons/to-down.svg" alt="" className="size-2.5 opacity-60" />
-            </button>
-          </div>
-
-          {employee ? (
-            <div className="relative mb-5 rounded-[12px] border border-white bg-[#fdfdfd] p-4 shadow-[0px_0px_20px_0px_rgba(0,0,0,0.06)]">
-              <button
-                type="button"
-                aria-label="Clear recipient"
-                onClick={() => {
-                  setEmployeeId(null);
-                  setPhase("idle");
-                  setError(null);
-                }}
-                className="absolute top-3 right-3 rounded p-1 text-black/50 transition-colors hover:bg-black/5 hover:text-black"
-              >
-                <IconClose className="size-3" />
-              </button>
-              <div className="flex gap-3 pr-6">
-                <IdentityAvatar seed={employee.email || employee.name} size={56} alt="" />
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <p className="font-montserrat text-[16px] font-medium text-black">{employee.name}</p>
-                    <span className="ml-auto font-montserrat text-[16px] font-medium text-black">
-                      {formatCurrencyFromMinor(employee.amount_minor)} /{" "}
-                      {employee.employee_type === "contractor" ? "period" : "month"}
-                    </span>
-                  </div>
-                  <div className="mt-2 flex flex-wrap items-center gap-2">
-                    {employee.role_title ? (
-                      <span className={cn("inline-flex h-6 items-center rounded-[12px] px-2 font-montserrat text-[12px]", roleBadgeColor(employee.role_title))}>
-                        {employee.role_title.length > 8 ? employee.role_title.slice(0, 3).toUpperCase() : employee.role_title}
-                      </span>
-                    ) : null}
-                    <span className="inline-flex h-6 items-center rounded-[12px] border border-black/10 px-2 font-montserrat text-[12px] text-[#909090]">
-                      {employee.employee_type === "contractor" ? "Contractor" : "Employee"}
-                    </span>
-                    <VerifiedBadge verified={verified} />
-                  </div>
-                  {payStatus === "to_be_paid" && (
-                    <div className="mt-3 inline-flex h-[30px] items-center gap-2 rounded-[25px] bg-[#9a7bff] px-3 font-montserrat text-[14px] font-medium text-white">
-                      <IconAlert className="size-3 text-white" />
-                      {monthLabel || "Current"} payroll is to be paid
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
+        <div className="mb-5">
+          <p className="mb-3 font-montserrat text-[14px] font-medium text-[#606060]">Recipient</p>
+          {employees.length === 0 ? (
+            <p className="font-montserrat text-[14px] text-[#606060]">No recipients</p>
           ) : (
-            <button
-              type="button"
-              onClick={() =>
-                openRecipientPicker({
-                  onSelect: (id) => setEmployeeId(id),
-                })
-              }
-              className="mb-5 flex h-[88px] w-full items-center justify-center rounded-[12px] border border-dashed border-black/15 bg-[#fafafa] font-montserrat text-[14px] text-[#606060] transition-colors hover:bg-[#f0f0f0]"
-            >
-              Select a recipient
-            </button>
+            <div className="flex flex-wrap gap-3">
+              {employees.map((emp) => {
+                const selected = employeeId === emp.id;
+                return (
+                  <button
+                    key={emp.id}
+                    type="button"
+                    onClick={() => {
+                      setEmployeeId(emp.id);
+                      setPhase("idle");
+                      setError(null);
+                      setLiveAttemptId(null);
+                    }}
+                    className={cn(
+                      "inline-flex h-10 items-center gap-2 rounded-[26px] border px-2.5 pr-3 font-montserrat text-[14px] font-medium transition-colors",
+                      selected
+                        ? "border-black bg-black text-white"
+                        : "border-black/10 bg-transparent text-black hover:bg-black/5",
+                    )}
+                  >
+                    <IdentityAvatar seed={emp.email || emp.name} size={26} alt="" />
+                    <span className="max-w-[140px] truncate">{emp.name}</span>
+                  </button>
+                );
+              })}
+            </div>
           )}
-        </>
+        </div>
       )}
 
       {/* Compensation */}

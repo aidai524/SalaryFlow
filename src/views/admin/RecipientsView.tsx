@@ -70,17 +70,16 @@ export function RecipientsView() {
 
   useEffect(() => {
     setPage(1);
-  }, [periodKey, typeFilter, debouncedSearch]);
+  }, [typeFilter, debouncedSearch]);
 
   const listParams = useMemo(
     () => ({
       q: debouncedSearch.trim() || undefined,
       type: typeFilter === "all" ? undefined : typeFilter,
-      periodKey,
       page,
       pageSize: PAGE_SIZE,
     }),
-    [debouncedSearch, typeFilter, periodKey, page],
+    [debouncedSearch, typeFilter, page],
   );
 
   const recipientsQuery = useRecipientsQuery(listParams);
@@ -115,7 +114,7 @@ export function RecipientsView() {
     let cancelled = false;
     void (async () => {
       try {
-        const res = await api.listEmployees({ page: 1, pageSize: 100, periodKey });
+        const res = await api.listEmployees({ page: 1, pageSize: 100 });
         const found = res.employees.find((e) => e.id === selectedId) || null;
         if (!cancelled) setDeepLinkEmployee(found);
       } catch {
@@ -125,7 +124,7 @@ export function RecipientsView() {
     return () => {
       cancelled = true;
     };
-  }, [selectedId, selectedFromList, periodKey]);
+  }, [selectedId, selectedFromList]);
 
   const selectedEmployee = selectedFromList || deepLinkEmployee;
 

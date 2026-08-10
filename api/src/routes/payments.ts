@@ -618,12 +618,11 @@ paymentRoutes.post("/employees/:employeeId/quote", requireRole("admin"), async (
   }
 
   const org = await c.env.DB.prepare(
-    `SELECT payment_cadence, payment_date_key, reminder_lead_days, payment_configured_at
+    `SELECT payment_cadence, payment_date_key, payment_configured_at
      FROM organizations WHERE id = ?`,
   ).bind(user.org_id).first<{
     payment_cadence: string | null;
     payment_date_key: string | null;
-    reminder_lead_days: number | null;
     payment_configured_at: string | null;
   }>();
   if (!org?.payment_configured_at || !org.payment_cadence || !org.payment_date_key) {
@@ -632,7 +631,6 @@ paymentRoutes.post("/employees/:employeeId/quote", requireRole("admin"), async (
   const period = resolveCurrentPeriod(
     org.payment_cadence as TeamPaymentSchedule,
     org.payment_date_key as TeamPaymentDateKey,
-    Number(org.reminder_lead_days ?? 0),
   );
 
   const existing = await c.env.DB.prepare(

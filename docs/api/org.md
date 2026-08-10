@@ -31,9 +31,9 @@ Employee `status`: `pending` \| `ready` \| `update_required` — set by payout v
 - **Source** — `api/src/routes/org.ts`
 - **Client** — `api.orgContext` · callers: `stores/auth.ts`
 - **Request** — none
-- **Response** — `{ org: { id, name, country, payment_cadence, payment_date_key, reminder_lead_days, payment_configured_at }, memberCount, paymentConfigured, reminderLeadDefaults: { monthly, weekly } }`
+- **Response** — `{ org: { id, name, country, payment_cadence, payment_date_key, reminder_lead_days, payment_configured_at }, memberCount, paymentConfigured }`
 - **Errors** — 404 org missing
-- **Rules** — Minimal workspace context; no member directory. `paymentConfigured` is true when `payment_configured_at` is set (Create Team onboarding complete). Phase 1: single org via `user.org_id`. `reminderLeadDefaults` comes from env `REMINDER_LEAD_DAYS_MONTHLY` / `REMINDER_LEAD_DAYS_WEEKLY` (defaults 7 / 3).
+- **Rules** — Minimal workspace context; no member directory. `paymentConfigured` is true when `payment_configured_at` is set (Create Team onboarding complete). Phase 1: single org via `user.org_id`. Column `reminder_lead_days` is legacy (unused; may be null).
 
 ---
 
@@ -78,7 +78,7 @@ Employee `status`: `pending` \| `ready` \| `update_required` — set by payout v
 
 - **Response** — `{ org: { id, name, country, payment_cadence, payment_date_key, reminder_lead_days, payment_configured_at } }`
 - **Errors** — 400 invalid schedule / date / mismatch
-- **Rules** — Writes org payment fields only; sets `reminder_lead_days` from env (`REMINDER_LEAD_DAYS_MONTHLY` / `REMINDER_LEAD_DAYS_WEEKLY`, defaults **7** / **3**); sets `payment_configured_at`. Does **not** create `payroll_runs` or `payroll_schedules`. Does not change org name. Audit `org.team_payment_updated`. Idempotent (may update preferences again).
+- **Rules** — Writes org payment fields only; sets `reminder_lead_days = NULL`; sets `payment_configured_at`. Does **not** create `payroll_runs` or `payroll_schedules`. Does not change org name. Audit `org.team_payment_updated`. Idempotent (may update preferences again).
 
 ---
 
@@ -88,8 +88,8 @@ Employee `status`: `pending` \| `ready` \| `update_required` — set by payout v
 - **Source** — `api/src/routes/org.ts` + `api/src/pay-period.ts`
 - **Client** — `api.payOverview` · callers: `PayView`
 - **Request** — none
-- **Response** — period window, stats (`currentPayrollMinor`, `recipientsCount`, `toBePaidCount`, `paidCount`, `progress`), latest 6 `recipients`, `highPriority` payroll/verification alerts, `payStatuses` map
-- **Rules** — Aggregates `employee_type = 'employee'` only against team schedule (`organizations.payment_*`) and `employee_payments`. Contractor cadence is deferred. Full To be paid / Paid / none algorithm: [`docs/pay-status.md`](../pay-status.md).
+- **Response** — period window (`periodKey`, `payday`, `paydayDisplay`, `cadence`, `monthLabel`), stats (`currentPayrollMinor`, `recipientsCount`, `progress`), latest 6 `recipients`, `highPriority.verification`
+- **Rules** — Aggregates `employee_type = 'employee'` only against team schedule (`organizations.payment_*`) and `employee_payments`. `progress` = share of employees with a `status=paid` payment for the current `periodKey`. Contractor cadence is deferred.
 - **Errors** — 404 org; 409 `PAYMENT_NOT_CONFIGURED`
 
 ---
@@ -105,12 +105,11 @@ Employee `status`: `pending` \| `ready` \| `update_required` — set by payout v
   |---|---|
   | `q` | Case-insensitive substring on name, email, endpoint |
   | `type` | `employee` \| `contractor` |
-  | `periodKey` | `YYYY-MM` or `YYYY-Www`; scopes row `payStatus` |
   | `page` / `pageSize` | When either is set, response is paginated; omit both for full list (Quick Pay / drawers) |
 
 - **Response** — `{ employees, total, page, pageSize, counts: { all, employees, contractors } }`
-  - Row fields include: `payment_cadence`, `payment_date_key`, `payStatus`, `nextPayday`, `nextPaydayDisplay`
-- **Rules** — Employees inherit team schedule; contractors use own cadence (`monthly`/`weekly`/`on_demand`). See [`docs/pay-status.md`](../pay-status.md).
+  - Row fields include: `payment_cadence`, `payment_date_key`, `nextPayday`, `nextPaydayDisplay`
+- **Rules** — Employees inherit team schedule; contractors use own cadence (`monthly`/`weekly`/`on_demand`). Period helpers: [`api/src/pay-period.ts`](../../api/src/pay-period.ts).
 
 ---
 
