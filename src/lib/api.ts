@@ -144,6 +144,38 @@ export interface InviteMailResult {
   mock?: boolean;
 }
 
+/** Team payment schedule stored on organizations (not payroll_runs). */
+export type TeamPaymentSchedule = "monthly" | "weekly";
+
+export type TeamPaymentDateKey =
+  | "every_1st"
+  | "every_15th"
+  | "every_end_of_month"
+  | "every_monday"
+  | "every_tuesday"
+  | "every_wednesday"
+  | "every_thursday"
+  | "every_friday"
+  | "every_saturday"
+  | "every_sunday";
+
+export interface OrgPaymentFields {
+  payment_cadence: TeamPaymentSchedule | null;
+  payment_date_key: TeamPaymentDateKey | null;
+  reminder_lead_days: number | null;
+  payment_configured_at: string | null;
+}
+
+export interface OrgContext {
+  org: {
+    id: string;
+    name: string;
+    country: string | null;
+  } & OrgPaymentFields;
+  memberCount: number;
+  paymentConfigured: boolean;
+}
+
 export interface OrgInfo {
   org: {
     id: string;
@@ -208,9 +240,17 @@ export const api = {
   revokeInvite: (id: string) => request<{ ok: boolean }>(`/invites/${id}/revoke`, { method: "POST" }),
 
   // org + employees
-  orgContext: () => request<{ org: { id: string; name: string; country: string | null }; memberCount: number }>("/org/context"),
+  // Phase 1: orgContext reflects the single workspace on user.org_id.
+  // Future multi-org: pass / select activeOrgId from memberships.
+  orgContext: () => request<OrgContext>("/org/context"),
   org: () => request<OrgInfo>("/org"),
   updateOrg: (body: { name?: string; country?: string }) => request<{ org: { id: string; name: string; country: string | null } }>("/org", { method: "PATCH", body: JSON.stringify(body) }),
+  /** Configure team payment preferences. Does not create payroll runs. */
+  updateTeam: (body: { paymentSchedule: TeamPaymentSchedule; paymentDate: TeamPaymentDateKey }) =>
+    request<{ org: { id: string; name: string; country: string | null } & OrgPaymentFields }>("/org/team", {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
   listEmployees: () => request<{ employees: Employee[] }>("/org/employees"),
   createEmployee: (body: Partial<Employee> & { amount?: string }) => request<{ employee: Employee }>("/org/employees", { method: "POST", body: JSON.stringify(body) }),
   updateEmployee: (id: string, body: Partial<Employee> & { amount?: string }) =>

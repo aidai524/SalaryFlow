@@ -18,7 +18,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { useAcceptInviteMutation, useResolveInviteQuery } from "@/hooks/use-auth-api";
-import { useAuthStore } from "@/stores/auth";
+import { adminHomePath, useAuthStore } from "@/stores/auth";
 import {
   AuthError,
   AuthField,
@@ -84,7 +84,11 @@ export function InviteView() {
         password,
       });
       await applyAuthedUser(user);
-      navigate(user.role === "admin" ? "/pay" : "/my-pay", { replace: true });
+      const paymentConfigured = useAuthStore.getState().paymentConfigured;
+      navigate(
+        user.role === "admin" ? adminHomePath(paymentConfigured) : "/my-pay",
+        { replace: true },
+      );
     } catch {
       // Error rendered from mutation state.
     }

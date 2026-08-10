@@ -130,6 +130,7 @@ Details: [`docs/api/payments.md`](api/payments.md).
 | GET | `/api/org/context` | admin\|employee | [org](api/org.md) | `api/src/routes/org.ts` | `api.orgContext` |
 | GET | `/api/org` | admin | [org](api/org.md) | `api/src/routes/org.ts` | `api.org` |
 | PATCH | `/api/org` | admin | [org](api/org.md) | `api/src/routes/org.ts` | `api.updateOrg` |
+| PATCH | `/api/org/team` | admin | [org](api/org.md) | `api/src/routes/org.ts` | `api.updateTeam` |
 | GET | `/api/org/employees` | admin | [org](api/org.md) | `api/src/routes/org.ts` | `api.listEmployees` |
 | POST | `/api/org/employees` | admin | [org](api/org.md) | `api/src/routes/org.ts` | `api.createEmployee` |
 | PATCH | `/api/org/employees/:id` | admin | [org](api/org.md) | `api/src/routes/org.ts` | `api.updateEmployee` |

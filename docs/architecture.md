@@ -50,7 +50,7 @@ Router: `react-router-dom` (`createBrowserRouter` in `src/router/index.tsx`).
 | `/pay` | `PayView` | Admin | Pay |
 | `/recipients` | `RecipientsView` | Admin | Recipients |
 | `/overview` | `OverviewView` | Admin | Overview |
-| `/teams/create` | `CreateTeamView` | Admin | No (in-page entry) |
+| `/teams/create` | `CreateTeamView` | Admin | No (onboarding chrome) |
 | `/payments` | `PaymentHistoryView` | Admin | No (in-page entry) |
 | `/my-pay` | `MyPayView` | Employee | My Pay |
 | `/` | role redirect | Authed | — |
@@ -60,9 +60,18 @@ Guards:
 - `RequireAuth` — redirect anonymous users to `/login`
 - `RequireAdmin` / `RequireEmployee` — role isolation
 - `RedirectIfAuthed` — keep logged-in users out of auth pages
-- `/` sends admin → `/pay`, employee → `/my-pay`
+- Admin without team payment prefs (`paymentConfigured === false`) → `/teams/create`; configured → `/pay`
+- `/` and post-login/register: admin → `adminHomePath(paymentConfigured)`, employee → `/my-pay`
 
 Design-preview bypass remains in `main.tsx` (`/design-preview` or `?preview=decash`).
+
+### Create Team onboarding
+
+- Route: `/teams/create` · view: `src/views/admin/CreateTeamView.tsx` + `create-team/*`
+- Org already exists from register (`orgName` required). This page only configures **team payment preferences**.
+- API: `PATCH /api/org/team` (`api.updateTeam`) — writes `organizations.payment_*` fields. Does **not** call `createRun` / create payroll runs.
+- UI: lime background `#c8e458`, dollar watermarks (`/decash/dollar-mark.svg`), centered `/logo.svg`, Rubik One slogan, Montserrat form; selects use `/icons/to-down.svg`.
+- Header variant `onboarding`: wallet chip + account menu only (no primary nav / header logo).
 
 ### Auth views (ported)
 
@@ -70,19 +79,26 @@ Login / register / accept-invite UI lives under `src/views/auth/` (legacy layout
 
 - Shared helpers: `src/views/auth/auth-shared.tsx`
 - API hooks (react-query): `src/hooks/use-auth-api.ts` — `useLoginMutation`, `useRegisterMutation`, `useAcceptInviteMutation`, `useResolveInviteQuery`
-- On success, views call `useAuthStore.applyAuthedUser(user)` then navigate admin → `/pay`, employee → `/my-pay`
+- Org hooks: `src/hooks/use-org-api.ts` — `useUpdateTeamMutation`, `useOrgContextQuery` (query key includes `orgId`)
+- On success, views call `useAuthStore.applyAuthedUser(user)` then navigate via `adminHomePath` / `/my-pay`
 - Legacy reference: `src/auth/AuthPages.tsx` (not mounted)
+
+## Org / team model (phase 1)
+
+- **Phase 1:** one organization per admin (`users.org_id`). Auth store keeps `orgId`, `orgName`, `paymentConfigured` for the current workspace.
+- Team payment fields live on `organizations` (`payment_cadence`, `payment_date_key`, `reminder_lead_days`, `payment_configured_at`) — separate from `payroll_runs` / schedules.
+- **Future multi-org:** memberships + `activeOrgId`; keep query keys scoped by `orgId` (already `["org-context", orgId]`).
 
 ## Layout
 
 Authenticated pages use `AppLayout`:
 
-1. `AppHeader` (logo + primary nav + wallet chip + menu button)
+1. `AppHeader` (logo + primary nav + wallet chip + menu button) — or onboarding variant
 2. `<Outlet />` content area
 
 Header specs (Figma `59:11715`):
 
-- Page background `#f6f6f6`
+- Page background `#f6f6f6` (Create Team uses `#c8e458`)
 - Header controls height `42px`, vertical padding ~`20px`
 - Logo: `/logo.svg`
 - Admin nav pills: Pay / Recipients / Overview inside a white capsule; active = black pill + white text
@@ -161,8 +177,10 @@ Avoid importing wagmi/RainbowKit hooks directly in new page code unless you are 
 
 ## Fonts
 
-- UI chrome (nav): Montserrat
-- Address / numeric chips: Space Grotesk
+- UI chrome (nav / forms): Montserrat — Regular from `public/fonts/Montserrat-Regular.ttf`; 500/600 still from `@fontsource/montserrat`
+- Address / numeric chips: Space Grotesk — Regular from `public/fonts/SpaceGrotesk-Regular.ttf`; 500 from `@fontsource/space-grotesk`
+- Slogan (Create Team): Rubik One — `public/fonts/RubikOne-Regular.ttf`
+- Tailwind tokens: `font-montserrat`, `font-space-grotesk`, `font-rubik-one` (`--font-*` in `src/styles.css`)
 - Existing Geist variable remains as the default sans fallback
 
 ## Naming conventions

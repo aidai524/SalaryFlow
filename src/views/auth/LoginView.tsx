@@ -12,7 +12,7 @@ import {
 import { FieldGroup } from "@/components/ui/field";
 import { Separator } from "@/components/ui/separator";
 import { useLoginMutation } from "@/hooks/use-auth-api";
-import { useAuthStore } from "@/stores/auth";
+import { adminHomePath, useAuthStore } from "@/stores/auth";
 import { AuthError, AuthField, Brand, authErrorMessage } from "./auth-shared";
 
 export function LoginView() {
@@ -28,7 +28,11 @@ export function LoginView() {
     try {
       const { user } = await loginMutation.mutateAsync({ email, password });
       await applyAuthedUser(user);
-      navigate(user.role === "admin" ? "/pay" : "/my-pay", { replace: true });
+      const paymentConfigured = useAuthStore.getState().paymentConfigured;
+      navigate(
+        user.role === "admin" ? adminHomePath(paymentConfigured) : "/my-pay",
+        { replace: true },
+      );
     } catch {
       // Error rendered from mutation state.
     }

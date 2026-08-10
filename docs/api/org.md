@@ -9,12 +9,13 @@ Parent index: [`docs/api.md`](../api.md) · Source: [`api/src/routes/org.ts`](..
 | GET | `/api/org/context` | `api.orgContext` |
 | GET | `/api/org` | `api.org` |
 | PATCH | `/api/org` | `api.updateOrg` |
+| PATCH | `/api/org/team` | `api.updateTeam` |
 | GET | `/api/org/employees` | `api.listEmployees` |
 | POST | `/api/org/employees` | `api.createEmployee` |
 | PATCH | `/api/org/employees/:id` | `api.updateEmployee` |
 | DELETE | `/api/org/employees/:id` | `api.deleteEmployee` |
 
-Types: `OrgInfo`, `Employee` in [`src/lib/api.ts`](../../src/lib/api.ts).
+Types: `OrgInfo`, `OrgContext`, `TeamPaymentSchedule`, `TeamPaymentDateKey`, `Employee` in [`src/lib/api.ts`](../../src/lib/api.ts). Helpers: [`api/src/org-payment.ts`](../../api/src/org-payment.ts).
 
 Callers: auth store (`orgContext`, `listEmployees`); legacy TeamPayouts / Settings / Overview. **`updateEmployee` / `deleteEmployee` have no current callers.**
 
@@ -28,9 +29,9 @@ Employee `status`: `pending` \| `ready` \| `update_required` — set by payout v
 - **Source** — `api/src/routes/org.ts`
 - **Client** — `api.orgContext` · callers: `stores/auth.ts`
 - **Request** — none
-- **Response** — `{ org: { id, name, country }, memberCount }`
+- **Response** — `{ org: { id, name, country, payment_cadence, payment_date_key, reminder_lead_days, payment_configured_at }, memberCount, paymentConfigured }`
 - **Errors** — 404 org missing
-- **Rules** — Minimal workspace context; no member directory.
+- **Rules** — Minimal workspace context; no member directory. `paymentConfigured` is true when `payment_configured_at` is set (Create Team onboarding complete). Phase 1: single org via `user.org_id`.
 
 ---
 
@@ -55,6 +56,27 @@ Employee `status`: `pending` \| `ready` \| `update_required` — set by payout v
 - **Response** — `{ org }`
 - **Errors** — 400 empty name / nothing to update
 - **Rules** — Audit `org.updated`.
+
+---
+
+### PATCH /api/org/team
+
+- **Auth** — admin
+- **Source** — `api/src/routes/org.ts`
+- **Client** — `api.updateTeam` · callers: Create Team view
+- **Request**
+
+  | Field | Type | Required | Notes |
+  |---|---|---|---|
+  | `paymentSchedule` | `monthly` \| `weekly` | yes | |
+  | `paymentDate` | string key | yes | Must match schedule (see below) |
+
+  Monthly `paymentDate`: `every_1st` \| `every_15th` \| `every_end_of_month`  
+  Weekly `paymentDate`: `every_monday` … `every_sunday`
+
+- **Response** — `{ org: { id, name, country, payment_cadence, payment_date_key, reminder_lead_days, payment_configured_at } }`
+- **Errors** — 400 invalid schedule / date / mismatch
+- **Rules** — Writes org payment fields only; sets `reminder_lead_days` to **7** (monthly) or **3** (weekly); sets `payment_configured_at`. Does **not** create `payroll_runs` or `payroll_schedules`. Does not change org name. Audit `org.team_payment_updated`. Idempotent (may update preferences again).
 
 ---
 

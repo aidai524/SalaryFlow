@@ -2,11 +2,34 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
-@import "@fontsource/montserrat/400.css";
+/* Medium/semibold weights still from fontsource until matching files exist under public/fonts/. */
 @import "@fontsource/montserrat/500.css";
 @import "@fontsource/montserrat/600.css";
-@import "@fontsource/space-grotesk/400.css";
 @import "@fontsource/space-grotesk/500.css";
+
+@font-face {
+  font-family: "Montserrat";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/Montserrat-Regular.ttf") format("truetype");
+}
+
+@font-face {
+  font-family: "Space Grotesk";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/SpaceGrotesk-Regular.ttf") format("truetype");
+}
+
+@font-face {
+  font-family: "Rubik One";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/RubikOne-Regular.ttf") format("truetype");
+}
 
 @custom-variant dark (&:is(.dark *));
 
@@ -23,8 +46,8 @@
   --card-foreground: oklch(0.21 0.025 255);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.21 0.025 255);
-  --primary: oklch(0.31 0.085 255);
-  --primary-foreground: oklch(0.985 0 0);
+  --primary: #d0f348;
+  --primary-foreground: #000000;
   --secondary: oklch(0.955 0.007 247);
   --secondary-foreground: oklch(0.25 0.035 255);
   --muted: oklch(0.96 0.005 247);
@@ -59,8 +82,8 @@
   --card-foreground: oklch(0.96 0.006 247);
   --popover: oklch(0.2 0.024 255);
   --popover-foreground: oklch(0.96 0.006 247);
-  --primary: oklch(0.72 0.11 255);
-  --primary-foreground: oklch(0.16 0.02 255);
+  --primary: #d0f348;
+  --primary-foreground: #000000;
   --secondary: oklch(0.25 0.025 255);
   --secondary-foreground: oklch(0.96 0.006 247);
   --muted: oklch(0.24 0.022 255);
@@ -86,6 +109,7 @@
   --font-sans: "Geist Variable", sans-serif;
   --font-montserrat: "Montserrat", sans-serif;
   --font-space-grotesk: "Space Grotesk", sans-serif;
+  --font-rubik-one: "Rubik One", "Montserrat", sans-serif;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);

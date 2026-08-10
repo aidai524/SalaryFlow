@@ -130,62 +130,78 @@ function HeaderAccountMenu() {
   );
 }
 
-export function AppHeader() {
+export function AppHeader({
+  variant = "default",
+}: {
+  /** Onboarding chrome: wallet + menu only (Create Team). */
+  variant?: "default" | "onboarding";
+}) {
   const navigate = useNavigate();
   const user = useAuthStore((state) => state.user);
+  const paymentConfigured = useAuthStore((state) => state.paymentConfigured);
   const isAdmin = user?.role === "admin";
   const navItems = isAdmin ? ADMIN_NAV : EMPLOYEE_NAV;
-  const homePath = isAdmin ? "/pay" : "/my-pay";
+  const homePath = isAdmin ? (paymentConfigured ? "/pay" : "/teams/create") : "/my-pay";
+  const isOnboarding = variant === "onboarding";
 
   return (
     <header
       className={cn(
-        "grid w-full grid-cols-[1fr_auto] items-start gap-x-3 gap-y-3 px-4 py-4 sm:px-6",
-        "md:grid-cols-[1fr_auto_1fr] md:items-center md:px-10 md:py-5 lg:px-14",
+        "grid w-full items-start gap-x-3 gap-y-3 px-4 py-4 sm:px-6",
+        isOnboarding
+          ? "grid-cols-[1fr_auto] md:items-center md:px-10 md:py-5 lg:px-14"
+          : "grid-cols-[1fr_auto] md:grid-cols-[1fr_auto_1fr] md:items-center md:px-10 md:py-5 lg:px-14",
       )}
     >
-      <button
-        type="button"
-        className="justify-self-start rounded-[25px] p-0"
-        onClick={() => navigate(homePath)}
-        aria-label="DECash home"
-      >
-        <img
-          src="/logo.svg"
-          alt="DECash"
-          className="h-auto w-[123px] md:w-[142px]"
-          width={142}
-          height={42}
-        />
-      </button>
+      {!isOnboarding && (
+        <button
+          type="button"
+          className="justify-self-start rounded-[25px] bg-primary p-[7px_10px_7px] h-[42px] w-[123px] md:w-[142px] flex justify-center items-center"
+          onClick={() => navigate(homePath)}
+          aria-label="DECash home"
+        >
+          <img
+            src="/logo.svg"
+            alt="DECash"
+            className="shrink-0 w-full h-full object-center object-contain"
+          />
+        </button>
+      )}
 
-      <div className="col-start-2 row-start-1 flex items-center justify-self-end gap-2 md:col-start-3">
+      <div
+        className={cn(
+          "flex items-center justify-self-end gap-2",
+          isOnboarding ? "col-start-2 row-start-1" : "col-start-2 row-start-1 md:col-start-3",
+        )}
+      >
         <HeaderWalletChip />
         <HeaderAccountMenu />
       </div>
 
-      <nav
-        className={cn(
-          "col-span-2 row-start-2 flex h-[42px] items-center justify-center justify-self-center gap-1.5 rounded-[25px] bg-white px-1 shadow-[0_0_6px_rgba(0,0,0,0.06)]",
-          "md:col-span-1 md:col-start-2 md:row-start-1 md:gap-[15px] md:px-0",
-        )}
-        aria-label="Primary navigation"
-      >
-        {navItems.map((item) => (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            className={({ isActive }) =>
-              cn(
-                "inline-flex h-[42px] min-w-0 items-center justify-center rounded-[25px] px-[17px] font-[family-name:var(--font-montserrat)] text-sm font-medium text-black md:min-w-[108px] md:px-6 md:text-base",
-                isActive && "bg-black text-white shadow-[0_0_6px_rgba(0,0,0,0.06)]",
-              )
-            }
-          >
-            {item.label}
-          </NavLink>
-        ))}
-      </nav>
+      {!isOnboarding && (
+        <nav
+          className={cn(
+            "col-span-2 row-start-2 flex h-[42px] items-center justify-center justify-self-center gap-1.5 rounded-[25px] bg-white px-1 shadow-[0_0_6px_rgba(0,0,0,0.06)]",
+            "md:col-span-1 md:col-start-2 md:row-start-1 md:gap-[15px] md:px-0",
+          )}
+          aria-label="Primary navigation"
+        >
+          {navItems.map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              className={({ isActive }) =>
+                cn(
+                  "inline-flex h-[42px] min-w-0 items-center justify-center rounded-[25px] px-[17px] font-[family-name:var(--font-montserrat)] text-sm font-medium text-black md:min-w-[108px] md:px-6 md:text-base",
+                  isActive && "bg-black text-white shadow-[0_0_6px_rgba(0,0,0,0.06)]",
+                )
+              }
+            >
+              {item.label}
+            </NavLink>
+          ))}
+        </nav>
+      )}
     </header>
   );
 }

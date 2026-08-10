@@ -3,6 +3,12 @@
 import { Hono } from "hono";
 import { requireRole, type AppEnv } from "../middleware";
 import { parseTokenAmount } from "../money";
+import {
+  isPaymentDateValidForSchedule,
+  normalizeTeamPaymentDateKey,
+  normalizeTeamPaymentSchedule,
+  reminderLeadDaysForSchedule,
+} from "../org-payment";
 import { normalizePayoutAddress, normalizePayoutNetwork, normalizePayoutToken } from "../payout";
 import { nowIso, uuid, type AuthUser } from "../types";
 
@@ -10,16 +16,39 @@ export const orgRoutes = new Hono<AppEnv>();
 
 // Minimal workspace context shared by admins and employees. It intentionally
 // excludes the member directory and other admin-only organization data.
+// Phase 1: user.org_id is the single current workspace; future multi-org will
+// select an activeOrgId from memberships instead of reading users.org_id alone.
 orgRoutes.get("/context", requireRole("admin", "employee"), async (c) => {
   const user = c.get("user") as AuthUser;
   const org = await c.env.DB.prepare(
-    "SELECT id, name, country FROM organizations WHERE id = ?",
-  ).bind(user.org_id).first();
+    `SELECT id, name, country, payment_cadence, payment_date_key, reminder_lead_days, payment_configured_at
+     FROM organizations WHERE id = ?`,
+  ).bind(user.org_id).first<{
+    id: string;
+    name: string;
+    country: string | null;
+    payment_cadence: string | null;
+    payment_date_key: string | null;
+    reminder_lead_days: number | null;
+    payment_configured_at: string | null;
+  }>();
   if (!org) return c.json({ error: "Organization not found" }, 404);
   const memberCount = await c.env.DB.prepare(
     "SELECT COUNT(*) AS n FROM users WHERE org_id = ? AND status = 'active'",
   ).bind(user.org_id).first<{ n: number }>();
-  return c.json({ org, memberCount: Number(memberCount?.n || 0) });
+  return c.json({
+    org: {
+      id: org.id,
+      name: org.name,
+      country: org.country,
+      payment_cadence: org.payment_cadence,
+      payment_date_key: org.payment_date_key,
+      reminder_lead_days: org.reminder_lead_days,
+      payment_configured_at: org.payment_configured_at,
+    },
+    memberCount: Number(memberCount?.n || 0),
+    paymentConfigured: !!org.payment_configured_at,
+  });
 });
 
 orgRoutes.get("/", requireRole("admin"), async (c) => {
@@ -52,6 +81,44 @@ orgRoutes.patch("/", requireRole("admin"), async (c) => {
     "INSERT INTO audit_log (id, org_id, actor_id, action, detail) VALUES (?, ?, ?, 'org.updated', ?)",
   ).bind(uuid(), user.org_id, user.id, name ? `Name → ${name}` : "Country updated").run();
   const org = await c.env.DB.prepare("SELECT id, name, country, created_at FROM organizations WHERE id = ?").bind(user.org_id).first();
+  return c.json({ org });
+});
+
+// Configure team payment preferences (Create Team onboarding).
+// Does not create payroll_runs or payroll_schedules — separate from createRun.
+orgRoutes.patch("/team", requireRole("admin"), async (c) => {
+  const user = c.get("user") as AuthUser;
+  const body = await c.req.json().catch(() => null);
+  const paymentSchedule = normalizeTeamPaymentSchedule(body?.paymentSchedule);
+  const paymentDate = normalizeTeamPaymentDateKey(body?.paymentDate);
+  if (!paymentSchedule) return c.json({ error: "Choose a valid payment schedule" }, 400);
+  if (!paymentDate) return c.json({ error: "Choose a valid payment date" }, 400);
+  if (!isPaymentDateValidForSchedule(paymentSchedule, paymentDate)) {
+    return c.json({ error: "Payment date does not match the selected schedule" }, 400);
+  }
+
+  const reminderLeadDays = reminderLeadDaysForSchedule(paymentSchedule);
+  const configuredAt = nowIso();
+  await c.env.DB.batch([
+    c.env.DB.prepare(
+      `UPDATE organizations
+       SET payment_cadence = ?, payment_date_key = ?, reminder_lead_days = ?, payment_configured_at = ?
+       WHERE id = ?`,
+    ).bind(paymentSchedule, paymentDate, reminderLeadDays, configuredAt, user.org_id),
+    c.env.DB.prepare(
+      "INSERT INTO audit_log (id, org_id, actor_id, action, detail) VALUES (?, ?, ?, 'org.team_payment_updated', ?)",
+    ).bind(
+      uuid(),
+      user.org_id,
+      user.id,
+      `Team payment → ${paymentSchedule}, ${paymentDate}, remind ${reminderLeadDays}d`,
+    ),
+  ]);
+
+  const org = await c.env.DB.prepare(
+    `SELECT id, name, country, payment_cadence, payment_date_key, reminder_lead_days, payment_configured_at
+     FROM organizations WHERE id = ?`,
+  ).bind(user.org_id).first();
   return c.json({ org });
 });
 
