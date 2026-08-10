@@ -87,7 +87,7 @@ export function PaymentHistoryTable({
                   <td className="px-5 py-3.5">
                     <span className={`inline-flex items-center gap-1.5 font-space-grotesk text-[12px] ${status.className}`}>
                       <span className={clsx(
-                        "size-3 rounded-full bg-[#FFA200]/20 shrink-0 flex justify-center items-center",
+                        "size-3 rounded-full shrink-0 flex justify-center items-center",
                         statusKey === "paid" ? "bg-[#0ED000]/20" : "bg-[#FFA200]/20",
                       )}>
                         {statusKey === "paid" ? (
