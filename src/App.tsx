@@ -113,7 +113,7 @@ function App() {
 
   const isAdmin = user.role === "admin";
   return (
-    <Shell user={user} orgName={orgName} memberCount={memberCount} attentionCount={attentionCount} screen={screen} onNavigate={setScreen} onLogout={logout}>
+    <Shell user={user} orgName={orgName} memberCount={memberCount} attentionCount={attentionCount} screen={screen} onNavigate={setScreen} onLogout={logout} onUserChange={setUser}>
       {isAdmin ? (
         screen === "overview" ? <OverviewPage user={user} onNavigate={setScreen} />
         : screen === "payroll" ? <PayrollPage user={user} />

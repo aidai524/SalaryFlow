@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { useAccount, useConnect, useSignMessage } from "wagmi";
+import { useState } from "react";
+import { useAccount, useSignMessage } from "wagmi";
 import { AlertCircle, CheckCircle2, LoaderCircle, ShieldCheck, WalletCards } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -17,7 +17,10 @@ import {
   PAYMENT_ITEM_PROGRESS_LABELS,
   type PaymentItemProgressStatus,
 } from "@/components/config";
+import { useOpenWalletModal } from "@/hooks/use-open-wallet-modal";
+import { formatAddress } from "@/lib/address";
 import { api, ApiError, type AuthUser, type PayrunItem } from "@/lib/api";
+import { preventRainbowKitDialogDismiss } from "@/lib/rainbowkit-overlay";
 import {
   buildPayableWorkItems,
   executeLivePaymentItem,
@@ -43,10 +46,6 @@ interface ItemProgress {
   detail?: string;
 }
 
-function shortAddress(address: string) {
-  return `${address.slice(0, 6)}…${address.slice(-4)}`;
-}
-
 export function PayDialog({ run, user, onClose, onCompleted }: PayDialogProps) {
   const [step, setStep] = useState<Step>("confirm");
   const [confirmed, setConfirmed] = useState(false);
@@ -55,8 +54,8 @@ export function PayDialog({ run, user, onClose, onCompleted }: PayDialogProps) {
   const [itemProgress, setItemProgress] = useState<ItemProgress[]>([]);
   const [liveSummary, setLiveSummary] = useState<{ submitted: number; failed: number } | null>(null);
 
-  const { address, isConnected } = useAccount();
-  const { connect, connectors, isPending: connecting } = useConnect();
+  const { openWalletModal, isConnected } = useOpenWalletModal();
+  const { address } = useAccount();
   const { signMessageAsync } = useSignMessage();
 
   const walletReady = Boolean(user.wallet_address && user.wallet_verified);
@@ -66,11 +65,6 @@ export function PayDialog({ run, user, onClose, onCompleted }: PayDialogProps) {
     && address.toLowerCase() === user.wallet_address.toLowerCase(),
   );
   const canStartLive = walletReady && connectedMatches && confirmed;
-
-  const injectedConnector = useMemo(
-    () => connectors.find((connector) => connector.type === "injected") ?? connectors[0],
-    [connectors],
-  );
 
   const updateItem = (itemId: string, patch: Partial<ItemProgress>) => {
     setItemProgress((current) => current.map((row) => (row.itemId === itemId ? { ...row, ...patch } : row)));
@@ -236,7 +230,12 @@ export function PayDialog({ run, user, onClose, onCompleted }: PayDialogProps) {
 
   return (
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
-      <DialogContent className="sm:max-w-[600px]">
+      <DialogContent
+        className="sm:max-w-[600px]"
+        onPointerDownOutside={preventRainbowKitDialogDismiss}
+        onInteractOutside={preventRainbowKitDialogDismiss}
+        onFocusOutside={preventRainbowKitDialogDismiss}
+      >
         <DialogHeader className="pr-8">
           <span className="mb-1 grid size-10 place-items-center rounded-xl bg-primary/10 text-primary">
             {step === "done" ? <CheckCircle2 className="size-5" /> : <ShieldCheck className="size-5" />}
@@ -274,11 +273,11 @@ export function PayDialog({ run, user, onClose, onCompleted }: PayDialogProps) {
                     <p className="font-medium">Payment authorization wallet</p>
                     {walletReady ? (
                       <p className="mt-1 text-muted-foreground">
-                        Verified {shortAddress(user.wallet_address!)}.
+                        Verified {formatAddress(user.wallet_address)}.
                         {connectedMatches
                           ? " Connected wallet matches."
                           : isConnected
-                            ? ` Connected ${shortAddress(address!)} does not match. Switch wallet.`
+                            ? ` Connected ${formatAddress(address)} does not match. Switch wallet.`
                             : " Connect the same wallet to sign intents."}
                       </p>
                     ) : (
@@ -288,16 +287,15 @@ export function PayDialog({ run, user, onClose, onCompleted }: PayDialogProps) {
                     )}
                   </div>
                 </div>
-                {walletReady && !connectedMatches && injectedConnector && (
+                {walletReady && !connectedMatches && (
                   <Button
                     type="button"
                     variant="outline"
                     size="sm"
-                    disabled={connecting}
-                    onClick={() => connect({ connector: injectedConnector })}
+                    onClick={openWalletModal}
                   >
                     <WalletCards data-icon="inline-start" />
-                    {connecting ? "Connecting…" : "Connect wallet"}
+                    {isConnected ? "Switch wallet" : "Connect wallet"}
                   </Button>
                 )}
             </div>

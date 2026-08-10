@@ -1,8 +1,8 @@
-// EVM wallet setup (wagmi + viem) — payment signing only; auth stays email+password
+// EVM wallet setup (RainbowKit + wagmi + viem) — payment signing only; auth stays email+password
 
-import { http, createConfig } from "wagmi";
+import { getDefaultConfig } from "@rainbow-me/rainbowkit";
+import { http } from "wagmi";
 import { base, arbitrum, polygon, optimism, mainnet, bsc } from "wagmi/chains";
-import { injected } from "wagmi/connectors";
 
 export const SUPPORTED_CHAINS = [
   { id: "Base", chain: base, icon: "$" },
@@ -13,9 +13,12 @@ export const SUPPORTED_CHAINS = [
   { id: "BNB Chain", chain: bsc, icon: "₿" },
 ];
 
-export const wagmiConfig = createConfig({
-  chains: [base, arbitrum, polygon, optimism, mainnet, bsc],
-  connectors: [injected()],
+const chains = [base, arbitrum, polygon, optimism, mainnet, bsc] as const;
+
+export const wagmiConfig = getDefaultConfig({
+  appName: "SalaryFlow",
+  projectId: import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || "00000000000000000000000000000000",
+  chains,
   transports: {
     [base.id]: http(),
     [arbitrum.id]: http(),

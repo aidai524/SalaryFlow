@@ -16,3 +16,4 @@ _worker.bundle
 .DS_Store
 
 pnpm-lock.yaml
+.env.local

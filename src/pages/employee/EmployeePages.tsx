@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { useAccount, useConnect, useDisconnect, useSignMessage } from "wagmi";
 import {
   AlertCircle,
   CalendarDays,
@@ -13,6 +12,7 @@ import {
   ShieldCheck,
   WalletCards,
 } from "lucide-react";
+import { PayoutOwnershipActions } from "@/components/PayoutOwnershipActions";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -43,8 +43,9 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { EmptyPanel, MetricCard, PageHeader, StatusBadge, TokenCell } from "@/components/WorkspaceUI";
+import { usePayoutOwnership } from "@/hooks/use-payout-ownership";
 import { api, ApiError, type AuthUser } from "@/lib/api";
-import { isValidEthereumAddress } from "@/lib/erc191";
+import { PAYOUT_UPDATED_EVENT } from "@/lib/payout-events";
 import { formatTokenAmount, useApi } from "@/lib/useData";
 
 function EmployeeFrame({ children }: { children: React.ReactNode }) {
@@ -199,13 +200,6 @@ export function EmployeePayoutPage() {
   const [network, setNetwork] = useState("Base");
   const [endpoint, setEndpoint] = useState("");
   const [saved, setSaved] = useState(false);
-  const [notice, setNotice] = useState("");
-  const [error, setError] = useState("");
-  const [verifying, setVerifying] = useState(false);
-  const { address, isConnected } = useAccount();
-  const { connect, connectors } = useConnect();
-  const { disconnect } = useDisconnect();
-  const { signMessageAsync } = useSignMessage();
   const employee = data?.payout;
 
   useEffect(() => {
@@ -215,6 +209,35 @@ export function EmployeePayoutPage() {
       setEndpoint(employee.endpoint || "");
     }
   }, [employee?.id, employee?.token, employee?.network, employee?.endpoint]);
+
+  useEffect(() => {
+    const onPayoutUpdated = () => {
+      void refresh();
+    };
+    window.addEventListener(PAYOUT_UPDATED_EVENT, onPayoutUpdated);
+    return () => window.removeEventListener(PAYOUT_UPDATED_EVENT, onPayoutUpdated);
+  }, [refresh]);
+
+  const ownership = usePayoutOwnership({
+    token,
+    network,
+    endpoint,
+    setEndpoint,
+    savedPayout: employee,
+    onVerified: async () => {
+      await refresh();
+    },
+    onDirty: () => setSaved(false),
+  });
+
+  const {
+    verifying,
+    error,
+    notice,
+    setError,
+    setNotice,
+    ownershipVerified,
+  } = ownership;
 
   const save = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -227,72 +250,6 @@ export function EmployeePayoutPage() {
       setTimeout(() => setSaved(false), 4000);
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : "Unable to save payout details");
-    }
-  };
-
-  const connectedAddressMatches = Boolean(address && address.toLowerCase() === endpoint.trim().toLowerCase());
-  const payoutConfigurationMatches = Boolean(
-    employee
-    && employee.token === token
-    && employee.network === network
-    && employee.endpoint.trim().toLowerCase() === endpoint.trim().toLowerCase(),
-  );
-  const ownershipVerified = Boolean(
-    payoutConfigurationMatches
-    && employee?.status === "ready"
-    && employee.payout_verified_at,
-  );
-
-  const useConnectedAddress = () => {
-    if (!address) return;
-    setEndpoint(address);
-    setSaved(false);
-    setError("");
-    const alreadyVerified = Boolean(
-      employee?.status === "ready"
-      && employee.payout_verified_at
-      && employee.token === token
-      && employee.network === network
-      && employee.endpoint.trim().toLowerCase() === address.toLowerCase(),
-    );
-    setNotice(alreadyVerified
-      ? "This connected wallet is already verified."
-      : "Connected wallet selected. Verify ownership to save and activate it.");
-  };
-
-  const changeConnectedWallet = () => {
-    disconnect();
-    setEndpoint("");
-    setSaved(false);
-    setError("");
-    setNotice("Wallet disconnected. Connect the wallet you want to use for payouts.");
-  };
-
-  const verifyWallet = async () => {
-    if (ownershipVerified) return;
-    setError("");
-    setNotice("");
-    if (!isValidEthereumAddress(endpoint.trim())) {
-      setError("Enter a valid EVM payout address first.");
-      return;
-    }
-    if (!address || !connectedAddressMatches) {
-      setError("Connect the same wallet address entered above before verifying.");
-      return;
-    }
-
-    setVerifying(true);
-    try {
-      const challenge = await api.createPayoutChallenge({ token, network, endpoint: endpoint.trim() });
-      const signature = await signMessageAsync({ message: challenge.message });
-      const result = await api.verifyPayout({ challengeId: challenge.challengeId, signature });
-      setEndpoint(result.payout.endpoint);
-      setNotice("Wallet ownership verified. This payout method is ready.");
-      await refresh();
-    } catch (cause) {
-      setError(cause instanceof ApiError ? cause.message : cause instanceof Error ? cause.message : "Wallet verification failed");
-    } finally {
-      setVerifying(false);
     }
   };
 
@@ -344,51 +301,18 @@ export function EmployeePayoutPage() {
                     <small className="mt-1 block text-xs leading-5 text-muted-foreground">Sign a one-time message. It cannot move funds or authorize payment.</small>
                   </div>
                 </div>
-                <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center">
-                  {ownershipVerified ? (
-                    <>
-                      <span className="mono-value min-w-0 flex-1 truncate text-xs text-emerald-700">
-                        {employee?.endpoint.slice(0, 10)}…{employee?.endpoint.slice(-8)} · address verified
-                      </span>
-                      <span role="status" className="inline-flex items-center gap-1.5 text-sm font-medium text-emerald-700">
-                        <CheckCircle2 className="size-4" aria-hidden="true" />Ownership verified
-                      </span>
-                      <Button variant="ghost" type="button" onClick={changeConnectedWallet}>Change wallet</Button>
-                    </>
-                  ) : !isConnected ? connectors.map((connector) => (
-                    <Button
-                      variant="outline"
-                      type="button"
-                      key={connector.uid}
-                      onClick={() => {
-                        setError("");
-                        setNotice("");
-                        connect({ connector });
-                      }}
-                    >
-                      Connect {connector.name}
-                    </Button>
-                  )) : (
-                    <>
-                      <span className={`mono-value min-w-0 flex-1 truncate text-xs ${connectedAddressMatches ? "text-emerald-700" : "text-amber-700"}`}>
-                        {address?.slice(0, 10)}…{address?.slice(-8)} · {connectedAddressMatches ? "address matches" : "does not match"}
-                      </span>
-                      {connectedAddressMatches ? (
-                        <Button variant="outline" type="button" disabled={verifying} onClick={verifyWallet}>
-                          <ShieldCheck data-icon="inline-start" />{verifying ? "Waiting…" : "Verify ownership"}
-                        </Button>
-                      ) : (
-                        <Button variant="outline" type="button" onClick={useConnectedAddress}>Use this address</Button>
-                      )}
-                      <Button variant="ghost" type="button" disabled={verifying} onClick={changeConnectedWallet}>Change wallet</Button>
-                    </>
-                  )}
-                </div>
-                {!ownershipVerified && isConnected && !connectedAddressMatches && (
-                  <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                    Use the connected address above, or disconnect it and connect a different wallet. Either choice requires a new ownership signature.
-                  </p>
-                )}
+                <PayoutOwnershipActions
+                  ownershipVerified={ownership.ownershipVerified}
+                  connectedAddressMatches={ownership.connectedAddressMatches}
+                  isConnected={ownership.isConnected}
+                  address={ownership.address}
+                  verifiedEndpoint={ownership.verifiedEndpoint}
+                  verifying={ownership.verifying}
+                  onConnect={ownership.connectWallet}
+                  onChangeWallet={ownership.changeConnectedWallet}
+                  onUseAddress={ownership.useConnectedAddress}
+                  onVerify={ownership.verifyWallet}
+                />
               </div>
             </CardContent>
             <CardFooter className="justify-between">

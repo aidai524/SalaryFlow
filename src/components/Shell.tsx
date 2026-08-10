@@ -13,8 +13,9 @@ import {
   UsersRound,
   WalletCards,
 } from "lucide-react";
+import { IdentityAvatar } from "@/components/IdentityAvatar";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { WalletAddressChip } from "@/components/WalletAddressChip";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -73,11 +74,8 @@ interface ShellProps {
   screen: Screen;
   onNavigate: (screen: Screen) => void;
   onLogout: () => void;
+  onUserChange: (user: AuthUser) => void;
   children: ReactNode;
-}
-
-function initials(name: string) {
-  return name.split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase();
 }
 
 function AppSidebar({
@@ -163,11 +161,12 @@ function AppSidebar({
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <SidebarMenuButton size="lg" className="data-open:bg-sidebar-accent">
-                  <Avatar className="size-8 rounded-lg">
-                    <AvatarFallback className="rounded-lg bg-primary/10 font-medium text-primary">
-                      {initials(user.name)}
-                    </AvatarFallback>
-                  </Avatar>
+                  <IdentityAvatar
+                    seed={user.wallet_address ?? user.email}
+                    size={32}
+                    className="rounded-lg"
+                    alt={user.name}
+                  />
                   <span className="grid flex-1 text-left leading-tight">
                     <span className="truncate font-medium">{user.name}</span>
                     <span className="truncate text-xs text-muted-foreground">{user.email}</span>
@@ -202,11 +201,13 @@ export function Shell({
   screen,
   onNavigate,
   onLogout,
+  onUserChange,
   children,
 }: ShellProps) {
   const { text } = useLanguage();
   const isAdmin = user.role === "admin";
   const topNav = (isAdmin ? adminNav : employeeNav).slice(0, 4);
+  const avatarSeed = user.wallet_address ?? user.email;
 
   return (
     <SidebarProvider
@@ -279,14 +280,11 @@ export function Shell({
               <Button variant="ghost" size="icon" disabled aria-label={text("Notifications unavailable", "通知功能暂不可用")}>
                 <Bell />
               </Button>
+              <WalletAddressChip user={user} onUserChange={onUserChange} />
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="ghost" size="icon" className="rounded-full">
-                    <Avatar className="size-8">
-                      <AvatarFallback className="bg-primary/10 text-xs font-medium text-primary">
-                        {initials(user.name)}
-                      </AvatarFallback>
-                    </Avatar>
+                    <IdentityAvatar seed={avatarSeed} size={32} alt={user.name} />
                     <span className="sr-only">Open user menu</span>
                   </Button>
                 </DropdownMenuTrigger>

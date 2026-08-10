@@ -17,6 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PageHeader, StatusBadge } from "@/components/WorkspaceUI";
 import { WalletConnectDialog } from "@/components/WalletConnect";
+import { formatAddress } from "@/lib/address";
 import { api, type AuthUser } from "@/lib/api";
 import { useApi } from "@/lib/useData";
 
@@ -128,7 +129,7 @@ export function SettingsPage({
                 <span className="min-w-0 flex-1">
                   <strong className="block text-sm font-medium">EVM wallet</strong>
                   <small className="mono-value block truncate text-xs text-muted-foreground">
-                    {user.wallet_address ? `${user.wallet_address.slice(0, 10)}…${user.wallet_address.slice(-8)}` : "Not connected"}
+                    {user.wallet_address ? formatAddress(user.wallet_address) : "Not connected"}
                   </small>
                 </span>
                 <Button type="button" onClick={() => setShowWallet(true)}>
@@ -183,6 +184,8 @@ export function SettingsPage({
       {showWallet && (
         <WalletConnectDialog
           user={user}
+          title="Payment authorization wallet"
+          description="Bind the EVM wallet that authorizes payroll payments. Ownership is proven by a one-time message that cannot initiate a transaction."
           onClose={() => setShowWallet(false)}
           onBound={(address) => {
             setShowWallet(false);

@@ -177,6 +177,11 @@
   }
 }
 
+/* Radix Dialog sets body { pointer-events: none }; RainbowKit portals need clicks. */
+[data-rk] {
+  pointer-events: auto !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
