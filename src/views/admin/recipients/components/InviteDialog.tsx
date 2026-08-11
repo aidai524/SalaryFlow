@@ -73,14 +73,19 @@ export function InviteDialog({
         role_title: roleTitle,
         employee_type: "employee",
       });
+      const recipient = email.trim();
       if (result.inviteUrl) {
         toast.success({
-          title: "Invitation created",
+          title: result.resent ? "Invitation resent" : "Invitation created",
           text: result.inviteUrl,
           duration: 8000,
         });
       } else {
-        toast.success({ title: `Invitation sent to ${email.trim()}` });
+        toast.success({
+          title: result.resent
+            ? `Invitation resent to ${recipient}`
+            : `Invitation sent to ${recipient}`,
+        });
       }
       onOpenChange(false);
     } catch (cause) {

@@ -555,7 +555,10 @@ export const api = {
     role_title?: RecipientRoleTitle | string;
     employee_type?: EmployeeType;
   }) =>
-    request<{ invitation: Invitation; mail: InviteMailResult; inviteUrl?: string }>("/invites", { method: "POST", body: JSON.stringify(body) }),
+    request<{ invitation: Invitation; mail: InviteMailResult; inviteUrl?: string; resent?: boolean }>("/invites", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   resolveInvite: (token: string) =>
     request<{ invitation: { email: string; name: string; role: string; orgName: string; accountExists: boolean } }>(
       `/invites/resolve/${token}`,

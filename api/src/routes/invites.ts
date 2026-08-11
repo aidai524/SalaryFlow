@@ -3,11 +3,93 @@
 import { Hono } from "hono";
 import { generateRandomPassword, hashPassword, signToken } from "../crypto";
 import { requireRole, setAuthCookie, type AppEnv } from "../middleware";
-import { sendInviteEmail } from "../mail";
+import { sendInviteEmail, type InviteMailResult } from "../mail";
 import { normalizeEmployeeType, normalizeRoleTitle } from "../recipient";
-import { nowIso, uuid, type AuthUser } from "../types";
+import { nowIso, uuid, type AuthUser, type Env } from "../types";
 
 export const inviteRoutes = new Hono<AppEnv>();
+
+type InviteFields = {
+  name: string;
+  role: string;
+  roleTitle: string | null;
+  employeeType: string;
+};
+
+function newInviteToken(): string {
+  return uuid().replace(/-/g, "") + uuid().replace(/-/g, "");
+}
+
+function inviteExpiresAt(): string {
+  return new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+}
+
+/**
+ * Send invite email with a fresh token; only rotate DB token after mail succeeds
+ * so a failed send leaves the previous link usable.
+ */
+async function deliverRotatedInvite(opts: {
+  env: Env;
+  orgId: string;
+  actorId: string;
+  inviterName: string;
+  inviteId: string;
+  email: string;
+  role: string;
+  fields?: InviteFields;
+}): Promise<{
+  mail: InviteMailResult;
+  token: string;
+  expiresAt: string;
+  inviteUrl: string;
+}> {
+  const token = newInviteToken();
+  const expiresAt = inviteExpiresAt();
+  const inviteUrl = `${opts.env.APP_URL}/invite/${token}`;
+  const org = await opts.env.DB.prepare("SELECT name FROM organizations WHERE id = ?")
+    .bind(opts.orgId)
+    .first<{ name: string }>();
+  const mail = await sendInviteEmail(opts.env, {
+    to: opts.email,
+    inviteUrl,
+    orgName: org?.name || "your organization",
+    inviterName: opts.inviterName,
+    role: opts.role,
+  });
+  if (!mail.ok) {
+    await opts.env.DB.prepare(
+      "INSERT INTO audit_log (id, org_id, actor_id, action, detail) VALUES (?, ?, ?, 'invite.email_failed', ?)",
+    ).bind(uuid(), opts.orgId, opts.actorId, `Email delivery failed for ${opts.email}`).run();
+    return { mail, token, expiresAt, inviteUrl };
+  }
+
+  if (opts.fields) {
+    await opts.env.DB.prepare(
+      `UPDATE invitations SET
+         token = ?, status = 'pending', expires_at = ?,
+         name = ?, role = ?, role_title = ?, employee_type = ?
+       WHERE id = ?`,
+    ).bind(
+      token,
+      expiresAt,
+      opts.fields.name,
+      opts.fields.role,
+      opts.fields.roleTitle,
+      opts.fields.employeeType,
+      opts.inviteId,
+    ).run();
+  } else {
+    await opts.env.DB.prepare(
+      "UPDATE invitations SET token = ?, status = 'pending', expires_at = ? WHERE id = ?",
+    ).bind(token, expiresAt, opts.inviteId).run();
+  }
+
+  await opts.env.DB.prepare(
+    "INSERT INTO audit_log (id, org_id, actor_id, action, detail) VALUES (?, ?, ?, 'invite.resent', ?)",
+  ).bind(uuid(), opts.orgId, opts.actorId, `Resent invitation to ${opts.email}`).run();
+
+  return { mail, token, expiresAt, inviteUrl };
+}
 
 // Admin: list invitations for org
 inviteRoutes.get("/", requireRole("admin"), async (c) => {
@@ -18,7 +100,7 @@ inviteRoutes.get("/", requireRole("admin"), async (c) => {
   return c.json({ invitations: rows.results });
 });
 
-// Admin: create invitation
+// Admin: create invitation (or silently resend when a pending invite already exists for this email)
 inviteRoutes.post("/", requireRole("admin"), async (c) => {
   const user = c.get("user") as AuthUser;
   const body = await c.req.json().catch(() => null);
@@ -41,26 +123,73 @@ inviteRoutes.post("/", requireRole("admin"), async (c) => {
   }
   if (!inviteName) return c.json({ error: "Name is required" }, 400);
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return c.json({ error: "A valid email is required" }, 400);
+  if (!user.org_id) return c.json({ error: "Organization required" }, 400);
+  const orgId = user.org_id;
 
   // The current data model supports one organization per account. Never silently
   // move an account between organizations or carry a role across workspaces.
   const existingUser = await c.env.DB.prepare(
     "SELECT id, org_id FROM users WHERE email = ?",
   ).bind(email).first<Record<string, unknown>>();
-  if (existingUser?.org_id === user.org_id) return c.json({ error: "This person is already a member" }, 409);
-  if (existingUser?.org_id && existingUser.org_id !== user.org_id) {
+  if (existingUser?.org_id === orgId) return c.json({ error: "This person is already a member" }, 409);
+  if (existingUser?.org_id && existingUser.org_id !== orgId) {
     return c.json({ error: "This account already belongs to another organization" }, 409);
   }
 
-  // prevent duplicate pending invitations to the same email in this org
-  const existingInvite = await c.env.DB.prepare(
-    "SELECT id FROM invitations WHERE org_id = ? AND email = ? AND status = 'pending'",
-  ).bind(user.org_id, email).first();
-  if (existingInvite) return c.json({ error: "An invitation to this email is already pending" }, 409);
+  const fields: InviteFields = {
+    name: inviteName,
+    role,
+    roleTitle: roleTitle || null,
+    employeeType,
+  };
 
-  const token = uuid().replace(/-/g, "") + uuid().replace(/-/g, "");
+  // Same org + email with a pending invite: resend (rotate token) instead of 409.
+  const existingInvite = await c.env.DB.prepare(
+    "SELECT id, expires_at FROM invitations WHERE org_id = ? AND email = ? AND status = 'pending'",
+  ).bind(orgId, email).first<{ id: string; expires_at: string }>();
+
+  if (existingInvite) {
+    const delivered = await deliverRotatedInvite({
+      env: c.env,
+      orgId,
+      actorId: user.id,
+      inviterName: user.name,
+      inviteId: existingInvite.id,
+      email,
+      role,
+      fields,
+    });
+
+    const invitationPayload = {
+      id: existingInvite.id,
+      email,
+      role,
+      role_title: fields.roleTitle,
+      name: inviteName,
+      employee_type: employeeType,
+      status: "pending" as const,
+      expires_at: delivered.mail.ok ? delivered.expiresAt : existingInvite.expires_at,
+    };
+
+    if (!delivered.mail.ok) {
+      return c.json({
+        error: `Email delivery failed. ${delivered.mail.error || "Check the email provider configuration and retry."}`,
+        code: "INVITE_EMAIL_FAILED",
+        invitation: invitationPayload,
+      }, 503);
+    }
+
+    return c.json({
+      invitation: invitationPayload,
+      mail: delivered.mail,
+      inviteUrl: delivered.mail.mock ? delivered.inviteUrl : undefined,
+      resent: true,
+    }, 200);
+  }
+
+  const token = newInviteToken();
   const id = uuid();
-  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  const expiresAt = inviteExpiresAt();
   const now = nowIso();
 
   await c.env.DB.prepare(
@@ -69,10 +198,10 @@ inviteRoutes.post("/", requireRole("admin"), async (c) => {
      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
   ).bind(
     id,
-    user.org_id,
+    orgId,
     email,
     role,
-    roleTitle || null,
+    fields.roleTitle,
     inviteName,
     employeeType,
     token,
@@ -81,7 +210,7 @@ inviteRoutes.post("/", requireRole("admin"), async (c) => {
     now,
   ).run();
 
-  const org = await c.env.DB.prepare("SELECT name FROM organizations WHERE id = ?").bind(user.org_id).first<{ name: string }>();
+  const org = await c.env.DB.prepare("SELECT name FROM organizations WHERE id = ?").bind(orgId).first<{ name: string }>();
   const inviteUrl = `${c.env.APP_URL}/invite/${token}`;
   const mail = await sendInviteEmail(c.env, {
     to: email,
@@ -93,23 +222,23 @@ inviteRoutes.post("/", requireRole("admin"), async (c) => {
 
   await c.env.DB.prepare(
     "INSERT INTO audit_log (id, org_id, actor_id, action, detail) VALUES (?, ?, ?, 'invite.created', ?)",
-  ).bind(uuid(), user.org_id, user.id, `Invited ${email} (${role})`).run();
+  ).bind(uuid(), orgId, user.id, `Invited ${email} (${role})`).run();
 
   const invitationPayload = {
     id,
     email,
     role,
-    role_title: roleTitle || null,
+    role_title: fields.roleTitle,
     name: inviteName,
     employee_type: employeeType,
-    status: "pending",
+    status: "pending" as const,
     expires_at: expiresAt,
   };
 
   if (!mail.ok) {
     await c.env.DB.prepare(
       "INSERT INTO audit_log (id, org_id, actor_id, action, detail) VALUES (?, ?, ?, 'invite.email_failed', ?)",
-    ).bind(uuid(), user.org_id, user.id, `Email delivery failed for ${email}`).run();
+    ).bind(uuid(), orgId, user.id, `Email delivery failed for ${email}`).run();
     return c.json({
       error: `Invitation created, but email delivery failed. ${mail.error || "Check the email provider configuration and retry."}`,
       code: "INVITE_EMAIL_FAILED",
@@ -117,7 +246,7 @@ inviteRoutes.post("/", requireRole("admin"), async (c) => {
     }, 503);
   }
 
-  return c.json({ invitation: invitationPayload, mail, inviteUrl: mail.mock ? inviteUrl : undefined }, 201);
+  return c.json({ invitation: invitationPayload, mail, inviteUrl: mail.mock ? inviteUrl : undefined, resent: false }, 201);
 });
 
 // Public: resolve an invitation token (used by invite page)
@@ -273,30 +402,32 @@ inviteRoutes.post("/accept", async (c) => {
 // Admin: resend / revoke
 inviteRoutes.post("/:id/resend", requireRole("admin"), async (c) => {
   const user = c.get("user") as AuthUser;
+  if (!user.org_id) return c.json({ error: "Organization required" }, 400);
+  const orgId = user.org_id;
   const id = c.req.param("id");
-  const invite = await c.env.DB.prepare("SELECT * FROM invitations WHERE id = ? AND org_id = ?").bind(id, user.org_id).first<Record<string, unknown>>();
+  const invite = await c.env.DB.prepare("SELECT * FROM invitations WHERE id = ? AND org_id = ?").bind(id, orgId).first<Record<string, unknown>>();
   if (!invite) return c.json({ error: "Invitation not found" }, 404);
   if (invite.status === "accepted") return c.json({ error: "Accepted invitations cannot be resent" }, 409);
   if (invite.status === "revoked") return c.json({ error: "Revoked invitations cannot be resent" }, 409);
-  const token = uuid().replace(/-/g, "") + uuid().replace(/-/g, "");
-  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-  const inviteUrl = `${c.env.APP_URL}/invite/${token}`;
-  const org = await c.env.DB.prepare("SELECT name FROM organizations WHERE id = ?").bind(user.org_id).first<{ name: string }>();
-  const mail = await sendInviteEmail(c.env, { to: String(invite.email), inviteUrl, orgName: org?.name || "", inviterName: user.name, role: String(invite.role) });
-  if (!mail.ok) {
-    await c.env.DB.prepare(
-      "INSERT INTO audit_log (id, org_id, actor_id, action, detail) VALUES (?, ?, ?, 'invite.email_failed', ?)",
-    ).bind(uuid(), user.org_id, user.id, `Email delivery failed for ${String(invite.email)}`).run();
+
+  const delivered = await deliverRotatedInvite({
+    env: c.env,
+    orgId,
+    actorId: user.id,
+    inviterName: user.name,
+    inviteId: id,
+    email: String(invite.email),
+    role: String(invite.role),
+  });
+
+  if (!delivered.mail.ok) {
     return c.json({
-      error: `Email delivery failed. ${mail.error || "Check the email provider configuration and retry."}`,
+      error: `Email delivery failed. ${delivered.mail.error || "Check the email provider configuration and retry."}`,
       code: "INVITE_EMAIL_FAILED",
     }, 503);
   }
-  await c.env.DB.prepare("UPDATE invitations SET token = ?, status = 'pending', expires_at = ? WHERE id = ?").bind(token, expiresAt, id).run();
-  await c.env.DB.prepare(
-    "INSERT INTO audit_log (id, org_id, actor_id, action, detail) VALUES (?, ?, ?, 'invite.resent', ?)",
-  ).bind(uuid(), user.org_id, user.id, `Resent invitation to ${String(invite.email)}`).run();
-  return c.json({ ok: true, mail, inviteUrl: mail.mock ? inviteUrl : undefined });
+
+  return c.json({ ok: true, mail: delivered.mail, inviteUrl: delivered.mail.mock ? delivered.inviteUrl : undefined });
 });
 
 inviteRoutes.post("/:id/revoke", requireRole("admin"), async (c) => {

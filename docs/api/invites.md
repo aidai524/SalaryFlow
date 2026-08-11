@@ -48,17 +48,20 @@ Callers: legacy [`src/pages/admin/TeamPayouts.tsx`](../../src/pages/admin/TeamPa
   | `role_title` | string | no | Job title enum (`Developer` \| `Product` \| `Growth` \| `Finance` \| `Operations`) |
   | `employee_type` | `"employee"\|"contractor"` | no | Recipient type; default `employee` |
 
-- **Response** — `201` `{ invitation, mail, inviteUrl? }` — `inviteUrl` only when `mail.mock` (`MOCK_EMAIL=true`)
+- **Response**
+  - First invite: `201` `{ invitation, mail, inviteUrl?, resent: false }`
+  - Same org + email already `pending`: `200` `{ invitation, mail, inviteUrl?, resent: true }` — rotates token (old invite links stop resolving) and re-sends mail
+  - `inviteUrl` only when `mail.mock` (`MOCK_EMAIL=true`)
 - **Errors**
 
   | Status | Code | When |
   |---|---|---|
   | 400 | — | missing name / invalid email / invalid type or role_title |
-  | 409 | — | already member / other org / pending invite exists |
-  | 503 | `INVITE_EMAIL_FAILED` | **Invitation already inserted**; email failed. Body includes `invitation` |
+  | 409 | — | already a member of this org, or account belongs to another org |
+  | 503 | `INVITE_EMAIL_FAILED` | Email failed. Body may include `invitation`. On first create the row may already exist; retrying `POST /invites` resends |
 
-- **Rules** — Expires in 7 days. Persists `name`, `role_title`, `employee_type` on the invitation; accept applies them to the employee profile (and uses invite name when the accept form omits name for new accounts). Writes audit `invite.created` / `invite.email_failed`.
-- **Gotchas** — On 503, do not create again; use resend after fixing mail config.
+- **Rules** — Expires in 7 days. Persists `name`, `role_title`, `employee_type` on the invitation; accept applies them to the employee profile. Same-email pending invites are **not** blocked — repeat `POST /invites` resends and invalidates the previous token after a successful send. Writes audit `invite.created` / `invite.resent` / `invite.email_failed`.
+- **Gotchas** — Safe to click Send again if the recipient did not get the email; do not expect a pending 409.
 
 ---
 
@@ -112,7 +115,7 @@ Callers: legacy [`src/pages/admin/TeamPayouts.tsx`](../../src/pages/admin/TeamPa
 - **Request** — path `id`
 - **Response** — `{ ok: true, mail, inviteUrl? }`
 - **Errors** — 404; 409 accepted/revoked; 503 `INVITE_EMAIL_FAILED` (token **not** rotated if mail fails)
-- **Rules** — On mail success: rotates token + expires_at, status → `pending`.
+- **Rules** — On mail success: rotates token + expires_at, status → `pending` (same rotation helper as repeat `POST /invites`).
 
 ---
 
