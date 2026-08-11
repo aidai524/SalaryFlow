@@ -87,7 +87,7 @@ On funding `SUCCESS`, cron / reconcile auto-calls `submit-intent` with the store
 | `ACTIVE_ATTEMPT_EXISTS` | 409 | Reuse or wait; body may include `attempt` |
 | `QUOTE_EXPIRED` | 409 | New item quote (new attempt) |
 | `PAYMENT_WALLET_CHANGED` | 409 | Re-bind signer matching attempt |
-| `PAYMENT_PROVIDER_ERROR` | 502 | Inspect `detail`; check 1Click / asset map |
+| `PAYMENT_PROVIDER_ERROR` | 503 | Inspect `detail`; check 1Click / asset map |
 | `PAYMENT_SUBMIT_REJECTED` | 409 | Item reopened to pending; requote |
 | `QUICK_PAY_CONTEXT_INVALID` | 400 | Permanent — drop commit queue item |
 | `QUICK_PAY_CONTEXT_EXPIRED` | 409 | Permanent — context older than 24h |
@@ -130,7 +130,7 @@ On funding `SUCCESS`, cron / reconcile auto-calls `submit-intent` with the store
 - **Client** — `api.quotePaymentItem(itemId, idempotencyKey)` · `src/lib/payment.ts`
 - **Request** — path `itemId`; body `{ idempotencyKey }` — `^[A-Za-z0-9._:-]{16,128}$`
 - **Response** — `201` `{ attempt, reused: false }` or `200` `{ attempt, reused: true }` when same key+item
-- **Errors** — live gate; 422 wallet/payout/precision; 409 idempotency/active attempt/`ITEM_NOT_PENDING`; 503 asset map; 502 provider
+- **Errors** — live gate; 422 wallet/payout/precision; 409 idempotency/active attempt/`ITEM_NOT_PENDING`; 503 asset map; 503 provider
 - **Rules** — **Legacy** payroll-run path. Still uses `CONFIDENTIAL_INTENTS` + `INTENTS_ASSET_MAP`. Prefer Quick Pay employee quote for new UI.
 - **Gotchas** — Requires admin `wallet_verified`. Failed items can be re-quoted after reopen / fail path.
 
@@ -147,7 +147,7 @@ On funding `SUCCESS`, cron / reconcile auto-calls `submit-intent` with the store
 - **Response (live, standard)** — `200` `{ mode, context, quote }` — **no DB write**; `context` is HMAC-signed (24h TTL)
 - **Response (live, private)** — `200` `{ mode, context, intent, funding, quote }` — chains payout quote + `generateIntent` + funding quote into `context` (no DB)
 - **Rules** — Cancelling wallet sign/transfer leaves zero rows. Persist only via `/quick-pay/commit` after on-chain deposit. Private confidential origin = selected `originAsset`. Standard uses `INTENTS_CONFIDENTIALITY` (default `advanced`).
-- **Errors** — 422 payout/token; live gate on non-dry; 502 provider
+- **Errors** — 422 payout/token; live gate on non-dry; 503 provider
 
 ---
 
@@ -177,7 +177,7 @@ On funding `SUCCESS`, cron / reconcile auto-calls `submit-intent` with the store
 - **Client** — `api.generatePaymentIntent`
 - **Request** — path `attemptId`
 - **Response** — `{ attempt, intent: { standard: "erc191", payload: string }, reused }`
-- **Errors** — 409 wallet changed / wrong state / `QUOTE_EXPIRED` / `ATTEMPT_STATE_CONFLICT`; 502 provider
+- **Errors** — 409 wallet changed / wrong state / `QUOTE_EXPIRED` / `ATTEMPT_STATE_CONFLICT`; 503 provider
 - **Rules** — From `quoted` → `generating` → `awaiting_signature`. Reuses stored intent if already past generate.
 - **Gotchas** — Client must sign `intent.payload` with the admin wallet (same address as `signer_id`).
 

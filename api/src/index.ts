@@ -42,6 +42,11 @@ app.route("/api/records", recordRoutes);
 
 app.notFound((c) => c.json({ error: "Not found" }, 404));
 
+app.onError((err, c) => {
+  console.error("Unhandled API error", err);
+  return c.json({ error: "Internal server error", code: "INTERNAL_ERROR" }, 500);
+});
+
 export default {
   fetch: app.fetch,
   scheduled(_controller, env, ctx) {

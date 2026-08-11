@@ -156,7 +156,7 @@ async function signAndSubmitAttempt(options: {
   let attempt = generated.attempt;
   const payload = generated.intent?.payload;
   if (typeof payload !== "string" || !payload) {
-    throw new ApiError("Payment intent payload is missing", 502);
+    throw new ApiError("Payment intent payload is missing", 503);
   }
 
   const signature = await signMessage(payload);

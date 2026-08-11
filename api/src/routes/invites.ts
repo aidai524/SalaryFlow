@@ -114,7 +114,7 @@ inviteRoutes.post("/", requireRole("admin"), async (c) => {
       error: `Invitation created, but email delivery failed. ${mail.error || "Check the email provider configuration and retry."}`,
       code: "INVITE_EMAIL_FAILED",
       invitation: invitationPayload,
-    }, 502);
+    }, 503);
   }
 
   return c.json({ invitation: invitationPayload, mail, inviteUrl: mail.mock ? inviteUrl : undefined }, 201);
@@ -290,7 +290,7 @@ inviteRoutes.post("/:id/resend", requireRole("admin"), async (c) => {
     return c.json({
       error: `Email delivery failed. ${mail.error || "Check the email provider configuration and retry."}`,
       code: "INVITE_EMAIL_FAILED",
-    }, 502);
+    }, 503);
   }
   await c.env.DB.prepare("UPDATE invitations SET token = ?, status = 'pending', expires_at = ? WHERE id = ?").bind(token, expiresAt, id).run();
   await c.env.DB.prepare(

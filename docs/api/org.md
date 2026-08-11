@@ -92,7 +92,7 @@ Employee `status`: `pending` \| `ready` \| `update_required` — set by payout v
 - **Client** — `api.payOverview` · callers: `PayView`
 - **Request** — none
 - **Response** — period window (`periodKey`, `payday`, `paydayDisplay`, `cadence`, `monthLabel`), stats (`currentPayrollMinor`, `recipientsCount`, `progress`), latest 6 `recipients`, `highPriority.verification`
-- **Rules** — Aggregates `employee_type = 'employee'` only against team schedule (`organizations.payment_*`) and `employee_payments`. `progress` = share of employees with a `status=paid` payment for the current `periodKey`. Contractor cadence is deferred.
+- **Rules** — Aggregates `employee_type = 'employee'` only against team schedule (`organizations.payment_*`) and `employee_payments`. `periodKey` = natural calendar month/week of today; `payday` / `paydayDisplay` = next scheduled payday on/after today (`resolveUpcomingPayday`). `progress` = share of employees with a `status=paid` payment for the current `periodKey`. Contractor cadence is deferred.
 - **Errors** — 404 org; 409 `PAYMENT_NOT_CONFIGURED`
 
 ---
@@ -106,11 +106,11 @@ Employee `status`: `pending` \| `ready` \| `update_required` — set by payout v
 
   | Param | Notes |
   |---|---|
-  | `periodKey` | Optional. `YYYY-MM` or `YYYY-Www` matching team cadence; default = current period |
+  | `periodKey` | Optional. `YYYY-MM` or `YYYY-Www` matching team cadence; default = current natural calendar period |
   | `volumeRange` | `6` \| `12` (default `6`) — number of past periods for Payment Volume |
 
 - **Response** — `period` (includes `currentPeriodKey`), `stats` (`paidMinor`, `paidCount`, `awaitingMinor`, `awaitingCount`, `daysLeft`, `progress`, `recipientsCount`), `volume.bars[]`, `upcoming[]` (current + next 3 unpaid employee payrolls), `recentPayments` (latest 5 paid/processing), `category` (employee vs contractor headcount), `networks` (payout network distribution)
-- **Rules** — Dashboard money/progress counts `employee_type = 'employee'` only. Category / networks use full directory. No schema change; aggregates existing `employees` + `employee_payments`.
+- **Rules** — `period_key` buckets are natural calendar months/weeks (payment date), not payday roll-forward. Selected period’s `payday` / `daysLeft` use the scheduled date within that period. Dashboard money/progress counts `employee_type = 'employee'` only. Category / networks use full directory.
 - **Errors** — 400 invalid `periodKey`; 404 org; 409 `PAYMENT_NOT_CONFIGURED`
 
 ---

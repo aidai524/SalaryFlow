@@ -17,7 +17,7 @@ import {
   monthLabelForPayday,
   payrollTitleForPeriod,
   resolveCurrentPeriod,
-  resolveNextPeriod,
+  resolveUpcomingPayday,
   resolvePeriodFromKey,
   shortPeriodLabel,
 } from "../pay-period";
@@ -164,6 +164,8 @@ orgRoutes.get("/pay-overview", requireRole("admin"), async (c) => {
   const dateKey = org.payment_date_key as TeamPaymentDateKey;
   const now = new Date();
   const current = resolveCurrentPeriod(cadence, dateKey, now);
+  // Next Payment Day UI: next scheduled payday on/after today (not the in-period date if already past).
+  const upcomingPayday = resolveUpcomingPayday(cadence, dateKey, now);
 
   const employees = await c.env.DB.prepare(
     `SELECT id, name, role_title, employee_type, amount_minor, token, network, endpoint,
@@ -219,10 +221,10 @@ orgRoutes.get("/pay-overview", requireRole("admin"), async (c) => {
     org: { id: org.id, name: org.name },
     period: {
       periodKey: current.periodKey,
-      payday: current.payday,
-      paydayDisplay: formatPaydayDisplay(current.payday),
+      payday: upcomingPayday,
+      paydayDisplay: formatPaydayDisplay(upcomingPayday),
       cadence,
-      monthLabel: monthLabelForPayday(current.payday),
+      monthLabel: monthLabelForPayday(upcomingPayday),
     },
     stats: {
       currentPayrollMinor,
@@ -636,7 +638,7 @@ function enrichEmployeeRow(
 
   if (schedule?.scheduled && schedule.dateKey && (schedule.cadence === "monthly" || schedule.cadence === "weekly")) {
     try {
-      nextPayday = resolveNextPeriod(schedule.cadence, schedule.dateKey, now).payday;
+      nextPayday = resolveUpcomingPayday(schedule.cadence, schedule.dateKey, now);
     } catch {
       nextPayday = null;
     }

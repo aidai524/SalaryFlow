@@ -169,7 +169,7 @@ Rules:
 - Token/network picker: `src/components/token-network-dialog/TokenNetworkDialog.tsx`
 - Recipient drawer: `src/components/drawer/RecipientPickerDrawer.tsx` (kept mounted; Quick Pay no longer opens it)
 - Overview data: `GET /api/org/pay-overview` via `src/hooks/use-pay-api.ts`
-- Period helpers (payday / `period_key`): `api/src/pay-period.ts`
+- Period helpers: `api/src/pay-period.ts` — `period_key` is the natural calendar month (`YYYY-MM`) or ISO week (`YYYY-Www`) of the payment date; `payment_date_key` only drives scheduled payday / Next Payment Day (`resolveUpcomingPayday`), not period roll-forward
 - Recipients deep link: overview list → `/recipients?selected=<employeeId>`
 
 Team switcher control next to the greeting is **disabled** until multi-team lands.

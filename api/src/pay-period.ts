@@ -1,11 +1,12 @@
 // UTC pay-period helpers for team payment preferences (organizations.*).
-// Used by Pay overview stats and Quick Pay employee_payments.period_key.
+// period_key = natural calendar month / ISO week of the payment date (not payday roll-forward).
+// payment_date_key only drives scheduled payday display / upcoming reminders.
 
 import type { TeamPaymentDateKey, TeamPaymentSchedule } from "./org-payment";
 
 export interface PeriodWindow {
   periodKey: string;
-  /** ISO date YYYY-MM-DD (UTC) of the payday for this period. */
+  /** ISO date YYYY-MM-DD (UTC) of the scheduled payday within this period. */
   payday: string;
   cadence: TeamPaymentSchedule;
 }
@@ -77,28 +78,51 @@ function nextWeekdayOnOrAfter(fromYmd: string, weekday: number): string {
   return utcYmd(d);
 }
 
+/** Monday (UTC YMD) of the ISO week that contains `d`. */
+function isoWeekMondayYmd(d: Date): string {
+  const tmp = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  const day = tmp.getUTCDay() || 7;
+  tmp.setUTCDate(tmp.getUTCDate() - (day - 1));
+  return utcYmd(tmp);
+}
+
+function addCalendarMonths(year: number, monthIndex: number, delta: number): { y: number; m: number } {
+  const abs = year * 12 + monthIndex + delta;
+  const y = Math.floor(abs / 12);
+  const m = ((abs % 12) + 12) % 12;
+  return { y, m };
+}
+
+function weeklyPaydayInWeek(mondayYmd: string, dateKey: TeamPaymentDateKey): string {
+  const weekday = weekdayFromKey(dateKey);
+  if (weekday === null) throw new Error(`Invalid weekly payment_date_key: ${dateKey}`);
+  const payday = nextWeekdayOnOrAfter(mondayYmd, weekday);
+  const weekEnd = addUtcDays(mondayYmd, 6);
+  if (payday <= weekEnd) return payday;
+  // Payday weekday before Monday in calendar sense within week — use occurrence in week.
+  const d = utcMidnight(weekEnd);
+  const current = d.getUTCDay();
+  const delta = (current - weekday + 7) % 7;
+  d.setUTCDate(d.getUTCDate() - delta);
+  return utcYmd(d);
+}
+
 /**
  * Resolve the current pay period for the team schedule.
- * - Monthly: period is calendar month of the upcoming/current payday.
- * - Weekly: period is the ISO week of the upcoming/current payday weekday.
+ * - Monthly: period is the natural calendar month of `now` (YYYY-MM).
+ * - Weekly: period is the ISO week of `now` (YYYY-Www).
+ * Scheduled payday is the date_key within that period (may already be past).
  */
 export function resolveCurrentPeriod(
   cadence: TeamPaymentSchedule,
   dateKey: TeamPaymentDateKey,
   now: Date = new Date(),
 ): PeriodWindow {
-  const today = utcYmd(now);
-
   if (cadence === "monthly") {
     const year = now.getUTCFullYear();
     const month = now.getUTCMonth();
-    let payday = monthlyPaydayInMonth(year, month, dateKey);
-    // If today is after this month's payday, current period is next month.
-    if (today > payday) {
-      const next = month === 11 ? { y: year + 1, m: 0 } : { y: year, m: month + 1 };
-      payday = monthlyPaydayInMonth(next.y, next.m, dateKey);
-    }
-    const periodKey = payday.slice(0, 7); // YYYY-MM
+    const periodKey = `${year}-${String(month + 1).padStart(2, "0")}`;
+    const payday = monthlyPaydayInMonth(year, month, dateKey);
     return { periodKey, payday, cadence };
   }
 
@@ -106,8 +130,9 @@ export function resolveCurrentPeriod(
   if (weekday === null) {
     throw new Error(`Invalid weekly payment_date_key: ${dateKey}`);
   }
-  const payday = nextWeekdayOnOrAfter(today, weekday);
-  const periodKey = isoWeekKey(utcMidnight(payday));
+  const periodKey = isoWeekKey(now);
+  const mondayYmd = isoWeekMondayYmd(now);
+  const payday = weeklyPaydayInWeek(mondayYmd, dateKey);
   return { periodKey, payday, cadence };
 }
 
@@ -115,7 +140,7 @@ export function resolveCurrentPeriod(
 export const resolvePeriodForCadence = resolveCurrentPeriod;
 
 /**
- * Next pay period after the current window (for Recipients detail "Next Payment").
+ * Next calendar pay period after the window that contains `now`.
  */
 export function resolveNextPeriod(
   cadence: TeamPaymentSchedule,
@@ -123,8 +148,56 @@ export function resolveNextPeriod(
   now: Date = new Date(),
 ): PeriodWindow {
   const current = resolveCurrentPeriod(cadence, dateKey, now);
-  const dayAfter = utcMidnight(addUtcDays(current.payday, 1));
-  return resolveCurrentPeriod(cadence, dateKey, dayAfter);
+  return shiftPeriod(cadence, dateKey, current, 1);
+}
+
+/**
+ * Next scheduled payday on or after today (reminder / Next Payment Day).
+ * Independent of period_key bucketing.
+ */
+export function resolveUpcomingPayday(
+  cadence: TeamPaymentSchedule,
+  dateKey: TeamPaymentDateKey,
+  now: Date = new Date(),
+): string {
+  const today = utcYmd(now);
+  if (cadence === "monthly") {
+    const year = now.getUTCFullYear();
+    const month = now.getUTCMonth();
+    const thisMonth = monthlyPaydayInMonth(year, month, dateKey);
+    if (thisMonth >= today) return thisMonth;
+    const next = addCalendarMonths(year, month, 1);
+    return monthlyPaydayInMonth(next.y, next.m, dateKey);
+  }
+  const weekday = weekdayFromKey(dateKey);
+  if (weekday === null) {
+    throw new Error(`Invalid weekly payment_date_key: ${dateKey}`);
+  }
+  return nextWeekdayOnOrAfter(today, weekday);
+}
+
+function shiftPeriod(
+  cadence: TeamPaymentSchedule,
+  dateKey: TeamPaymentDateKey,
+  window: PeriodWindow,
+  delta: number,
+): PeriodWindow {
+  if (cadence === "monthly") {
+    const match = /^(\d{4})-(\d{2})$/.exec(window.periodKey);
+    if (!match) throw new Error(`Invalid monthly periodKey: ${window.periodKey}`);
+    const year = Number(match[1]);
+    const monthIndex = Number(match[2]) - 1;
+    const next = addCalendarMonths(year, monthIndex, delta);
+    const periodKey = `${next.y}-${String(next.m + 1).padStart(2, "0")}`;
+    const payday = monthlyPaydayInMonth(next.y, next.m, dateKey);
+    return { periodKey, payday, cadence };
+  }
+
+  const mondayYmd = isoWeekMondayYmd(utcMidnight(window.payday));
+  const shiftedMonday = addUtcDays(mondayYmd, delta * 7);
+  const periodKey = isoWeekKey(utcMidnight(shiftedMonday));
+  const payday = weeklyPaydayInWeek(shiftedMonday, dateKey);
+  return { periodKey, payday, cadence };
 }
 
 /**
@@ -158,21 +231,13 @@ export function resolvePeriodFromKey(
   week1Monday.setUTCDate(jan4.getUTCDate() - (jan4Day - 1));
   const monday = new Date(week1Monday);
   monday.setUTCDate(week1Monday.getUTCDate() + (week - 1) * 7);
-  const weekday = weekdayFromKey(dateKey);
-  if (weekday === null) return null;
   const mondayYmd = utcYmd(monday);
-  const payday = nextWeekdayOnOrAfter(mondayYmd, weekday);
-  // Ensure payday stays inside this ISO week (Sun = Monday + 6).
-  const weekEnd = addUtcDays(mondayYmd, 6);
-  if (payday > weekEnd) {
-    // Payday weekday before Monday in calendar sense within week — use prior occurrence in week.
-    const d = utcMidnight(weekEnd);
-    const current = d.getUTCDay();
-    const delta = (current - weekday + 7) % 7;
-    d.setUTCDate(d.getUTCDate() - delta);
-    return { periodKey, payday: utcYmd(d), cadence };
+  try {
+    const payday = weeklyPaydayInWeek(mondayYmd, dateKey);
+    return { periodKey, payday, cadence };
+  } catch {
+    return null;
   }
-  return { periodKey, payday, cadence };
 }
 
 export type PeriodListDirection = "past" | "future";
@@ -181,6 +246,7 @@ export type PeriodListDirection = "past" | "future";
  * List consecutive period windows.
  * - past: oldest → newest, ending at `from` (inclusive), length = count
  * - future: from `from` inclusive → newer, length = count
+ * Steps by natural calendar period keys (not payday roll-forward).
  */
 export function listPeriodWindows(
   cadence: TeamPaymentSchedule,
@@ -200,23 +266,17 @@ export function listPeriodWindows(
     const out: PeriodWindow[] = [anchor];
     let cursor = anchor;
     while (out.length < count) {
-      cursor = resolveNextPeriod(cadence, dateKey, utcMidnight(addUtcDays(cursor.payday, 1)));
+      cursor = shiftPeriod(cadence, dateKey, cursor, 1);
       out.push(cursor);
     }
     return out;
   }
 
-  // Walk backward from anchor.
   const newestFirst: PeriodWindow[] = [anchor];
   let cursor = anchor;
   while (newestFirst.length < count) {
-    // Step to day before current payday, then resolve that "current" period.
-    const dayBefore = utcMidnight(addUtcDays(cursor.payday, -1));
-    const prev = resolveCurrentPeriod(cadence, dateKey, dayBefore);
-    if (prev.periodKey === cursor.periodKey) {
-      // Safety: avoid infinite loop on bad keys.
-      break;
-    }
+    const prev = shiftPeriod(cadence, dateKey, cursor, -1);
+    if (prev.periodKey === cursor.periodKey) break;
     newestFirst.push(prev);
     cursor = prev;
   }

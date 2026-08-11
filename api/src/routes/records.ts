@@ -7,7 +7,7 @@ import {
   type TeamPaymentDateKey,
   type TeamPaymentSchedule,
 } from "../org-payment";
-import { formatPaydayDisplay, resolveNextPeriod } from "../pay-period";
+import { formatPaydayDisplay, resolveUpcomingPayday } from "../pay-period";
 import { normalizePayoutAddress, normalizePayoutNetwork, normalizePayoutToken } from "../payout";
 import {
   normalizePresetAvatarUrl,
@@ -85,7 +85,7 @@ async function loadEnrichedPayout(db: D1Database, userId: string, orgId: string)
 
   if (schedule?.scheduled && schedule.dateKey && (schedule.cadence === "monthly" || schedule.cadence === "weekly")) {
     try {
-      nextPayday = resolveNextPeriod(schedule.cadence, schedule.dateKey, new Date()).payday;
+      nextPayday = resolveUpcomingPayday(schedule.cadence, schedule.dateKey, new Date());
     } catch {
       nextPayday = null;
     }

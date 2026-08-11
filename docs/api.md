@@ -222,7 +222,7 @@ Details: [`docs/api/payments.md`](api/payments.md).
 |---|---|---|---|
 | `SERVER_NOT_CONFIGURED` | 503 | global | Missing `JWT_SECRET` |
 | `PASSWORD_HASH_UNAVAILABLE` | 503 | auth/invites | PBKDF2 failed |
-| `INVITE_EMAIL_FAILED` | 502 | invites | Invite row may already exist; email send failed |
+| `INVITE_EMAIL_FAILED` | 503 | invites | Invite row may already exist; email send failed |
 | `PAYROLL_IMPORT_INVALID` | 400 | payroll | CSV rows invalid; see `errors[]` |
 | `PAYMENTS_DISABLED` | 503 | payments | `PAYMENTS_MODE` unset/disabled |
 | `LIVE_PAYMENTS_DISABLED` | 409 | payments | Live path blocked or `dry !== true` on `/quote`; also deprecated routes |
@@ -239,7 +239,7 @@ Details: [`docs/api/payments.md`](api/payments.md).
 | `ASSET_MAP_MISSING` | 503 | payments | No `INTENTS_ASSET_MAP` entry |
 | `ASSET_MAP_PROVIDER_MISMATCH` | 503 | payments | Map vs provider tokens mismatch |
 | `AMOUNT_PRECISION_UNSUPPORTED` | 422 | payments | Amount vs destination decimals |
-| `PAYMENT_PROVIDER_ERROR` | 502 | payments | 1Click quote/intent failure; may include `detail` |
+| `PAYMENT_PROVIDER_ERROR` | 503 | payments | 1Click quote/intent failure; may include `detail` |
 | `QUOTE_EXPIRED` | 409 | payments | Need new attempt |
 | `ATTEMPT_STATE_CONFLICT` | 409 | payments | Concurrent state transition |
 | `PAYMENT_SUBMIT_REJECTED` | 409 | payments | Definitive reject; item reopened |
@@ -257,7 +257,7 @@ Details: [`docs/api/payments.md`](api/payments.md).
 | All `/api/*` → 503 `SERVER_NOT_CONFIGURED` | `JWT_SECRET` in Worker secrets / `.dev.vars` |
 | 401 on every authed call | Cookie not sent (proxy/host mismatch); use same-origin `/api` or Bearer |
 | Login 403 | User `status=disabled` |
-| Invite 502 `INVITE_EMAIL_FAILED` | Invite may exist; fix Resend/`MOCK_EMAIL=true` then resend |
+| Invite 503 `INVITE_EMAIL_FAILED` | Invite may exist; fix Resend/`MOCK_EMAIL=true` then resend |
 | Cannot edit payroll items | Run must be `draft`; item `pending` with no attempts |
 | Dry-run 422 | Employee not linked / payout not `ready` / token-network mismatch |
 | Live quote 409 `LIVE_PAYMENTS_DISABLED` | `PAYMENTS_MODE=live`, official provider URL, `PAYMENTS_EXECUTION_ACK` |

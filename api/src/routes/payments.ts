@@ -198,7 +198,7 @@ paymentRoutes.post("/items/:itemId/quote", requireRole("admin"), async (c) => {
   try {
     supportedTokens = await getSupportedTokens(c.env);
   } catch (error) {
-    return c.json({ error: "Could not validate the live asset mapping", code: "PAYMENT_PROVIDER_ERROR", detail: providerError(error) }, 502);
+    return c.json({ error: "Could not validate the live asset mapping", code: "PAYMENT_PROVIDER_ERROR", detail: providerError(error) }, 503);
   }
   const assetIssue = validatePaymentAssetMapping(assets, item.token, item.network, supportedTokens);
   if (assetIssue) return c.json({ error: assetIssue.message, code: assetIssue.code }, 503);
@@ -327,7 +327,7 @@ paymentRoutes.post("/items/:itemId/quote", requireRole("admin"), async (c) => {
     await c.env.DB.prepare(
       "UPDATE payment_attempts SET state = 'failed', last_error = ?, failed_at = ?, updated_at = ? WHERE id = ?",
     ).bind(providerError(error), failedAt, failedAt, attemptId).run();
-    return c.json({ error: "Live quote failed", code: "PAYMENT_PROVIDER_ERROR", detail: providerError(error) }, 502);
+    return c.json({ error: "Live quote failed", code: "PAYMENT_PROVIDER_ERROR", detail: providerError(error) }, 503);
   }
 
   return c.json({ attempt: await getPaymentAttempt(c.env.DB, attemptId, user.org_id), reused: false }, 201);
@@ -383,7 +383,7 @@ paymentRoutes.post("/attempts/:attemptId/intent", requireRole("admin"), async (c
     await c.env.DB.prepare(
       "UPDATE payment_attempts SET state = 'quoted', last_error = ?, updated_at = ? WHERE id = ? AND state = 'generating'",
     ).bind(providerError(error), nowIso(), attempt.id).run();
-    return c.json({ error: "Intent generation failed", code: "PAYMENT_PROVIDER_ERROR", detail: providerError(error) }, 502);
+    return c.json({ error: "Intent generation failed", code: "PAYMENT_PROVIDER_ERROR", detail: providerError(error) }, 503);
   }
 
   attempt = await getPaymentAttempt(c.env.DB, attempt.id, user.org_id);
@@ -651,7 +651,7 @@ async function handleQuickPayQuote(
   try {
     supportedTokens = await getSupportedTokens(c.env);
   } catch (error) {
-    return c.json({ error: "Could not load supported tokens", code: "PAYMENT_PROVIDER_ERROR", detail: providerError(error) }, 502);
+    return c.json({ error: "Could not load supported tokens", code: "PAYMENT_PROVIDER_ERROR", detail: providerError(error) }, 503);
   }
 
   const origin = findStableAsset(supportedTokens, { assetId: originAssetId });
@@ -773,7 +773,7 @@ async function handleQuickPayQuote(
         },
       });
     } catch (error) {
-      return c.json({ error: "Quote preview failed", code: "PAYMENT_PROVIDER_ERROR", detail: providerError(error) }, 502);
+      return c.json({ error: "Quote preview failed", code: "PAYMENT_PROVIDER_ERROR", detail: providerError(error) }, 503);
     }
   }
 
@@ -943,7 +943,7 @@ async function handleQuickPayQuote(
         },
       }, 200);
     } catch (error) {
-      return c.json({ error: "Live private quote failed", code: "PAYMENT_PROVIDER_ERROR", detail: providerError(error) }, 502);
+      return c.json({ error: "Live private quote failed", code: "PAYMENT_PROVIDER_ERROR", detail: providerError(error) }, 503);
     }
   }
 
@@ -1024,7 +1024,7 @@ async function handleQuickPayQuote(
       },
     }, 200);
   } catch (error) {
-    return c.json({ error: "Live quote failed", code: "PAYMENT_PROVIDER_ERROR", detail: providerError(error) }, 502);
+    return c.json({ error: "Live quote failed", code: "PAYMENT_PROVIDER_ERROR", detail: providerError(error) }, 503);
   }
 }
 
