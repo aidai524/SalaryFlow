@@ -168,7 +168,7 @@ Employee `status`: `pending` \| `ready` \| `update_required` — set by payout v
 - **Client** — `api.listEmployeePayments`
 - **Request** — `limit`, `cursor` (paid_at cursor)
 - **Response** — `{ payments: [{ id, paid_at, amount_minor, token, network, period_key, txHash, explorerUrl }], nextCursor }`
-- **Rules** — `status = paid` rows only; optional join to confirmed attempt `deposit_tx_hash`.
+- **Rules** — `status = paid` rows only; optional join to confirmed attempt `destination_tx_hash` (employee receive/settlement tx on destination chain, not admin funding/deposit).
 
 ---
 

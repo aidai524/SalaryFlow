@@ -135,12 +135,13 @@ recordRoutes.get("/me", requireRole("employee"), async (c) => {
   if (!emp) return c.json({ payments: [] });
 
   const limit = Math.min(50, Math.max(1, Number.parseInt(String(c.req.query("limit") || "50"), 10) || 50));
+  // Privacy: only return destination/receive tx — never admin deposit/funding tx or payer wallet.
   const rows = await c.env.DB.prepare(
     `SELECT ep.id, ep.paid_at, ep.amount_minor, ep.token, ep.network, ep.period_key, ep.status, ep.created_at,
-            pa.deposit_tx_hash AS tx_hash, u.wallet_address AS from_address
+            pa.destination_tx_hash AS tx_hash,
+            pa.destination_tx_explorer_url AS tx_explorer_url
      FROM employee_payments ep
      LEFT JOIN payment_attempts pa ON pa.employee_payment_id = ep.id AND pa.state = 'confirmed'
-     LEFT JOIN users u ON u.id = pa.signer_id
      WHERE ep.org_id = ? AND ep.employee_id = ?
      ORDER BY COALESCE(ep.paid_at, ep.created_at) DESC, ep.id DESC
      LIMIT ?`,
@@ -154,7 +155,7 @@ recordRoutes.get("/me", requireRole("employee"), async (c) => {
     status: string;
     created_at: string;
     tx_hash: string | null;
-    from_address: string | null;
+    tx_explorer_url: string | null;
   }>();
 
   return c.json({
@@ -167,8 +168,8 @@ recordRoutes.get("/me", requireRole("employee"), async (c) => {
       period_key: r.period_key,
       status: r.status,
       txHash: r.tx_hash,
-      explorerUrl: r.tx_hash && r.network ? explorerUrlForTx(r.network, r.tx_hash) : null,
-      fromAddress: r.from_address,
+      explorerUrl: r.tx_explorer_url
+        || (r.tx_hash && r.network ? explorerUrlForTx(r.network, r.tx_hash) : null),
     })),
   });
 });

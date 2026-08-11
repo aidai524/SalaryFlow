@@ -66,6 +66,7 @@ export interface EmployeePaymentHistoryItem {
   token: string;
   network: string;
   period_key: string;
+  /** Destination-chain receive tx only — not admin funding/deposit. */
   txHash: string | null;
   explorerUrl: string | null;
 }
@@ -101,9 +102,9 @@ export interface MyPaymentHistoryItem {
   network: string;
   period_key: string;
   status: "pending" | "processing" | "paid" | "failed" | "refunded";
+  /** Destination-chain receive tx only — never admin funding/deposit. */
   txHash: string | null;
   explorerUrl: string | null;
-  fromAddress: string | null;
 }
 
 export interface ListEmployeesParams {

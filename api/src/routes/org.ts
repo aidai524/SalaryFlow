@@ -724,9 +724,11 @@ orgRoutes.get("/employees/:id/payments", requireRole("admin"), async (c) => {
   const limit = Math.min(50, Math.max(1, Number.parseInt(String(c.req.query("limit") || "20"), 10) || 20));
   const cursor = String(c.req.query("cursor") || "").trim();
 
+  // History Tx = employee destination/receive settlement, not admin deposit/funding.
   let sql = `
     SELECT ep.id, ep.paid_at, ep.amount_minor, ep.token, ep.network, ep.period_key, ep.status, ep.created_at,
-           pa.deposit_tx_hash AS tx_hash
+           pa.destination_tx_hash AS tx_hash,
+           pa.destination_tx_explorer_url AS tx_explorer_url
     FROM employee_payments ep
     LEFT JOIN payment_attempts pa ON pa.employee_payment_id = ep.id AND pa.state = 'confirmed'
     WHERE ep.org_id = ? AND ep.employee_id = ? AND ep.status = 'paid'
@@ -749,6 +751,7 @@ orgRoutes.get("/employees/:id/payments", requireRole("admin"), async (c) => {
     status: string;
     created_at: string;
     tx_hash: string | null;
+    tx_explorer_url: string | null;
   }>();
 
   const hasMore = rows.results.length > limit;
@@ -766,9 +769,8 @@ orgRoutes.get("/employees/:id/payments", requireRole("admin"), async (c) => {
       network: r.network,
       period_key: r.period_key,
       txHash: r.tx_hash,
-      explorerUrl: r.tx_hash && r.network
-        ? explorerUrlForTx(r.network, r.tx_hash)
-        : null,
+      explorerUrl: r.tx_explorer_url
+        || (r.tx_hash && r.network ? explorerUrlForTx(r.network, r.tx_hash) : null),
     })),
     nextCursor,
   });

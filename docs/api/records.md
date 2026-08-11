@@ -49,8 +49,9 @@ Challenges expire in **10 minutes**. Signature format: `0x` + 130 hex.
 - **Auth** — employee
 - **Client** — `api.myRecords`
 - **Request** (query) — optional `limit` (default 50, max 50)
-- **Response** — `{ payments: [{ id, paid_at, amount_minor, token, network, period_key, status, txHash, explorerUrl, fromAddress }] }`
-- **Rules** — Own `employee_payments` rows (all statuses). Joins confirmed `payment_attempts` for `txHash` / explorer URL and signer `users.wallet_address` as `fromAddress`. Empty `payments` if no linked employee.
+- **Response** — `{ payments: [{ id, paid_at, amount_minor, token, network, period_key, status, txHash, explorerUrl }] }`
+- **Rules** — Own `employee_payments` rows (all statuses). Joins confirmed `payment_attempts` for destination/receive `txHash` (`destination_tx_hash`) and explorer URL. Empty `payments` if no linked employee.
+- **Privacy** — Employee-facing allowlist only. Never returns admin `deposit_tx_hash`, `funding_tx_hash`, payer wallet / `fromAddress`, `signer_id`, funding deposit address, `intent_hash`, or `provider_response`. Missing destination hash → `txHash: null` (do not fall back to admin pay tx).
 - **Gotchas** — Replaces the previous `payrun_items` payload (`records` key). Callers must use `payments`.
 
 ---

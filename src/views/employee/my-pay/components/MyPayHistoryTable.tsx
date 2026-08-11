@@ -1,6 +1,6 @@
 import { IconCheck } from "@/components/icons/check";
 import type { MyPaymentHistoryItem } from "@/lib/api";
-import { formatAddress, formatDateTime, formatTokenMinor } from "@/lib/format";
+import { formatDateTime, formatTokenMinor } from "@/lib/format";
 import { tokenLogoUrl } from "@/lib/logo";
 import { cn } from "@/lib/utils";
 import { CARD_CLASS, HISTORY_COLUMNS } from "../config";
@@ -71,9 +71,6 @@ export function MyPayHistoryTable({
                       />
                       {row.token} · {row.network}
                     </span>
-                  </td>
-                  <td className="px-6 py-4 font-montserrat text-[14px] text-black">
-                    {row.fromAddress ? formatAddress(row.fromAddress, 5, 5) : "—"}
                   </td>
                   <td className="px-6 py-4 font-montserrat text-[14px] text-black">
                     {row.paid_at ? formatDateTime(row.paid_at) : "—"}

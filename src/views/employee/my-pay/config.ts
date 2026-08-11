@@ -4,7 +4,6 @@ export const CARD_CLASS =
 export const HISTORY_COLUMNS = [
   { key: "amount", label: "Amount" },
   { key: "receive", label: "Receive" },
-  { key: "from", label: "From" },
   { key: "time", label: "Time" },
   { key: "stats", label: "Stats" },
 ] as const;

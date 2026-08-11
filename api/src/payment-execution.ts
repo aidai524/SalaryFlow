@@ -51,9 +51,25 @@ export interface PaymentAttemptRow {
   funding_quote_response: string | null;
   funding_quote_hash: string | null;
   funding_expires_at: string | null;
+  destination_tx_hash: string | null;
+  destination_tx_explorer_url: string | null;
   provider_status: string | null;
   reconcile_failures: number;
   [key: string]: unknown;
+}
+
+function destinationTxFromProvider(provider: {
+  swapDetails?: {
+    destinationChainTxHashes?: Array<{ hash?: string; explorerUrl?: string }>;
+  };
+}): { hash: string | null; explorerUrl: string | null } {
+  const dest = provider.swapDetails?.destinationChainTxHashes?.[0];
+  const hash = typeof dest?.hash === "string" && dest.hash.trim() ? dest.hash.trim() : null;
+  const explorerUrl =
+    typeof dest?.explorerUrl === "string" && dest.explorerUrl.trim()
+      ? dest.explorerUrl.trim()
+      : null;
+  return { hash, explorerUrl };
 }
 
 const RECONCILE_STATES = [
@@ -408,6 +424,7 @@ export async function reconcilePaymentAttempt(env: Env, attempt: PaymentAttemptR
     }
     const timestamp = nowIso();
     const providerIntentHash = provider.swapDetails?.intentHashes?.[0] || attempt.intent_hash;
+    const destinationTx = state === "confirmed" ? destinationTxFromProvider(provider) : { hash: null, explorerUrl: null };
     const terminalAt = state === "confirmed" || state === "failed" || state === "refunded" ? timestamp : null;
     const nextCheck = ["processing", "awaiting_deposit", "deposit_submitted"].includes(state)
       ? new Date(Date.now() + 30_000).toISOString()
@@ -417,6 +434,8 @@ export async function reconcilePaymentAttempt(env: Env, attempt: PaymentAttemptR
       env.DB.prepare(
         `UPDATE payment_attempts
          SET state = ?, provider_status = ?, provider_response = ?, intent_hash = ?,
+             destination_tx_hash = COALESCE(?, destination_tx_hash),
+             destination_tx_explorer_url = COALESCE(?, destination_tx_explorer_url),
              last_error = NULL, reconcile_failures = 0, last_reconciled_at = ?,
              next_reconcile_at = ?, updated_at = ?,
              confirmed_at = CASE WHEN ? = 'confirmed' THEN ? ELSE confirmed_at END,
@@ -428,6 +447,8 @@ export async function reconcilePaymentAttempt(env: Env, attempt: PaymentAttemptR
         provider.status,
         JSON.stringify(provider),
         providerIntentHash || null,
+        destinationTx.hash,
+        destinationTx.explorerUrl,
         timestamp,
         nextCheck,
         timestamp,
