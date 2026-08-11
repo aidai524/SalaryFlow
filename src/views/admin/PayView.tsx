@@ -151,14 +151,14 @@ export function PayView() {
                 High Priority
               </h2>
               {/* TODO(high-priority): View All destination not designed yet. */}
-              <button
+              {/* <button
                 type="button"
                 disabled
                 className="inline-flex items-center gap-1 font-montserrat text-[12px] text-[#606060] opacity-50"
               >
                 View All
                 <img src="/icons/all.svg" alt="" className="h-2.5 w-auto" />
-              </button>
+              </button> */}
             </div>
 
             <ul className="flex flex-col">
@@ -181,7 +181,7 @@ export function PayView() {
                         {data.highPriority.verification.names.join(" and ")}
                       </span>
                     </span>
-                    <img src="/icons/to-down.svg" alt="" className="size-2.5 -rotate-90 opacity-40" />
+                    {/* <img src="/icons/to-down.svg" alt="" className="size-2.5 -rotate-90 opacity-40" /> */}
                   </button>
                 </li>
               ) : null}
