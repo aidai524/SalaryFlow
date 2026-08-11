@@ -7,10 +7,23 @@ export function useLoginMutation() {
   });
 }
 
+export function useRegistrationConfigQuery() {
+  return useQuery({
+    queryKey: ["auth", "registration"],
+    queryFn: () => api.registrationConfig(),
+    staleTime: 60_000,
+  });
+}
+
 export function useRegisterMutation() {
   return useMutation({
-    mutationFn: (body: { email: string; password: string; name: string; orgName: string }) =>
-      api.register(body),
+    mutationFn: (body: {
+      email: string;
+      password: string;
+      name: string;
+      orgName: string;
+      inviteCode?: string;
+    }) => api.register(body),
   });
 }
 

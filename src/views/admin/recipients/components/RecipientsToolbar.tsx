@@ -12,7 +12,7 @@ export interface RecipientsToolbarProps {
   onPeriodChange: (periodKey: string) => void;
   typeFilter: TypeFilter;
   onTypeFilterChange: (filter: TypeFilter) => void;
-  counts: { all: number; employees: number; contractors: number };
+  counts: { all: number; employees: number; contractors: number; others: number };
   search: string;
   onSearchChange: (value: string) => void;
   className?: string;
@@ -32,6 +32,7 @@ export function RecipientsToolbar({
   const countFor = (value: TypeFilter) => {
     if (value === "employee") return counts.employees;
     if (value === "contractor") return counts.contractors;
+    if (value === "others") return counts.others;
     return counts.all;
   };
 

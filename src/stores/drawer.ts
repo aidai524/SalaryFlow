@@ -9,7 +9,7 @@ export type DrawerKind = "recipient-picker" | null;
 
 export interface RecipientPickerPayload {
   selectedId?: string | null;
-  filter?: "all" | "employee" | "contractor";
+  filter?: "all" | "employee" | "contractor" | "others";
   onSelect?: (employeeId: string) => void;
 }
 

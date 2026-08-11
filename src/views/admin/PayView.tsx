@@ -61,7 +61,7 @@ export function PayView() {
         <h1 className="font-montserrat text-[22px] font-medium text-black sm:text-[26px]">
           Hi! {orgName}
         </h1>
-        <button
+        {/* <button
           type="button"
           disabled
           aria-disabled="true"
@@ -69,7 +69,7 @@ export function PayView() {
           className="inline-flex size-7 items-center justify-center rounded-full opacity-40"
         >
           <img src="/icons/to-down.svg" alt="" className="size-3.5" />
-        </button>
+        </button> */}
       </div>
 
       {/* Stats strip */}
@@ -80,7 +80,7 @@ export function PayView() {
             value={stats ? formatCurrencyFromMinor(stats.currentPayrollMinor) : isLoading ? "…" : "$0.00"}
           />
           <StatCell
-            label="Expired Date"
+            label="Next Payment Day"
             value={
               period
                 ? period.paydayDisplay || formatDate(period.payday)

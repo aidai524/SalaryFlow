@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/select";
 import { useCreateInviteMutation } from "@/hooks/use-recipients-api";
 import useToast from "@/hooks/use-toast";
-import type { EmployeeType, RecipientRoleTitle } from "@/lib/api";
+import type { RecipientRoleTitle } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { ROLE_OPTIONS } from "../config";
 
@@ -29,7 +29,6 @@ export interface InviteDialogProps {
   initialEmail?: string;
   initialName?: string;
   initialRoleTitle?: RecipientRoleTitle | string;
-  initialEmployeeType?: EmployeeType;
 }
 
 export function InviteDialog({
@@ -38,13 +37,11 @@ export function InviteDialog({
   initialEmail = "",
   initialName = "",
   initialRoleTitle = "Developer",
-  initialEmployeeType = "employee",
 }: InviteDialogProps) {
   const toast = useToast();
   const mutation = useCreateInviteMutation();
   const [name, setName] = useState(initialName);
   const [email, setEmail] = useState(initialEmail);
-  const [employeeType, setEmployeeType] = useState<EmployeeType>(initialEmployeeType);
   const [roleTitle, setRoleTitle] = useState<RecipientRoleTitle>(
     ROLE_OPTIONS.find((r) => r.value === initialRoleTitle)?.value || "Developer",
   );
@@ -53,11 +50,10 @@ export function InviteDialog({
     if (!open) return;
     setName(initialName);
     setEmail(initialEmail);
-    setEmployeeType(initialEmployeeType === "contractor" ? "contractor" : "employee");
     setRoleTitle(
       ROLE_OPTIONS.find((r) => r.value === initialRoleTitle)?.value || "Developer",
     );
-  }, [open, initialEmail, initialName, initialRoleTitle, initialEmployeeType]);
+  }, [open, initialEmail, initialName, initialRoleTitle]);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -75,7 +71,7 @@ export function InviteDialog({
         email: email.trim(),
         role: "employee",
         role_title: roleTitle,
-        employee_type: employeeType,
+        employee_type: "employee",
       });
       if (result.inviteUrl) {
         toast.success({
@@ -131,16 +127,12 @@ export function InviteDialog({
           </Field>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field label="Type">
-              <Select
-                value={employeeType}
-                onValueChange={(v) => setEmployeeType(v as EmployeeType)}
-              >
+              <Select value="employee" disabled>
                 <SelectTrigger icon={SELECT_ICON} className={selectTriggerClass}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="employee">Employee</SelectItem>
-                  <SelectItem value="contractor">Contractor</SelectItem>
                 </SelectContent>
               </Select>
             </Field>

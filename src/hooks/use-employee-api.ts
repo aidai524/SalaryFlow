@@ -24,10 +24,11 @@ export function useMyPayoutQuery() {
     return () => window.removeEventListener(PAYOUT_UPDATED_EVENT, onUpdated);
   }, [orgId, queryClient]);
 
+  const role = useAuthStore((s) => s.user?.role);
   return useQuery({
     queryKey: myPayoutQueryKey(orgId),
     queryFn: () => api.myPayout(),
-    enabled: !!orgId,
+    enabled: !!orgId && role === "employee",
   });
 }
 

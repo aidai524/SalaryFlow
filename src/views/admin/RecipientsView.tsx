@@ -9,7 +9,6 @@ import useToast from "@/hooks/use-toast";
 import {
   api,
   type Employee,
-  type EmployeeType,
   type TeamPaymentDateKey,
   type TeamPaymentSchedule,
 } from "@/lib/api";
@@ -61,7 +60,6 @@ export function RecipientsView() {
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteName, setInviteName] = useState("");
   const [inviteRole, setInviteRole] = useState<string>("Developer");
-  const [inviteEmployeeType, setInviteEmployeeType] = useState<EmployeeType>("employee");
   const [removeEmployee, setRemoveEmployee] = useState<Employee | null>(null);
   const [payEmployeeId, setPayEmployeeId] = useState<string | null>(null);
 
@@ -90,6 +88,7 @@ export function RecipientsView() {
     all: 0,
     employees: 0,
     contractors: 0,
+    others: 0,
   };
   const totalPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
@@ -149,9 +148,6 @@ export function RecipientsView() {
     setInviteEmail(employee?.email || "");
     setInviteName(employee?.name || "");
     setInviteRole(employee?.role_title || "Developer");
-    setInviteEmployeeType(
-      employee?.employee_type === "contractor" ? "contractor" : "employee",
-    );
     setInviteOpen(true);
   };
 
@@ -284,7 +280,6 @@ export function RecipientsView() {
         initialEmail={inviteEmail}
         initialName={inviteName}
         initialRoleTitle={inviteRole}
-        initialEmployeeType={inviteEmployeeType}
       />
 
       <RemoveRecipientDialog

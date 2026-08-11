@@ -10,12 +10,13 @@ import { useEmployeesQuery } from "@/hooks/use-pay-api";
 import { cn } from "@/lib/utils";
 import { useDrawerStore } from "@/stores/drawer";
 
-type FilterTab = "all" | "employee" | "contractor";
+type FilterTab = "all" | "employee" | "contractor" | "others";
 
 const TABS: { id: FilterTab; label: string }[] = [
   { id: "all", label: "All" },
   { id: "employee", label: "Employees" },
   { id: "contractor", label: "Contractors" },
+  { id: "others", label: "Others" },
 ];
 
 export function RecipientPickerDrawer() {

@@ -5,9 +5,10 @@ export const VOLUME_RANGE_OPTIONS = [
 
 export type VolumeRange = (typeof VOLUME_RANGE_OPTIONS)[number]["value"];
 
-export const CATEGORY_COLORS: Record<"employee" | "contractor", string> = {
+export const CATEGORY_COLORS: Record<"employee" | "contractor" | "others", string> = {
   employee: "#000000",
   contractor: "#909090",
+  others: "#c8c8c8",
 };
 
 export const CARD_CLASS =

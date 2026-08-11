@@ -18,6 +18,8 @@ export interface Env {
   INTENTS_CONFIDENTIALITY?: string;
   PAYMENTS_MODE?: "disabled" | "dry-run" | "live";
   PAYMENTS_EXECUTION_ACK?: "local-test" | "mainnet-live";
+  /** When "true", POST /auth/register requires a single-use invite code. */
+  REGISTER_INVITE_REQUIRED?: string;
 }
 
 export type Role = "admin" | "employee";

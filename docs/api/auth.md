@@ -6,6 +6,7 @@ Parent index: [`docs/api.md`](../api.md) · Source: [`api/src/routes/auth.ts`](.
 
 | Method | Path | Client |
 |---|---|---|
+| GET | `/api/auth/registration` | `api.registrationConfig` |
 | POST | `/api/auth/register` | `api.register` |
 | POST | `/api/auth/login` | `api.login` |
 | POST | `/api/auth/logout` | `api.logout` |
@@ -23,11 +24,17 @@ Callers: [`src/auth/AuthPages.tsx`](../../src/auth/AuthPages.tsx) (legacy), [`sr
 
 ---
 
+### GET /api/auth/registration
+
+- **Auth** — public
+- **Response** — `{ inviteRequired: boolean }` from env `REGISTER_INVITE_REQUIRED`
+- **Client** — `api.registrationConfig` · callers: `RegisterView`
+
 ### POST /api/auth/register
 
 - **Auth** — public
 - **Source** — `api/src/routes/auth.ts`
-- **Client** — `api.register` · callers: legacy `AuthPages` Register
+- **Client** — `api.register` · callers: `RegisterView`
 - **Request**
 
   | Field | Type | Required | Notes |
@@ -36,6 +43,7 @@ Callers: [`src/auth/AuthPages.tsx`](../../src/auth/AuthPages.tsx) (legacy), [`sr
   | `password` | string | yes | min 8 |
   | `name` | string | yes | |
   | `orgName` | string | yes | creates organization |
+  | `inviteCode` | string | when `REGISTER_INVITE_REQUIRED=true` | single-use code from `register_invite_codes` |
 
 - **Response** — `201` `{ user: AuthUser }` + `Set-Cookie: sf_token`
 - **Errors**
@@ -43,11 +51,13 @@ Callers: [`src/auth/AuthPages.tsx`](../../src/auth/AuthPages.tsx) (legacy), [`sr
   | Status | Code | When |
   |---|---|---|
   | 400 | — | invalid email / short password / missing name or orgName |
+  | 400 | `INVITE_CODE_REQUIRED` | invite required but missing |
+  | 400 | `INVITE_CODE_INVALID` | code missing/used/invalid |
   | 409 | — | email already exists |
   | 503 | `PASSWORD_HASH_UNAVAILABLE` | hash failure |
 
-- **Rules** — Creates org + admin user (`role=admin`, `status=active`, `must_change_password=0`). One account → one org model.
-- **Gotchas** — Does not create an employee row for the admin.
+- **Rules** — Creates org + admin user (`role=admin`, `status=active`, `must_change_password=0`). One account → one org model. When invite required, claims unused code before insert.
+- **Gotchas** — Does not create an employee row for the admin. See [`docs/register-invite-codes.md`](../register-invite-codes.md).
 
 ---
 

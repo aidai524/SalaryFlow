@@ -26,6 +26,7 @@ export function roleBadgeAbbrev(role: string | null | undefined): string {
   if (key.startsWith("fin")) return "FIN";
   if (key.startsWith("oper") || key === "ops") return "OPS";
   if (key.startsWith("des")) return "DES";
+  if (key.startsWith("oth")) return "OTH";
   if (!key) return "—";
   return key.slice(0, 3).toUpperCase();
 }
@@ -45,5 +46,7 @@ export function isVerified(emp: Pick<Employee, "payout_verified_at" | "status">)
 }
 
 export function typeLabel(type: Employee["employee_type"]): string {
-  return type === "contractor" ? "Contractor" : "Employee";
+  if (type === "contractor") return "Contractor";
+  if (type === "others") return "Others";
+  return "Employee";
 }

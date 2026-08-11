@@ -7,17 +7,31 @@ import { nowIso, uuid } from "../types";
 
 export const authRoutes = new Hono<AppEnv>();
 
+function inviteRequired(env: { REGISTER_INVITE_REQUIRED?: string }): boolean {
+  return String(env.REGISTER_INVITE_REQUIRED || "").trim().toLowerCase() === "true";
+}
+
+authRoutes.get("/registration", (c) => {
+  return c.json({ inviteRequired: inviteRequired(c.env) });
+});
+
 authRoutes.post("/register", async (c) => {
   const body = await c.req.json().catch(() => null);
   const email = String(body?.email || "").trim().toLowerCase();
   const password = String(body?.password || "");
   const name = String(body?.name || "").trim();
   const orgName = String(body?.orgName || "").trim();
+  const inviteCode = String(body?.inviteCode || body?.invite_code || "").trim().toUpperCase();
 
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return c.json({ error: "A valid email is required" }, 400);
   if (password.length < 8) return c.json({ error: "Password must be at least 8 characters" }, 400);
   if (!name) return c.json({ error: "Name is required" }, 400);
   if (!orgName) return c.json({ error: "Organization name is required" }, 400);
+
+  const requireInvite = inviteRequired(c.env);
+  if (requireInvite && !inviteCode) {
+    return c.json({ error: "Invite code is required", code: "INVITE_CODE_REQUIRED" }, 400);
+  }
 
   const existing = await c.env.DB.prepare("SELECT id FROM users WHERE email = ?").bind(email).first();
   if (existing) return c.json({ error: "An account with this email already exists" }, 409);
@@ -35,6 +49,16 @@ authRoutes.post("/register", async (c) => {
     );
   }
   const now = nowIso();
+
+  // Claim single-use invite before creating the account (race-safe).
+  if (requireInvite) {
+    const claim = await c.env.DB.prepare(
+      "UPDATE register_invite_codes SET used_at = ?, used_by_user_id = ? WHERE upper(code) = ? AND used_at IS NULL",
+    ).bind(now, userId, inviteCode).run();
+    if (Number(claim.meta.changes || 0) !== 1) {
+      return c.json({ error: "Invalid or already used invite code", code: "INVITE_CODE_INVALID" }, 400);
+    }
+  }
 
   await c.env.DB.batch([
     c.env.DB.prepare("INSERT INTO organizations (id, name, created_at) VALUES (?, ?, ?)").bind(orgId, orgName, now),

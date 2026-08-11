@@ -16,7 +16,7 @@ export function WalletAddressChip({
   className?: string;
 }) {
   const [open, setOpen] = useState(false);
-  const bound = Boolean(user.wallet_address && user.wallet_verified);
+  const bound = Boolean(user.wallet_address);
   const label = bound ? formatAddress(user.wallet_address) : "Connect wallet";
   const seed = user.wallet_address || user.email;
   const isEmployee = user.role === "employee";
@@ -48,9 +48,9 @@ export function WalletAddressChip({
         <WalletConnectDialog
           user={user}
           onClose={() => setOpen(false)}
-          onBound={(address) => {
+          onBound={(address, verified) => {
             setOpen(false);
-            onUserChange({ ...user, wallet_address: address, wallet_verified: true });
+            onUserChange({ ...user, wallet_address: address, wallet_verified: verified });
           }}
           onUnbound={() => {
             onUserChange({ ...user, wallet_address: null, wallet_verified: false });

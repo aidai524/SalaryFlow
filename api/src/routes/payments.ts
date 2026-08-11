@@ -168,8 +168,8 @@ paymentRoutes.post("/items/:itemId/quote", requireRole("admin"), async (c) => {
   const blocked = liveGateResponse(c);
   if (blocked) return blocked;
   const user = c.get("user") as AuthUser;
-  if (!user.wallet_address || !user.wallet_verified) {
-    return c.json({ error: "A signature-verified admin payment wallet is required", code: "PAYMENT_WALLET_NOT_VERIFIED" }, 422);
+  if (!user.wallet_address) {
+    return c.json({ error: "An admin payment wallet is required", code: "PAYMENT_WALLET_REQUIRED" }, 422);
   }
   const body = await c.req.json().catch(() => null);
   const idempotencyKey = String(body?.idempotencyKey || "").trim();
@@ -340,8 +340,8 @@ paymentRoutes.post("/attempts/:attemptId/intent", requireRole("admin"), async (c
   const attemptId = c.req.param("attemptId");
   let attempt = await getPaymentAttempt(c.env.DB, attemptId, user.org_id);
   if (!attempt) return c.json({ error: "Payment attempt not found" }, 404);
-  if (!user.wallet_address || !user.wallet_verified || user.wallet_address.toLowerCase() !== attempt.signer_id.toLowerCase()) {
-    return c.json({ error: "The verified payment wallet no longer matches this attempt", code: "PAYMENT_WALLET_CHANGED" }, 409);
+  if (!user.wallet_address || user.wallet_address.toLowerCase() !== attempt.signer_id.toLowerCase()) {
+    return c.json({ error: "The payment wallet no longer matches this attempt", code: "PAYMENT_WALLET_CHANGED" }, 409);
   }
   if (attempt.intent_payload && ["awaiting_signature", "submitting", "submitted", "processing", "confirmed"].includes(attempt.state)) {
     return c.json({ attempt, intent: JSON.parse(attempt.intent_payload), reused: true });
@@ -403,8 +403,8 @@ paymentRoutes.post("/attempts/:attemptId/submit", requireRole("admin"), async (c
   if (attempt.state !== "awaiting_signature" || !attempt.intent_payload) {
     return c.json({ error: `Cannot submit an attempt from state ${attempt.state}` }, 409);
   }
-  if (!user.wallet_address || !user.wallet_verified || user.wallet_address.toLowerCase() !== attempt.signer_id.toLowerCase()) {
-    return c.json({ error: "The verified payment wallet no longer matches this attempt", code: "PAYMENT_WALLET_CHANGED" }, 409);
+  if (!user.wallet_address || user.wallet_address.toLowerCase() !== attempt.signer_id.toLowerCase()) {
+    return c.json({ error: "The payment wallet no longer matches this attempt", code: "PAYMENT_WALLET_CHANGED" }, 409);
   }
   const body = await c.req.json().catch(() => null);
   const signature = String(body?.signature || "");
@@ -547,9 +547,6 @@ paymentRoutes.post("/employees/:employeeId/quote", requireRole("admin"), async (
     created_at: string;
   }>();
   if (!employee) return c.json({ error: "Employee not found" }, 404);
-  if (employee.status !== "ready" || !employee.payout_verified_at) {
-    return c.json({ error: "Employee payout wallet is not verified", code: "PAYOUT_NOT_VERIFIED" }, 422);
-  }
   const recipient = normalizePayoutAddress(employee.endpoint);
   if (!recipient) return c.json({ error: "Invalid employee payout address", code: "INVALID_PAYOUT_ADDRESS" }, 422);
 
@@ -593,8 +590,8 @@ paymentRoutes.post("/employees/:employeeId/quote", requireRole("admin"), async (
     return c.json({ error: `Amount cannot be represented with ${destination.decimals} destination decimals`, code: "AMOUNT_PRECISION_UNSUPPORTED" }, 422);
   }
 
-  if (!user.wallet_address || !user.wallet_verified) {
-    return c.json({ error: "A signature-verified admin payment wallet is required", code: "PAYMENT_WALLET_NOT_VERIFIED" }, 422);
+  if (!user.wallet_address) {
+    return c.json({ error: "An admin payment wallet is required", code: "PAYMENT_WALLET_REQUIRED" }, 422);
   }
   const refundTo = normalizePayoutAddress(user.wallet_address);
   if (!refundTo) return c.json({ error: "Payment wallet is not a valid EVM address", code: "PAYMENT_WALLET_INVALID" }, 422);
@@ -961,8 +958,8 @@ paymentRoutes.post("/quick-pay/commit", requireRole("admin"), async (c) => {
   const blocked = liveGateResponse(c);
   if (blocked) return blocked;
   const user = c.get("user") as AuthUser;
-  if (!user.wallet_address || !user.wallet_verified) {
-    return c.json({ error: "A signature-verified admin payment wallet is required", code: "PAYMENT_WALLET_NOT_VERIFIED" }, 422);
+  if (!user.wallet_address) {
+    return c.json({ error: "An admin payment wallet is required", code: "PAYMENT_WALLET_REQUIRED" }, 422);
   }
 
   const body = await c.req.json().catch(() => null);

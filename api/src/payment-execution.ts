@@ -170,7 +170,25 @@ function shouldFailUnsubmittedExpiredAttempt(attempt: PaymentAttemptRow): string
     return "Funding quote deadline passed before deposit; reopen for a new quote";
   }
   if (attempt.intent_hash) return null;
-  if (!["submitting", "processing"].includes(attempt.state)) return null;
+
+  // Once a deposit tx is known (standard Quick Pay / private funding), keep
+  // polling 1Click. The quote-request deadline (~10m) only gates initiating the
+  // deposit; settlement uses quote.deadline / timeWhenInactive (often days).
+  // Previously, processing + missing intent_hash after that window incorrectly
+  // failed live swaps that were still PROCESSING at the provider.
+  if (
+    attempt.deposit_tx_hash
+    || attempt.funding_tx_hash
+    || attempt.state === "deposit_submitted"
+    || attempt.state === "funding_deposit_submitted"
+    || attempt.state === "funding_processing"
+    || attempt.state === "processing"
+  ) {
+    return null;
+  }
+
+  // Legacy intent-submit path: still waiting for 1Click to accept the signed intent.
+  if (attempt.state !== "submitting") return null;
   const lastError = String(attempt.last_error || "");
   if (isDefinitiveSubmitFailure(lastError)) {
     return lastError || "Quote has expired";

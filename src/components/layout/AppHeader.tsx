@@ -12,6 +12,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useMyPayoutQuery } from "@/hooks/use-employee-api";
 import { formatAddress } from "@/lib/address";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth";
@@ -31,13 +32,19 @@ function HeaderWalletChip() {
   const user = useAuthStore((state) => state.user);
   const setUser = useAuthStore((state) => state.setUser);
   const [open, setOpen] = useState(false);
+  const isAdmin = user?.role === "admin";
+  const payoutQuery = useMyPayoutQuery();
 
   if (!user) return null;
 
-  const bound = Boolean(user.wallet_address && user.wallet_verified);
-  const label = bound ? formatAddress(user.wallet_address) : "Connect";
-  const seed = user.wallet_address || user.email;
-  const isEmployee = user.role === "employee";
+  // Show bound address even when ownership is not verified.
+  // Employees store the receive address on payout.endpoint; admins on users.wallet_address.
+  const displayAddress = isAdmin
+    ? (user.wallet_address || null)
+    : (payoutQuery.data?.payout?.endpoint || user.wallet_address || null);
+  const bound = Boolean(displayAddress);
+  const label = bound ? formatAddress(displayAddress) : "Connect";
+  const seed = displayAddress || user.email;
 
   return (
     <>
@@ -53,7 +60,7 @@ function HeaderWalletChip() {
         </span>
       </button>
 
-      {open && isEmployee && (
+      {open && !isAdmin && (
         <EmployeePayoutWalletDialog
           onClose={() => setOpen(false)}
           onBound={(address) => {
@@ -62,13 +69,13 @@ function HeaderWalletChip() {
           }}
         />
       )}
-      {open && !isEmployee && (
+      {open && isAdmin && (
         <WalletConnectDialog
           user={user}
           onClose={() => setOpen(false)}
-          onBound={(address) => {
+          onBound={(address, verified) => {
             setOpen(false);
-            setUser({ ...user, wallet_address: address, wallet_verified: true });
+            setUser({ ...user, wallet_address: address, wallet_verified: verified });
           }}
           onUnbound={() => {
             setUser({ ...user, wallet_address: null, wallet_verified: false });

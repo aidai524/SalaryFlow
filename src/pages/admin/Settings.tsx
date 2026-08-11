@@ -187,9 +187,9 @@ export function SettingsPage({
           title="Payment authorization wallet"
           description="Bind the EVM wallet that authorizes payroll payments. Ownership is proven by a one-time message that cannot initiate a transaction."
           onClose={() => setShowWallet(false)}
-          onBound={(address) => {
+          onBound={(address, verified) => {
             setShowWallet(false);
-            onUserChange({ ...user, wallet_address: address, wallet_verified: true });
+            onUserChange({ ...user, wallet_address: address, wallet_verified: verified });
           }}
           onUnbound={() => onUserChange({ ...user, wallet_address: null, wallet_verified: false })}
         />

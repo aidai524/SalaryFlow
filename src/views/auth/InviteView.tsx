@@ -1,26 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { useAccount, useSignMessage } from "wagmi";
 import { useAcceptInviteMutation, useResolveInviteQuery } from "@/hooks/use-auth-api";
-import { useOpenWalletModal } from "@/hooks/use-open-wallet-modal";
-import { api, ApiError } from "@/lib/api";
-import { isValidEthereumAddress } from "@/lib/erc191";
 import { useAuthStore } from "@/stores/auth";
 import { AuthShell } from "./AuthShell";
 import {
   AuthError,
   AuthField,
   authErrorMessage,
-  avatarInitial,
   extractInviteToken,
   AUTH_BUTTON_CLASS,
   AUTH_CARD_CLASS,
 } from "./auth-shared";
-import {
-  AUTH_LINK_CLASS,
-  DEFAULT_PAYOUT_NETWORK,
-  DEFAULT_PAYOUT_TOKEN,
-} from "./config";
+import { AUTH_LINK_CLASS } from "./config";
 
 export function InviteView() {
   const navigate = useNavigate();
@@ -45,14 +36,6 @@ export function InviteView() {
     : "";
 
   const acceptedRef = useRef(false);
-  const [welcomeReady, setWelcomeReady] = useState(false);
-  const [walletError, setWalletError] = useState("");
-  const [verifying, setVerifying] = useState(false);
-  const pendingVerifyRef = useRef(false);
-
-  const { openWalletModal, isConnected } = useOpenWalletModal();
-  const { address } = useAccount();
-  const { signMessageAsync } = useSignMessage();
 
   useEffect(() => {
     if (routeToken) {
@@ -60,21 +43,19 @@ export function InviteView() {
       setActiveToken(next);
       setDraftToken(next);
       acceptedRef.current = false;
-      setWelcomeReady(false);
     } else {
       setActiveToken("");
       setDraftToken("");
       acceptedRef.current = false;
-      setWelcomeReady(false);
     }
   }, [routeToken]);
 
-  // Auto-accept when invite resolves for a new account.
+  // Auto-accept when invite resolves for a new account, then go to My Pay.
   useEffect(() => {
     if (!activeToken || !invite || invite.accountExists || acceptedRef.current) return;
     if (user?.email === invite.email) {
       acceptedRef.current = true;
-      setWelcomeReady(true);
+      navigate("/my-pay", { replace: true });
       return;
     }
     if (acceptMutation.isPending) return;
@@ -84,19 +65,12 @@ export function InviteView() {
       try {
         const { user: nextUser } = await acceptMutation.mutateAsync({ token: activeToken });
         await applyAuthedUser(nextUser);
-        setWelcomeReady(true);
+        navigate("/my-pay", { replace: true });
       } catch {
         acceptedRef.current = false;
       }
     })();
-  }, [activeToken, invite, user?.email, acceptMutation, applyAuthedUser]);
-
-  // After wallet connects (from Connect Wallet), run ownership verify.
-  useEffect(() => {
-    if (!pendingVerifyRef.current || !isConnected || !address || verifying) return;
-    pendingVerifyRef.current = false;
-    void verifyPayoutWallet(address);
-  }, [isConnected, address, verifying]);
+  }, [activeToken, invite, user?.email, acceptMutation, applyAuthedUser, navigate]);
 
   const continueWithToken = () => {
     const next = extractInviteToken(draftToken);
@@ -105,49 +79,6 @@ export function InviteView() {
     if (next !== routeToken) {
       navigate(`/invite/${next}`, { replace: true });
     }
-  };
-
-  const verifyPayoutWallet = async (walletAddress: string) => {
-    setWalletError("");
-    if (!isValidEthereumAddress(walletAddress)) {
-      setWalletError("Connect a valid EVM wallet address.");
-      return;
-    }
-
-    setVerifying(true);
-    try {
-      const challenge = await api.createPayoutChallenge({
-        token: DEFAULT_PAYOUT_TOKEN,
-        network: DEFAULT_PAYOUT_NETWORK,
-        endpoint: walletAddress,
-      });
-      const signature = await signMessageAsync({ message: challenge.message });
-      await api.verifyPayout({
-        challengeId: challenge.challengeId,
-        signature,
-      });
-      navigate("/my-pay", { replace: true, state: { promptChangePassword: true } });
-    } catch (cause) {
-      setWalletError(
-        cause instanceof ApiError
-          ? cause.message
-          : cause instanceof Error
-            ? cause.message
-            : "Wallet verification failed",
-      );
-    } finally {
-      setVerifying(false);
-    }
-  };
-
-  const onConnectWallet = () => {
-    setWalletError("");
-    if (isConnected && address) {
-      void verifyPayoutWallet(address);
-      return;
-    }
-    pendingVerifyRef.current = true;
-    openWalletModal();
   };
 
   // Paste-link mode (no token)
@@ -187,7 +118,7 @@ export function InviteView() {
     authErrorMessage(acceptMutation.error, "")
     || (!invite && !resolving ? resolveError : "");
 
-  if (resolving || (invite && !invite.accountExists && !welcomeReady && !acceptMutation.error)) {
+  if (resolving || (invite && !invite.accountExists && !acceptMutation.error)) {
     return (
       <AuthShell>
         <div className={`${AUTH_CARD_CLASS} items-center py-10`}>
@@ -238,44 +169,5 @@ export function InviteView() {
     );
   }
 
-  const displayName = invite.name || user?.name || invite.email;
-  const initial = avatarInitial(displayName);
-
-  return (
-    <AuthShell>
-      <div className={`${AUTH_CARD_CLASS} max-w-[350px]`}>
-        <h1 className="text-center font-montserrat text-lg font-semibold text-black">
-          Welcome!
-        </h1>
-
-        <div className="mt-5 flex items-center justify-center gap-2.5">
-          <span className="grid size-8 place-items-center rounded-full bg-[#909090] font-montserrat text-xs font-semibold text-white">
-            {initial}
-          </span>
-          <span className="font-montserrat text-sm font-medium text-[#606060]">
-            {invite.email}
-          </span>
-        </div>
-
-        <p className="mt-5 text-center font-montserrat text-sm font-medium leading-normal text-[#606060]">
-          Welcome to join{" "}
-          <span className="font-semibold text-black">{invite.orgName || "your team"}</span> on{" "}
-          <span className="font-semibold text-black">DeCash</span>.
-          <br />
-          Please connect your wallet to verify for your access.
-        </p>
-
-        <AuthError message={walletError} />
-
-        <button
-          type="button"
-          className={AUTH_BUTTON_CLASS}
-          onClick={onConnectWallet}
-          disabled={verifying}
-        >
-          {verifying ? "Verifying…" : "Connect Wallet"}
-        </button>
-      </div>
-    </AuthShell>
-  );
+  return null;
 }

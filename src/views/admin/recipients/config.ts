@@ -18,6 +18,7 @@ export const ROLE_OPTIONS: Array<{ value: RecipientRoleTitle; label: string }> =
   { value: "Growth", label: "Growth" },
   { value: "Finance", label: "Finance" },
   { value: "Operations", label: "Operations" },
+  { value: "Other", label: "Other" },
 ];
 
 export type TypeFilter = "all" | EmployeeType;
@@ -26,6 +27,7 @@ export const TYPE_FILTERS: Array<{ value: TypeFilter; label: string }> = [
   { value: "all", label: "All" },
   { value: "employee", label: "Employees" },
   { value: "contractor", label: "Contractors" },
+  { value: "others", label: "Others" },
 ];
 
 export const CONTRACTOR_SCHEDULE_OPTIONS: Array<{

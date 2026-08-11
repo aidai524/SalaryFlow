@@ -19,11 +19,11 @@ export function WalletConnectDialog({
   onBound,
   onUnbound,
   title = "Payment wallet",
-  description = "Bind one EVM wallet to this account. Ownership is proven by a one-time message that cannot initiate a transaction.",
+  description = "Bind one EVM wallet to this account. Verification is optional and proven by a one-time message that cannot initiate a transaction.",
 }: {
   user: AuthUser;
   onClose: () => void;
-  onBound: (address: string) => void;
+  onBound: (address: string, verified: boolean) => void;
   onUnbound: () => void;
   title?: string;
   description?: string;
@@ -32,24 +32,39 @@ export function WalletConnectDialog({
   const { address } = useAccount();
   const { disconnect } = useDisconnect();
   const { signMessageAsync } = useSignMessage();
-  const [verifying, setVerifying] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  const boundAddress = user.wallet_verified ? user.wallet_address : null;
+  const boundAddress = user.wallet_address;
+  const isVerified = Boolean(user.wallet_address && user.wallet_verified);
 
   const bind = async () => {
     if (!address || !isValidEthereumAddress(address)) return;
     setError("");
-    setVerifying(true);
+    setBusy(true);
+    try {
+      const result = await api.bindPaymentWallet(address);
+      onBound(result.wallet_address, false);
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : cause instanceof Error ? cause.message : "Unable to bind wallet");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const verify = async () => {
+    if (!address || !isValidEthereumAddress(address)) return;
+    setError("");
+    setBusy(true);
     try {
       const challenge = await api.createPaymentWalletChallenge(address);
       const signature = await signMessageAsync({ message: challenge.message });
       const result = await api.verifyPaymentWallet({ challengeId: challenge.challengeId, signature });
-      onBound(result.wallet_address);
+      onBound(result.wallet_address, true);
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : cause instanceof Error ? cause.message : "Wallet verification failed");
     } finally {
-      setVerifying(false);
+      setBusy(false);
     }
   };
 
@@ -93,18 +108,24 @@ export function WalletConnectDialog({
               <div className="rounded-[16px] border border-black/10 bg-[#f6f6f6] p-4">
                 <div className="flex items-center justify-between gap-3">
                   <span className="font-montserrat text-[14px] font-medium text-black">
-                    Verified wallet
+                    Bound wallet
                   </span>
-                  <span className="inline-flex h-6 items-center gap-1 rounded-[12px] bg-[#0ed000]/10 px-2 font-montserrat text-[12px] text-[#0cb400]">
-                    <IconCheck className="size-2" />
-                    Verified
-                  </span>
+                  {isVerified ? (
+                    <span className="inline-flex h-6 items-center gap-1 rounded-[12px] bg-[#0ed000]/10 px-2 font-montserrat text-[12px] text-[#0cb400]">
+                      <IconCheck className="size-2" />
+                      Verified
+                    </span>
+                  ) : (
+                    <span className="inline-flex h-6 items-center rounded-[12px] bg-[#aaa]/10 px-2 font-montserrat text-[12px] text-[#aaa]">
+                      Unverified
+                    </span>
+                  )}
                 </div>
                 <p className="mt-3 break-all font-montserrat text-[14px] text-black">
                   {boundAddress}
                 </p>
                 <p className="mt-2 font-montserrat text-[12px] leading-5 text-[#606060]">
-                  This address is the only wallet currently linked to this account.
+                  This address is the wallet currently linked to this account.
                 </p>
               </div>
               {error ? (
@@ -118,13 +139,24 @@ export function WalletConnectDialog({
                 >
                   Use a different wallet
                 </button>
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="inline-flex h-12 flex-1 items-center justify-center rounded-[24px] bg-black font-montserrat text-[15px] font-medium text-white transition-opacity hover:opacity-90"
-                >
-                  Done
-                </button>
+                {!isVerified && address && address.toLowerCase() === boundAddress.toLowerCase() ? (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={verify}
+                    className="inline-flex h-12 flex-1 items-center justify-center rounded-[24px] bg-black font-montserrat text-[15px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+                  >
+                    {busy ? "Waiting…" : "Verify ownership"}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="inline-flex h-12 flex-1 items-center justify-center rounded-[24px] bg-black font-montserrat text-[15px] font-medium text-white transition-opacity hover:opacity-90"
+                  >
+                    Done
+                  </button>
+                )}
               </div>
             </>
           ) : (
@@ -152,24 +184,25 @@ export function WalletConnectDialog({
               ) : null}
 
               <p className="font-montserrat text-[12px] leading-5 text-[#606060]">
-                The one-time message cannot transfer funds or authorize a payroll payment.
+                Save binds the address for payments. Verify ownership is optional.
               </p>
 
               <div className="flex flex-col gap-2 sm:flex-row">
                 <button
                   type="button"
-                  onClick={onClose}
-                  className="inline-flex h-12 flex-1 items-center justify-center rounded-[24px] border border-black/15 bg-white font-montserrat text-[15px] font-medium text-black transition-colors hover:bg-black/5"
+                  disabled={!address || busy}
+                  onClick={bind}
+                  className="inline-flex h-12 flex-1 items-center justify-center rounded-[24px] border border-black/15 bg-white font-montserrat text-[15px] font-medium text-black transition-colors hover:bg-black/5 disabled:opacity-50"
                 >
-                  Cancel
+                  {busy ? "Saving…" : "Save"}
                 </button>
                 <button
                   type="button"
-                  disabled={!address || verifying}
-                  onClick={bind}
+                  disabled={!address || busy}
+                  onClick={verify}
                   className="inline-flex h-12 flex-1 items-center justify-center rounded-[24px] bg-black font-montserrat text-[15px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
                 >
-                  {verifying ? "Waiting…" : "Verify ownership"}
+                  {busy ? "Waiting…" : "Verify ownership"}
                 </button>
               </div>
             </>

@@ -297,6 +297,7 @@ orgRoutes.get("/overview", requireRole("admin"), async (c) => {
 
   const fullTime = employees.results.filter((e) => (e.employee_type || "employee") === "employee");
   const contractors = employees.results.filter((e) => (e.employee_type || "employee") === "contractor");
+  const others = employees.results.filter((e) => (e.employee_type || "employee") === "others");
 
   const paidRows = await c.env.DB.prepare(
     `SELECT ep.id, ep.employee_id, ep.amount_minor, ep.period_key, ep.status, ep.paid_at, ep.created_at,
@@ -442,6 +443,12 @@ orgRoutes.get("/overview", requireRole("admin"), async (c) => {
       label: "Contractors",
       count: contractors.length,
       pct: Math.round((contractors.length / totalHeadcount) * 100),
+    },
+    {
+      type: "others" as const,
+      label: "Others",
+      count: others.length,
+      pct: Math.round((others.length / totalHeadcount) * 100),
     },
   ].filter((c) => c.count > 0);
 
@@ -665,10 +672,11 @@ orgRoutes.get("/employees", requireRole("admin"), async (c) => {
     all: enriched.length,
     employees: enriched.filter((e) => e.employee_type === "employee").length,
     contractors: enriched.filter((e) => e.employee_type === "contractor").length,
+    others: enriched.filter((e) => e.employee_type === "others").length,
   };
 
   let filtered = enriched;
-  if (typeFilter === "employee" || typeFilter === "contractor") {
+  if (typeFilter === "employee" || typeFilter === "contractor" || typeFilter === "others") {
     filtered = filtered.filter((e) => e.employee_type === typeFilter);
   }
   if (q) {
@@ -807,14 +815,14 @@ orgRoutes.post("/employees", requireRole("admin"), async (c) => {
   const employeeType = body?.employee_type !== undefined || body?.employeeType !== undefined
     ? normalizeEmployeeType(body?.employee_type ?? body?.employeeType)
     : "employee";
-  if (!employeeType) return c.json({ error: "Type must be employee or contractor" }, 400);
+  if (!employeeType) return c.json({ error: "Type must be employee, contractor, or others" }, 400);
 
   const roleTitle = normalizeRoleTitle(body?.role_title ?? body?.roleTitle);
   if (roleTitle === null) return c.json({ error: "Choose a valid role" }, 400);
 
   let paymentCadence: string | null = null;
   let paymentDateKey: string | null = null;
-  if (employeeType === "contractor") {
+  if (employeeType !== "employee") {
     const parsed = parseContractorScheduleInput(body || {});
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
     paymentCadence = parsed.cadence;
@@ -832,8 +840,8 @@ orgRoutes.post("/employees", requireRole("admin"), async (c) => {
   const endpointInput = String(body?.endpoint || "").trim();
   const endpoint = endpointInput ? normalizePayoutAddress(endpointInput) : "";
   if (endpoint === null) return c.json({ error: "A valid EVM payout address is required" }, 400);
-  if (employeeType === "contractor" && !endpoint) {
-    return c.json({ error: "A wallet address is required for contractors" }, 400);
+  if (employeeType !== "employee" && !endpoint) {
+    return c.json({ error: "A wallet address is required for non-employee recipients" }, 400);
   }
   const avatarUrl = body?.avatar_url !== undefined || body?.avatarUrl !== undefined
     ? normalizePresetAvatarUrl(body?.avatar_url ?? body?.avatarUrl)
@@ -912,7 +920,7 @@ orgRoutes.patch("/employees/:id", requireRole("admin"), async (c) => {
   let nextType = (existing.employee_type as string) || "employee";
   if (body?.employee_type !== undefined || body?.employeeType !== undefined) {
     const employeeType = normalizeEmployeeType(body?.employee_type ?? body?.employeeType);
-    if (!employeeType) return c.json({ error: "Type must be employee or contractor" }, 400);
+    if (!employeeType) return c.json({ error: "Type must be employee, contractor, or others" }, 400);
     fields.push("employee_type = ?");
     values.push(employeeType);
     nextType = employeeType;
@@ -990,8 +998,8 @@ orgRoutes.patch("/employees/:id", requireRole("admin"), async (c) => {
   if (resolvedEndpoint === null) {
     return c.json({ error: "A valid EVM payout address is required" }, 400);
   }
-  if (nextType === "contractor" && !resolvedEndpoint) {
-    return c.json({ error: "A wallet address is required for contractors" }, 400);
+  if (nextType !== "employee" && !resolvedEndpoint) {
+    return c.json({ error: "A wallet address is required for non-employee recipients" }, 400);
   }
   if (payoutChanged) {
     fields.push("status = 'update_required'", "payout_verified_at = NULL");

@@ -34,6 +34,7 @@ function parseCompensationInput(raw: string): string | null {
   const cleaned = raw.replace(/,/g, "").trim();
   if (!cleaned) return null;
   if (!/^(0|[1-9]\d*)(\.\d{0,6})?$/.test(cleaned)) return null;
+  if (Number(cleaned) <= 0) return null;
   return cleaned;
 }
 
@@ -145,7 +146,7 @@ export function QuickPayPanel({
         mode: paymentMode,
       });
     },
-    enabled: !!employee && !!originToken && !!amountForQuote && !!employee.payout_verified_at,
+    enabled: !!employee && !!originToken && !!amountForQuote && !!employee.endpoint,
     refetchInterval: 60_000,
     retry: 1,
   });
@@ -175,8 +176,6 @@ export function QuickPayPanel({
     return () => window.clearInterval(id);
   }, [wallet.isConnected, ownerAddress, originToken, fetchOneBalance]);
 
-  const verified = !!employee?.payout_verified_at && employee.status === "ready";
-
   const settleMutation = useMutation({
     mutationFn: async () => {
       if (!employee || !originToken || !amountForQuote || !quote) {
@@ -187,7 +186,7 @@ export function QuickPayPanel({
         throw new Error("Connect your payment wallet first");
       }
       if (!originToken.contractAddress) throw new Error("Origin token has no contract address");
-      if (!verified) throw new Error("Recipient wallet is not verified");
+      if (!employee.endpoint) throw new Error("Recipient wallet address is missing");
       if (!quote.amountIn) throw new Error("Quote missing deposit details");
 
       const balance = await fetchOneBalance(wallet.account.address, originToken);
@@ -443,7 +442,7 @@ export function QuickPayPanel({
       {/* Compensation */}
       {compensationLayout === "centered" ? (
         <div className="mb-5 border-b border-black/10 pb-5 text-center">
-          <p className="font-montserrat text-[14px] font-medium text-[#606060]">Compensation</p>
+          <p className="font-montserrat text-[14px] font-medium text-[#606060]">Amount</p>
           <input
             value={compensation}
             onChange={(e) => setCompensation(e.target.value)}
@@ -472,7 +471,7 @@ export function QuickPayPanel({
       ) : (
         <>
           <div className="mb-1 flex items-center justify-between">
-            <p className="font-montserrat text-[14px] font-medium text-[#606060]">Compensation</p>
+            <p className="font-montserrat text-[14px] font-medium text-[#606060]">Amount</p>
             <p className="font-montserrat text-[12px] text-[#606060]">
               {employee?.endpoint ? formatAddress(employee.endpoint) : "—"}
             </p>
@@ -610,11 +609,11 @@ export function QuickPayPanel({
           ) : null}
         </div>
         <div className="flex items-center gap-3 font-space-grotesk text-[12px] text-[#444c59]">
-          {originToken && destToken ? (
+          {/* {originToken && destToken ? (
             <span className="inline-flex items-center gap-1">
               <img src={routeLogoUrl("logo-near-intents-simple.svg")} alt="" className="ml-2 size-3.5 object-contain" />
             </span>
-          ) : null}
+          ) : null} */}
           {feeUsd != null ? (
             <span className="inline-flex items-center gap-1">
               <img src="/icons/fee.svg" alt="" className="size-3.5" />
@@ -632,7 +631,7 @@ export function QuickPayPanel({
 
       <button
         type="button"
-        disabled={!employee || !originToken || !amountForQuote || busy || !verified || quoting || !!quoteError || !quote}
+        disabled={!employee || !originToken || !amountForQuote || busy || !employee.endpoint || quoting || !!quoteError || !quote}
         onClick={() => {
           setError(null);
           settleMutation.mutate();

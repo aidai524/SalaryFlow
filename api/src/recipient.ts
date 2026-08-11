@@ -14,17 +14,18 @@ export const RECIPIENT_ROLE_TITLES = [
   "Growth",
   "Finance",
   "Operations",
+  "Other",
 ] as const;
 
 export type RecipientRoleTitle = (typeof RECIPIENT_ROLE_TITLES)[number];
 
-export type EmployeeType = "employee" | "contractor";
+export type EmployeeType = "employee" | "contractor" | "others";
 
-/** Contractor-only schedule; employees always inherit the team schedule. */
+/** Non-employee schedule; employees always inherit the team schedule. */
 export type ContractorPaymentCadence = TeamPaymentSchedule | "on_demand";
 
 const ROLE_SET = new Set<string>(RECIPIENT_ROLE_TITLES);
-const TYPE_SET = new Set<EmployeeType>(["employee", "contractor"]);
+const TYPE_SET = new Set<EmployeeType>(["employee", "contractor", "others"]);
 const CONTRACTOR_CADENCE_SET = new Set<ContractorPaymentCadence>(["monthly", "weekly", "on_demand"]);
 
 export function normalizeEmployeeType(value: unknown): EmployeeType | null {

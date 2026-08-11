@@ -11,6 +11,7 @@ INTENTS_API_URL = "https://1click.chaindefuser.com"
 MOCK_EMAIL = "false"
 PAYMENTS_MODE = "live"
 PAYMENTS_EXECUTION_ACK = "mainnet-live"
+REGISTER_INVITE_REQUIRED = "true"
 
 # Secrets (set via `wrangler secret put`):
 # RESEND_API_KEY, INTENTS_API_KEY, JWT_SECRET

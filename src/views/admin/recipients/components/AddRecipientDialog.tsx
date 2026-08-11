@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "re
 import { useQueryClient } from "@tanstack/react-query";
 import { isAddress } from "viem";
 import { IdentityAvatar } from "@/components/IdentityAvatar";
-import { PayoutOwnershipActions } from "@/components/PayoutOwnershipActions";
 import {
   Dialog,
   DialogContent,
@@ -21,7 +20,6 @@ import {
   myPayoutQueryKey,
   useUpdateMyProfileMutation,
 } from "@/hooks/use-employee-api";
-import { usePayoutOwnership } from "@/hooks/use-payout-ownership";
 import {
   employeeDetailQueryKey,
   useCreateEmployeeMutation,
@@ -53,30 +51,6 @@ import {
   ROLE_OPTIONS,
   TOKEN_OPTIONS,
 } from "../config";
-
-function toSavedPayout(emp: Employee, totalReceivedMinor = 0): MyPayout {
-  return {
-    id: emp.id,
-    name: emp.name,
-    email: emp.email,
-    role_title: emp.role_title,
-    employee_type: emp.employee_type,
-    token: emp.token,
-    network: emp.network,
-    amount_minor: emp.amount_minor,
-    endpoint: emp.endpoint,
-    status: emp.status,
-    payout_verified_at: emp.payout_verified_at,
-    last_paid_at: emp.last_paid_at,
-    created_at: emp.created_at,
-    payment_cadence: emp.payment_cadence,
-    payment_date_key: emp.payment_date_key,
-    nextPayday: emp.nextPayday,
-    nextPaydayDisplay: emp.nextPaydayDisplay,
-    avatar_url: emp.avatar_url ?? null,
-    totalReceivedMinor,
-  };
-}
 
 function employeeFromMyPayout(payout: MyPayout, userId: string | null): Employee {
   return {
@@ -139,7 +113,7 @@ function emptyForm(
   return {
     name: "",
     email: "",
-    employee_type: "contractor",
+    employee_type: "employee",
     role_title: "Developer",
     amount: "",
     payment_cadence: teamCadence,
@@ -197,8 +171,6 @@ export function AddRecipientDialog({
   const selfUpdateMutation = useUpdateMyProfileMutation();
   const isSelf = variant === "self";
   const [form, setForm] = useState<FormState>(() => emptyForm(teamCadence, teamPaymentDate));
-  const [savedPayout, setSavedPayout] = useState<MyPayout | null>(null);
-  const [needsVerify, setNeedsVerify] = useState(false);
   const [formReady, setFormReady] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [avatarPickerOpen, setAvatarPickerOpen] = useState(false);
@@ -215,16 +187,8 @@ export function AddRecipientDialog({
 
     let cancelled = false;
 
-    const seedFromEmployee = (emp: Employee, payout?: MyPayout | null) => {
+    const seedFromEmployee = (emp: Employee) => {
       setForm(fromEmployee(emp, teamCadence, teamPaymentDate));
-      if (isSelf) {
-        const next = payout ?? toSavedPayout(emp);
-        setSavedPayout(next);
-        setNeedsVerify(!(next.payout_verified_at && next.status === "ready"));
-      } else {
-        setSavedPayout(null);
-        setNeedsVerify(false);
-      }
     };
 
     (async () => {
@@ -234,8 +198,6 @@ export function AddRecipientDialog({
         if (mode === "add") {
           if (cancelled) return;
           setForm(emptyForm(teamCadence, teamPaymentDate));
-          setSavedPayout(null);
-          setNeedsVerify(false);
           setFormReady(true);
           return;
         }
@@ -251,10 +213,7 @@ export function AddRecipientDialog({
             setFormReady(true);
             return;
           }
-          seedFromEmployee(
-            employeeFromMyPayout(data.payout, user?.id ?? null),
-            data.payout,
-          );
+          seedFromEmployee(employeeFromMyPayout(data.payout, user?.id ?? null));
           setFormReady(true);
           return;
         }
@@ -277,7 +236,7 @@ export function AddRecipientDialog({
         setLoadError(cause instanceof Error ? cause.message : "Unable to load profile");
         // Fallback to prop so the dialog is still usable offline-ish.
         if (mode === "edit" && employee) {
-          seedFromEmployee(employee, isSelf ? toSavedPayout(employee) : null);
+          seedFromEmployee(employee);
         }
         setFormReady(true);
       }
@@ -289,42 +248,6 @@ export function AddRecipientDialog({
     // Intentionally seed only when the dialog opens or the edit target changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, mode, isSelf, employee?.id]);
-
-  const setEndpoint = (value: string) => {
-    setForm((prev) => ({ ...prev, endpoint: value }));
-  };
-
-  const ownership = usePayoutOwnership({
-    token: form.token,
-    network: form.network,
-    endpoint: form.endpoint,
-    setEndpoint,
-    savedPayout,
-    onVerified: async (next) => {
-      setSavedPayout(next);
-      setNeedsVerify(false);
-      notifyPayoutUpdated();
-      if (user) {
-        setUser({
-          ...user,
-          name: next.name || user.name,
-          email: next.email || user.email,
-          wallet_address: next.endpoint,
-          wallet_verified: true,
-        });
-      }
-      toast.success({ title: "Wallet ownership verified" });
-      onOpenChange(false);
-    },
-    onDirty: () => setNeedsVerify(true),
-  });
-
-  useEffect(() => {
-    ownership.setNotice("");
-    ownership.setError("");
-    // Reset prompt state whenever the dialog opens/closes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
 
   const isEmployee = form.employee_type === "employee";
   const scheduleLocked = isEmployee;
@@ -343,16 +266,10 @@ export function AddRecipientDialog({
     !formReady
     || createMutation.isPending
     || updateMutation.isPending
-    || selfUpdateMutation.isPending
-    || ownership.verifying;
+    || selfUpdateMutation.isPending;
 
   const setField = <K extends keyof FormState>(key: K, value: FormState[K]) => {
     setForm((prev) => ({ ...prev, [key]: value }));
-    if (isSelf && (key === "token" || key === "network" || key === "endpoint")) {
-      setNeedsVerify(true);
-      ownership.setNotice("");
-      ownership.setError("");
-    }
   };
 
   const onTypeChange = (type: EmployeeType) => {
@@ -399,11 +316,16 @@ export function AddRecipientDialog({
         endpoint: form.endpoint.trim(),
         avatar_url: form.avatar_url || null,
       });
-      if (result.payout) setSavedPayout(result.payout);
-      if (result.payoutChanged) {
-        setNeedsVerify(true);
-        toast.info({ title: "Profile saved. Verify wallet ownership to activate payout." });
-        return;
+      if (result.payout) {
+        notifyPayoutUpdated();
+        if (user) {
+          setUser({
+            ...user,
+            name: result.payout.name || user.name,
+            email: result.payout.email || user.email,
+            wallet_address: result.payout.endpoint || user.wallet_address,
+          });
+        }
       }
       toast.success({ title: "Profile updated" });
       onOpenChange(false);
@@ -449,7 +371,7 @@ export function AddRecipientDialog({
       network: form.network,
       endpoint: form.endpoint.trim(),
       avatar_url: form.avatar_url || null,
-      ...(form.employee_type === "contractor"
+      ...(form.employee_type !== "employee"
         ? {
             payment_cadence: form.payment_cadence,
             payment_date_key:
@@ -591,6 +513,7 @@ export function AddRecipientDialog({
                     <SelectContent>
                       <SelectItem value="employee">Employee</SelectItem>
                       <SelectItem value="contractor">Contractor</SelectItem>
+                      <SelectItem value="others">Others</SelectItem>
                     </SelectContent>
                   </Select>
                 </Field>
@@ -735,35 +658,6 @@ export function AddRecipientDialog({
               />
             </Field>
           </div>
-
-          {isSelf && (needsVerify || !ownership.ownershipVerified) && (
-            <div className="mt-5 rounded-[16px] border border-black/10 bg-[#f6f6f6] p-4">
-              <p className="font-montserrat text-[14px] font-medium text-black">
-                Verify wallet ownership
-              </p>
-              <p className="mt-1 font-montserrat text-[12px] leading-5 text-[#606060]">
-                Sign a one-time message to prove you control this address. It cannot move funds.
-              </p>
-              <PayoutOwnershipActions
-                ownershipVerified={ownership.ownershipVerified}
-                connectedAddressMatches={ownership.connectedAddressMatches}
-                isConnected={ownership.isConnected}
-                address={ownership.address}
-                verifiedEndpoint={ownership.verifiedEndpoint}
-                verifying={ownership.verifying}
-                onConnect={ownership.connectWallet}
-                onChangeWallet={ownership.changeConnectedWallet}
-                onUseAddress={ownership.useConnectedAddress}
-                onVerify={ownership.verifyWallet}
-              />
-              {ownership.error ? (
-                <p className="mt-2 font-montserrat text-[12px] text-red-600">{ownership.error}</p>
-              ) : null}
-              {ownership.notice ? (
-                <p className="mt-2 font-montserrat text-[12px] text-[#0cb400]">{ownership.notice}</p>
-              ) : null}
-            </div>
-          )}
 
           <button
             type="submit"

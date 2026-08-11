@@ -11,10 +11,10 @@ export interface AuthUser {
   must_change_password: boolean;
 }
 
-export type EmployeeType = "employee" | "contractor";
+export type EmployeeType = "employee" | "contractor" | "others";
 export type TeamPaymentSchedule = "monthly" | "weekly";
 export type ContractorPaymentCadence = TeamPaymentSchedule | "on_demand";
-export type RecipientRoleTitle = "Developer" | "Product" | "Growth" | "Finance" | "Operations";
+export type RecipientRoleTitle = "Developer" | "Product" | "Growth" | "Finance" | "Operations" | "Other";
 
 export type TeamPaymentDateKey =
   | "every_1st"
@@ -58,7 +58,7 @@ export interface EmployeeListResult {
   total: number;
   page: number;
   pageSize: number;
-  counts: { all: number; employees: number; contractors: number };
+  counts: { all: number; employees: number; contractors: number; others: number };
 }
 
 export interface EmployeePaymentHistoryItem {
@@ -514,7 +514,8 @@ export class ApiError extends Error {
 
 export const api = {
   // auth
-  register: (body: { email: string; password: string; name: string; orgName: string }) =>
+  registrationConfig: () => request<{ inviteRequired: boolean }>("/auth/registration"),
+  register: (body: { email: string; password: string; name: string; orgName: string; inviteCode?: string }) =>
     request<{ user: AuthUser }>("/auth/register", { method: "POST", body: JSON.stringify(body) }),
   login: (body: { email: string; password: string }) =>
     request<{ user: AuthUser }>("/auth/login", { method: "POST", body: JSON.stringify(body) }),
@@ -659,6 +660,8 @@ export const api = {
     request<{ challengeId: string; message: string; address: string; expiresAt: string }>("/records/wallet/challenge", { method: "POST", body: JSON.stringify({ address }) }),
   verifyPaymentWallet: (body: { challengeId: string; signature: string }) =>
     request<{ ok: boolean; wallet_address: string; wallet_verified_at: string }>("/records/wallet/verify", { method: "POST", body: JSON.stringify(body) }),
+  bindPaymentWallet: (address: string) =>
+    request<{ ok: boolean; wallet_address: string; wallet_verified: boolean }>("/records/wallet", { method: "PUT", body: JSON.stringify({ address }) }),
   unbindWallet: () => request<{ ok: boolean }>("/records/wallet", { method: "DELETE" }),
 
   // payments: dry-run readiness + live 1Click attempts

@@ -514,8 +514,34 @@ recordRoutes.post("/wallet/verify", requireRole("admin"), async (c) => {
   return c.json({ ok: true, wallet_address: walletAddress, wallet_verified_at: verifiedAt });
 });
 
-recordRoutes.put("/wallet", requireRole("admin"), (c) => {
-  return c.json({ error: "Payment wallet ownership must be verified with a signed challenge", code: "WALLET_SIGNATURE_REQUIRED" }, 409);
+recordRoutes.put("/wallet", requireRole("admin"), async (c) => {
+  const user = c.get("user") as AuthUser;
+  const body = await c.req.json().catch(() => null);
+  const address = normalizePayoutAddress(body?.address);
+  if (!address) return c.json({ error: "A valid EVM payment wallet address is required" }, 400);
+
+  if (user.wallet_address && user.wallet_address.toLowerCase() !== address.toLowerCase()) {
+    const active = await c.env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM payment_attempts
+       WHERE org_id = ? AND LOWER(signer_id) = LOWER(?)
+         AND state IN ('created', 'quoting', 'quoted', 'generating', 'awaiting_signature', 'submitting', 'submitted', 'processing')`,
+    ).bind(user.org_id, user.wallet_address).first<{ n: number }>();
+    if (Number(active?.n || 0) > 0) {
+      return c.json({ error: "Complete or resolve active payment attempts before changing the payment wallet", code: "ACTIVE_PAYMENT_ATTEMPTS" }, 409);
+    }
+  }
+
+  const now = nowIso();
+  const walletAddress = address.toLowerCase();
+  await c.env.DB.batch([
+    c.env.DB.prepare(
+      "UPDATE users SET wallet_address = ?, wallet_verified_at = NULL, updated_at = ? WHERE id = ? AND org_id = ?",
+    ).bind(walletAddress, now, user.id, user.org_id),
+    c.env.DB.prepare(
+      "INSERT INTO audit_log (id, org_id, actor_id, action, detail) VALUES (?, ?, ?, 'payment_wallet.bound', ?)",
+    ).bind(uuid(), user.org_id, user.id, `Bound payment wallet ${walletAddress}`),
+  ]);
+  return c.json({ ok: true, wallet_address: walletAddress, wallet_verified: false });
 });
 
 recordRoutes.delete("/wallet", requireRole("admin"), async (c) => {

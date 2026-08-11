@@ -72,7 +72,7 @@ export function EmployeePayoutWalletDialog({
       >
         <DialogHeader className="px-6 pt-6 pb-2">
           <DialogTitle className="font-montserrat text-[20px] font-semibold text-black">
-            Payout wallet
+            Wallet
           </DialogTitle>
           <p className="mt-1 font-montserrat text-[13px] leading-5 text-[#606060]">
             Verify the EVM wallet that receives your pay. Ownership is proven by a one-time message that cannot move funds.

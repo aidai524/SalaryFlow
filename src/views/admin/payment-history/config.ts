@@ -19,6 +19,7 @@ export function mapPaymentStatus(status: string): HistoryStatusKey {
 export const TYPE_LABEL: Record<string, string> = {
   employee: "Employee",
   contractor: "Contractors",
+  others: "Others",
 };
 
 export const CARD_CLASS =

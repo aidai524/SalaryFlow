@@ -1,6 +1,6 @@
 import { type FormEvent, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { useRegisterMutation } from "@/hooks/use-auth-api";
+import { useRegisterMutation, useRegistrationConfigQuery } from "@/hooks/use-auth-api";
 import { adminHomePath, useAuthStore } from "@/stores/auth";
 import { AuthShell } from "./AuthShell";
 import { AuthError, AuthField, authErrorMessage, AUTH_BUTTON_CLASS, AUTH_CARD_CLASS } from "./auth-shared";
@@ -10,11 +10,14 @@ export function RegisterView() {
   const navigate = useNavigate();
   const applyAuthedUser = useAuthStore((state) => state.applyAuthedUser);
   const registerMutation = useRegisterMutation();
+  const registrationConfig = useRegistrationConfigQuery();
+  const inviteRequired = registrationConfig.data?.inviteRequired === true;
 
   const [name, setName] = useState("");
   const [orgName, setOrgName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [inviteCode, setInviteCode] = useState("");
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -24,6 +27,7 @@ export function RegisterView() {
         password,
         name,
         orgName,
+        ...(inviteRequired ? { inviteCode: inviteCode.trim() } : {}),
       });
       await applyAuthedUser(user);
       const paymentConfigured = useAuthStore.getState().paymentConfigured;
@@ -77,12 +81,22 @@ export function RegisterView() {
           placeholder="At least 8 characters"
           autoComplete="new-password"
         />
+        {inviteRequired ? (
+          <AuthField
+            id="invite-code"
+            label="Invite code"
+            value={inviteCode}
+            onChange={setInviteCode}
+            placeholder="DECASH-XXXX-XXXX"
+            autoComplete="off"
+          />
+        ) : null}
 
         <AuthError message={authErrorMessage(registerMutation.error, "")} />
 
         <button
           type="submit"
-          disabled={registerMutation.isPending}
+          disabled={registerMutation.isPending || registrationConfig.isLoading}
           className={AUTH_BUTTON_CLASS}
         >
           {registerMutation.isPending ? "Please wait…" : "Create account"}

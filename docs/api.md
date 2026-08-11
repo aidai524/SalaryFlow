@@ -149,6 +149,7 @@ Details: [`docs/api/payments.md`](api/payments.md).
 | Method | Path | Auth | Domain | Handler | Client |
 |---|---|---|---|---|---|
 | GET | `/health` | public | — | `api/src/index.ts` | — |
+| GET | `/api/auth/registration` | public | [auth](api/auth.md) | `api/src/routes/auth.ts` | `api.registrationConfig` |
 | POST | `/api/auth/register` | public | [auth](api/auth.md) | `api/src/routes/auth.ts` | `api.register` |
 | POST | `/api/auth/login` | public | [auth](api/auth.md) | `api/src/routes/auth.ts` | `api.login` |
 | POST | `/api/auth/logout` | public | [auth](api/auth.md) | `api/src/routes/auth.ts` | `api.logout` |
