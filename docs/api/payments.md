@@ -5,11 +5,12 @@ Parent index: [`docs/api.md`](../api.md)
 | Module | Path |
 |---|---|
 | Routes | [`api/src/routes/payments.ts`](../../api/src/routes/payments.ts) |
+| Quick Pay context token | [`api/src/quick-pay-context.ts`](../../api/src/quick-pay-context.ts) |
 | Live gate / asset map | [`api/src/payment-state.ts`](../../api/src/payment-state.ts) |
 | Reconcile / attempt IO | [`api/src/payment-execution.ts`](../../api/src/payment-execution.ts) |
 | 1Click client (internal) | [`api/src/intents.ts`](../../api/src/intents.ts) |
-| Frontend orchestration | [`src/lib/payment.ts`](../../src/lib/payment.ts) |
-| UI | [`src/components/PayDialog.tsx`](../../src/components/PayDialog.tsx) |
+| Frontend commit queue | [`src/stores/quick-pay-commit-queue.ts`](../../src/stores/quick-pay-commit-queue.ts) |
+| UI | [`src/components/quick-pay/QuickPayPanel.tsx`](../../src/components/quick-pay/QuickPayPanel.tsx) |
 
 ## Domain index
 
@@ -18,11 +19,9 @@ Parent index: [`docs/api.md`](../api.md)
 | POST | `/api/payments/quote` | `api.quote` (forces `dry: true`) |
 | POST | `/api/payments/items/:itemId/quote` | `api.quotePaymentItem` (**legacy** payroll-run path) |
 | POST | `/api/payments/employees/:employeeId/quote` | `api.quoteEmployeePayment` / `quoteEmployeePaymentDry` (`mode`: `private` default or `standard`) |
-| POST | `/api/payments/attempts/:attemptId/private/sign` | `api.submitPrivateSignature` (private Quick Pay) |
-| POST | `/api/payments/attempts/:attemptId/private/deposit` | `api.submitPrivateDeposit` (private Quick Pay funding) |
+| POST | `/api/payments/quick-pay/commit` | `api.commitQuickPay` (persist after on-chain deposit) |
 | POST | `/api/payments/attempts/:attemptId/intent` | `api.generatePaymentIntent` (**legacy**) |
 | POST | `/api/payments/attempts/:attemptId/submit` | `api.submitPaymentAttempt` (**legacy**) |
-| POST | `/api/payments/attempts/:attemptId/deposit` | `api.submitPaymentDeposit` (standard Quick Pay ORIGIN_CHAIN) |
 | POST | `/api/payments/attempts/:attemptId/reconcile` | `api.reconcilePaymentAttempt` |
 | GET | `/api/payments/pending` | `api.listPendingPayments` (Pending Payments dock) |
 | POST | `/api/payments/reconcile` | `api.reconcileOpenPayments` |
@@ -56,20 +55,24 @@ created → quoting → quoted → generating → awaiting_signature
 
 Quick Pay **standard** (foreign-to-foreign `ORIGIN_CHAIN` + `confidentiality`):
 
+Live quote returns an HMAC `context` token only (no DB). After the wallet deposit, `POST /quick-pay/commit` inserts rows already in `deposit_submitted`:
+
 ```text
-created → quoting → awaiting_deposit → deposit_submitted
-  → processing → confirmed | failed | refunded
+(no rows until commit)
+  → deposit_submitted → processing → confirmed | failed | refunded
 ```
 
 Quick Pay **private** (default — EOA → confidential intents → employee, pre-signed):
 
+Live quote chains payout quote + `generateIntent` + funding quote into `context` (no DB). Commit inserts at `funding_deposit_submitted`:
+
 ```text
-created → quoting → generating → awaiting_signature
-  → funding_quoted → funding_deposit_submitted → funding_processing
+(no rows until commit)
+  → funding_deposit_submitted → funding_processing
   → submitted → processing → confirmed | failed | refunded
 ```
 
-On funding `SUCCESS`, cron / reconcile auto-calls `submit-intent` with the stored ERC-191 signature, then tracks the payout deposit address. Frontend type `PaymentAttemptState` includes all states. Quick Pay rows set `employee_payment_id` and may leave `run_id` / `item_id` null. `payment_attempts.flow` is `private` or `standard`.
+On funding `SUCCESS`, cron / reconcile auto-calls `submit-intent` with the stored ERC-191 signature, then tracks the payout deposit address. Frontend type `PaymentAttemptState` still includes pre-commit states for legacy/history. Quick Pay rows set `employee_payment_id` and may leave `run_id` / `item_id` null. `payment_attempts.flow` is `private` or `standard`.
 
 ## Failure matrix (high-frequency)
 
@@ -85,7 +88,12 @@ On funding `SUCCESS`, cron / reconcile auto-calls `submit-intent` with the store
 | `PAYMENT_WALLET_CHANGED` | 409 | Re-bind signer matching attempt |
 | `PAYMENT_PROVIDER_ERROR` | 502 | Inspect `detail`; check 1Click / asset map |
 | `PAYMENT_SUBMIT_REJECTED` | 409 | Item reopened to pending; requote |
-| submit `202` + `outcome: "unknown"` | 202 | Reconcile; not a hard fail |
+| `QUICK_PAY_CONTEXT_INVALID` | 400 | Permanent — drop commit queue item |
+| `QUICK_PAY_CONTEXT_EXPIRED` | 409 | Permanent — context older than 24h |
+| `QUICK_PAY_CONTEXT_ORG_MISMATCH` / `QUICK_PAY_CONTEXT_SIGNER_MISMATCH` | 403 | Hold in queue until original account/wallet |
+| `QUICK_PAY_SIGNATURE_INVALID` | 400 | Permanent — private ERC-191 signature bad |
+| `QUICK_PAY_COMMIT_FAILED` | 500 | Temporary — retry commit |
+| submit/commit `202` + `outcome: "unknown"` | 202 | Reconcile; not a hard fail |
 
 ### Payable item issue codes (`issues[].code`)
 
@@ -130,48 +138,26 @@ On funding `SUCCESS`, cron / reconcile auto-calls `submit-intent` with the store
 ### POST /api/payments/employees/:employeeId/quote
 
 - **Auth** — admin + **verified payment wallet** (live path)
-- **Source** — `payments.ts` + dynamic `/v0/tokens` via `api/src/assets.ts`
+- **Source** — `payments.ts` + dynamic `/v0/tokens` via `api/src/assets.ts` + `quick-pay-context.ts`
 - **Client** — `api.quoteEmployeePaymentDry` (`dry: true`) · `api.quoteEmployeePayment` (live)
 - **Request** — `{ originAsset, amount?, destinationToken?, destinationNetwork?, idempotencyKey?, dry?, mode? }` — `mode` defaults to `private` (`standard` keeps F2F)
 - **Response (dry, standard)** — `{ dry: true, mode, quote: { amountIn, amountOut, … } }`
 - **Response (dry, private)** — chained dry quotes: payout (`CONFIDENTIAL_INTENTS` → dest) then funding (`ORIGIN_CHAIN` → confidential). `quote.amountIn` is the funding (You Pay) amount.
-- **Response (live, standard)** — `201` `{ attempt, quote, mode, reused }` — state `awaiting_deposit`
-- **Response (live, private)** — `201` `{ attempt, quote, mode, intent: { standard: "erc191", payload }, reused }` — state `awaiting_signature`
-- **Rules** — Each live quote inserts a new `employee_payments` row for the current team `period_key`. Private payout deadline is 1h (waits for funding). Private confidential origin = selected `originAsset` (fund and spend the same asset; no `INTENTS_ASSET_MAP`). Standard uses `INTENTS_CONFIDENTIALITY` (default `advanced`).
-- **Errors** — 422 payout/token; 409 idempotency/active attempt; live gate on non-dry; 502 provider
+- **Response (live, standard)** — `200` `{ mode, context, quote }` — **no DB write**; `context` is HMAC-signed (24h TTL)
+- **Response (live, private)** — `200` `{ mode, context, intent, funding, quote }` — chains payout quote + `generateIntent` + funding quote into `context` (no DB)
+- **Rules** — Cancelling wallet sign/transfer leaves zero rows. Persist only via `/quick-pay/commit` after on-chain deposit. Private confidential origin = selected `originAsset`. Standard uses `INTENTS_CONFIDENTIALITY` (default `advanced`).
+- **Errors** — 422 payout/token; live gate on non-dry; 502 provider
 
 ---
 
-### POST /api/payments/attempts/:attemptId/private/sign
+### POST /api/payments/quick-pay/commit
 
-- **Auth** — admin
-- **Client** — `api.submitPrivateSignature(attemptId, signature)`
-- **Request** — `{ signature }` — `0x` + 130 hex
-- **Response** — `{ attempt, funding: { depositAddress, depositMemo, amountIn, amountOut, deadline }, reused }`
-- **Rules** — Verifies ERC-191 against `signer_id`, stores `intent_signature`, requests funding quote (`ORIGIN_CHAIN` → `CONFIDENTIAL_INTENTS`, `EXACT_OUTPUT` = payout `amountIn` + 0.1% buffer). State → `funding_quoted`.
-- **Errors** — 400 bad signature; 409 wrong state / wallet / `QUOTE_EXPIRED`; 502 funding quote
-
----
-
-### POST /api/payments/attempts/:attemptId/private/deposit
-
-- **Auth** — admin
-- **Client** — `api.submitPrivateDeposit(attemptId, txHash)`
-- **Request** — `{ txHash }` — `0x` + 64 hex
-- **Response** — `{ attempt, reused }` · `202` `{ outcome: "unknown" }` if 1Click notify fails but hash is stored
-- **Rules** — Private Quick Pay only. Forwards to 1Click `/v0/deposit/submit` for `funding_deposit_address`. State → `funding_deposit_submitted`. Cron / dock reconcile advances funding → auto `submit-intent` → payout settle.
-- **Errors** — 409 wrong state / wallet / funding quote expired; live gate
-
----
-
-### POST /api/payments/attempts/:attemptId/deposit
-
-- **Auth** — admin
-- **Client** — `api.submitPaymentDeposit(attemptId, txHash)`
-- **Request** — `{ txHash }` — `0x` + 64 hex
-- **Response** — `{ attempt, reused }` · `202` `{ outcome: "unknown" }` if 1Click notify fails but hash is stored
-- **Rules** — Standard Quick Pay only (`employee_payment_id` set, `flow=standard`). Forwards to 1Click `/v0/deposit/submit`. State → `deposit_submitted`.
-- **Errors** — 409 wrong state / wallet changed / quote expired; live gate
+- **Auth** — admin + **verified payment wallet**
+- **Client** — `api.commitQuickPay({ context, txHash, signature? })` · queued by `src/stores/quick-pay-commit-queue.ts`
+- **Request** — `{ context, txHash, signature? }` — `txHash` = `0x` + 64 hex; private mode requires `signature` (`0x` + 130 hex)
+- **Response** — `200` `{ attempt, reused, mode }` · `202` `{ attempt, outcome: "unknown", … }` if 1Click deposit notify fails but rows are stored
+- **Rules** — Verifies HMAC context (24h) + org/signer match; private verifies ERC-191. Idempotent on `idempotency_key` (`reused: true`). Inserts `employee_payments` + `payment_attempts` + `chain_records` in one batch: standard → `deposit_submitted`, private → `funding_deposit_submitted`. Then notifies 1Click `/v0/deposit/submit` (non-fatal). Quote deadline is **not** a commit reject — reconcile decides confirmed/refunded.
+- **Errors** — `QUICK_PAY_CONTEXT_*` / `QUICK_PAY_SIGNATURE_INVALID` (client: permanent vs hold); 500 `QUICK_PAY_COMMIT_FAILED` (retry); live gate
 
 ---
 

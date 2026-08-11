@@ -146,6 +146,7 @@ Rules:
 |---|---|---|
 | Auth / workspace | `src/stores/auth.ts` | Session user, orgId, paymentConfigured |
 | Intents tokens | `src/stores/intents-tokens.ts` | Cached 1Click `/v0/tokens` (USDT/USDC, phase-1 EVM), 30min TTL + localStorage |
+| Quick Pay commit queue | `src/stores/quick-pay-commit-queue.ts` | Persist `/quick-pay/commit` payloads after tx hash; exponential backoff |
 | Global drawers | `src/stores/drawer.ts` | Open recipient picker (and future drawers) from any admin page |
 
 `GlobalDrawerHost` mounts under `AppLayout` for admin users and renders drawer content from the drawer store.
@@ -161,8 +162,9 @@ Rules:
 - Route `/pay` → `src/views/admin/PayView.tsx`
 - Quick Pay module: `src/components/quick-pay/QuickPayPanel.tsx` (capsule recipient select on `/pay`; Pay Now dialog uses `recipientLocked` + `compensationLayout="centered"` + `destinationTokenLocked`)
 - Payment mode toggle (persisted in `src/stores/quick-pay-prefs.ts`):
-  - **Private** (default) — pre-sign confidential payout intent, ERC-20 fund into Confidential Intents, cron/dock auto-submits intent after funding lands
-  - **Standard** — foreign-to-foreign `ORIGIN_CHAIN` + `confidentiality` (pseudo-privacy)
+  - **Private** (default) — live quote returns HMAC `context` + intent + funding deposit (no DB); wallet signs intent then ERC-20 funds Confidential Intents; `POST /payments/quick-pay/commit` persists; cron/dock auto-submits intent after funding lands
+  - **Standard** — live quote returns HMAC `context` + deposit address (no DB); ERC-20 transfer then commit
+- Commit durability: `src/stores/quick-pay-commit-queue.ts` (localStorage + exponential backoff). `AppLayout` flushes the queue for admins via `useQuickPayCommitQueue`. Wallet cancel before tx hash → zero DB rows.
 - After wallet confirm, UI returns immediately with “Payment submitted”; settlement is tracked in Pending Payments (no blocked “Settling…” loop on the button)
 - Token/network picker: `src/components/token-network-dialog/TokenNetworkDialog.tsx`
 - Recipient drawer: `src/components/drawer/RecipientPickerDrawer.tsx` (kept mounted; Quick Pay no longer opens it)
@@ -233,8 +235,8 @@ Only EVM is implemented today (RainbowKit / wagmi / viem). NEAR and Solana stubs
 
 Primary wallet use cases:
 
-1. **Admin Quick Pay (private)** — ERC-191 pre-sign of confidential payout intent, then ERC-20 transfer to the funding deposit address (ORIGIN_CHAIN → CONFIDENTIAL_INTENTS)
-2. **Admin Quick Pay (standard)** — ERC-20 transfer on the chosen origin chain to the 1Click deposit address (ORIGIN_CHAIN foreign-to-foreign + confidentiality)
+1. **Admin Quick Pay (private)** — ERC-191 pre-sign of confidential payout intent, then ERC-20 transfer to the funding deposit address (ORIGIN_CHAIN → CONFIDENTIAL_INTENTS); commit API persists only after tx hash
+2. **Admin Quick Pay (standard)** — ERC-20 transfer on the chosen origin chain to the 1Click deposit address (ORIGIN_CHAIN foreign-to-foreign + confidentiality); commit API persists only after tx hash
 3. **Admin payment signing** — legacy payroll-run path still uses ERC-191 intent signatures
 4. **Employee wallet verification** — prove ownership of a payout address
 

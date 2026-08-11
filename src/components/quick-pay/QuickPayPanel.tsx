@@ -14,6 +14,7 @@ import { chainLogoUrl, routeLogoUrl } from "@/lib/logo";
 import { formatQuoteErrorMessage } from "@/lib/quote-error";
 import { cn } from "@/lib/utils";
 import { useIntentsTokensStore, type IntentsToken } from "@/stores/intents-tokens";
+import { enqueueQuickPayCommit } from "@/stores/quick-pay-commit-queue";
 import { useQuickPayPrefsStore } from "@/stores/quick-pay-prefs";
 import { useWallet } from "@/wallet";
 import { encodeErc20Transfer, readErc20Balance } from "@/wallet/evm/transfer";
@@ -207,21 +208,29 @@ export function QuickPayPanel({
         idempotencyKey,
         mode: paymentMode,
       });
+      if (!live.context) throw new Error("Live quote missing commit context");
 
       const chainId = networkToChainId(originToken.chain.chainName) ?? originToken.chain.chainId;
+      const amountLabel = `${amountForQuote} ${destToken?.symbol || employee.token}`;
 
       if (paymentMode === "private") {
         const intentPayload = live.intent?.payload;
         if (!intentPayload) throw new Error("Private quote missing intent payload");
+        const fundingAddress = live.funding?.depositAddress || live.quote.depositAddress;
+        const amountIn = live.funding?.amountIn || live.quote.amountIn;
+        const fundingDeadline = live.funding?.deadline || live.quote.deadline;
+        if (!fundingAddress || !amountIn) throw new Error("Funding quote missing deposit details");
+        if (fundingDeadline && Date.parse(String(fundingDeadline)) <= Date.now()) {
+          throw new Error("Funding quote expired; get a fresh quote and try again");
+        }
 
         setPhase("signing");
         const signed = await wallet.signMessage({ message: intentPayload });
-        const funded = await api.submitPrivateSignature(live.attempt.id, signed.signature);
-        const fundingAddress = funded.funding.depositAddress;
-        const amountIn = funded.funding.amountIn;
-        if (!fundingAddress || !amountIn) throw new Error("Funding quote missing deposit details");
 
         setPhase("sending");
+        if (fundingDeadline && Date.parse(String(fundingDeadline)) <= Date.now()) {
+          throw new Error("Funding quote expired; get a fresh quote and try again");
+        }
         if (chainId && wallet.account.chainId !== chainId) {
           await switchChainAsync({ chainId });
         }
@@ -232,13 +241,23 @@ export function QuickPayPanel({
           value: 0n,
           chainId: chainId || undefined,
         });
-        await api.submitPrivateDeposit(live.attempt.id, hash);
-        return { attemptId: live.attempt.id, mode: "private" as QuickPayMode };
+        // Persist locally first so a failed commit can retry after refresh.
+        enqueueQuickPayCommit({
+          context: live.context,
+          txHash: hash,
+          signature: signed.signature,
+          employeeName: employee.name,
+          amountLabel,
+        });
+        return { mode: "private" as QuickPayMode };
       }
 
-      const depositAddress = live.quote.depositAddress || live.attempt.deposit_address;
+      const depositAddress = live.quote.depositAddress;
       const amountIn = live.quote.amountIn;
       if (!depositAddress || !amountIn) throw new Error("Quote missing deposit details");
+      if (live.quote.deadline && Date.parse(String(live.quote.deadline)) <= Date.now()) {
+        throw new Error("Quote expired; get a fresh quote and try again");
+      }
 
       setPhase("sending");
       if (chainId && wallet.account.chainId !== chainId) {
@@ -251,8 +270,13 @@ export function QuickPayPanel({
         value: 0n,
         chainId: chainId || undefined,
       });
-      await api.submitPaymentDeposit(live.attempt.id, hash);
-      return { attemptId: live.attempt.id, mode: "standard" as QuickPayMode };
+      enqueueQuickPayCommit({
+        context: live.context,
+        txHash: hash,
+        employeeName: employee.name,
+        amountLabel,
+      });
+      return { mode: "standard" as QuickPayMode };
     },
     onSuccess: async () => {
       setPhase("done");

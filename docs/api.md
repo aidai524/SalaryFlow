@@ -100,17 +100,17 @@ No shared types package. Frontend types in `api.ts` are a hand-maintained subset
 
 ### Quick Pay (current admin home)
 
-**Private** (default — fully private):
+**Private** (default — fully private). Live quote is **ephemeral** (HMAC `context` token, no DB rows until commit):
 
 ```mermaid
 flowchart TD
   dry["POST /employees/:id/quote dry mode=private"] --> preview[Show funding amountIn]
-  preview --> live["POST /employees/:id/quote live"]
+  preview --> live["POST /employees/:id/quote live → context + intent + funding"]
   live --> sign[Wallet signs erc191 payout intent]
-  sign --> privateSign["POST /attempts/:id/private/sign"]
-  privateSign --> transfer[Admin ERC-20 to funding depositAddress]
-  transfer --> privateDeposit["POST /attempts/:id/private/deposit"]
-  privateDeposit --> reconcile["cron / pending dock reconcile"]
+  sign --> transfer[Admin ERC-20 to funding depositAddress]
+  transfer --> enqueue[Local commit queue persist]
+  enqueue --> commit["POST /quick-pay/commit context+txHash+signature"]
+  commit --> reconcile["cron / pending dock reconcile"]
   reconcile --> autoSubmit[Auto submit-intent after funding SUCCESS]
   autoSubmit --> payout[Track payout until SUCCESS]
 ```
@@ -120,13 +120,14 @@ flowchart TD
 ```mermaid
 flowchart TD
   dryStd["POST /employees/:id/quote dry mode=standard"] --> previewStd[Show amountIn]
-  previewStd --> liveStd["POST /employees/:id/quote live"]
+  previewStd --> liveStd["POST /employees/:id/quote live → context + quote"]
   liveStd --> transferStd[Admin ERC-20 transfer to depositAddress]
-  transferStd --> depositStd["POST /attempts/:id/deposit txHash"]
-  depositStd --> reconcileStd["POST /attempts/:id/reconcile or cron"]
+  transferStd --> enqueueStd[Local commit queue persist]
+  enqueueStd --> commitStd["POST /quick-pay/commit context+txHash"]
+  commitStd --> reconcileStd["POST /attempts/:id/reconcile or cron"]
 ```
 
-Private payout uses `CONFIDENTIAL_INTENTS` with the selected `originAsset` as the confidential balance asset; funding deposits that same asset (`ORIGIN_CHAIN` → `CONFIDENTIAL_INTENTS`). Standard uses `ORIGIN_CHAIN` + `INTENTS_CONFIDENTIALITY` (default `advanced`). UI tracks in-flight attempts via `GET /payments/pending` + Pending Payments dock.
+Private payout uses `CONFIDENTIAL_INTENTS` with the selected `originAsset` as the confidential balance asset; funding deposits that same asset (`ORIGIN_CHAIN` → `CONFIDENTIAL_INTENTS`). Standard uses `ORIGIN_CHAIN` + `INTENTS_CONFIDENTIALITY` (default `advanced`). Cancelled wallet signatures/transfers leave **no** DB rows. After tx hash, the frontend persists a commit queue (`src/stores/quick-pay-commit-queue.ts`) and retries `POST /quick-pay/commit`. UI tracks in-flight attempts via `GET /payments/pending` + Pending Payments dock.
 
 ### Legacy payroll-run path (still available)
 
@@ -188,11 +189,9 @@ Details: [`docs/api/payments.md`](api/payments.md).
 | POST | `/api/payments/quote` | admin | [payments](api/payments.md) | `api/src/routes/payments.ts` | `api.quote` |
 | POST | `/api/payments/items/:itemId/quote` | admin | [payments](api/payments.md) | `api/src/routes/payments.ts` | `api.quotePaymentItem` |
 | POST | `/api/payments/employees/:employeeId/quote` | admin | [payments](api/payments.md) | `api/src/routes/payments.ts` | `api.quoteEmployeePayment` / `quoteEmployeePaymentDry` |
-| POST | `/api/payments/attempts/:attemptId/private/sign` | admin | [payments](api/payments.md) | `api/src/routes/payments.ts` | `api.submitPrivateSignature` |
-| POST | `/api/payments/attempts/:attemptId/private/deposit` | admin | [payments](api/payments.md) | `api/src/routes/payments.ts` | `api.submitPrivateDeposit` |
+| POST | `/api/payments/quick-pay/commit` | admin | [payments](api/payments.md) | `api/src/routes/payments.ts` | `api.commitQuickPay` |
 | POST | `/api/payments/attempts/:attemptId/intent` | admin | [payments](api/payments.md) | `api/src/routes/payments.ts` | `api.generatePaymentIntent` |
 | POST | `/api/payments/attempts/:attemptId/submit` | admin | [payments](api/payments.md) | `api/src/routes/payments.ts` | `api.submitPaymentAttempt` |
-| POST | `/api/payments/attempts/:attemptId/deposit` | admin | [payments](api/payments.md) | `api/src/routes/payments.ts` | `api.submitPaymentDeposit` |
 | POST | `/api/payments/attempts/:attemptId/reconcile` | admin | [payments](api/payments.md) | `api/src/routes/payments.ts` | `api.reconcilePaymentAttempt` |
 | GET | `/api/payments/pending` | admin | [payments](api/payments.md) | `api/src/routes/payments.ts` | `api.listPendingPayments` |
 | POST | `/api/payments/reconcile` | admin | [payments](api/payments.md) | `api/src/routes/payments.ts` | `api.reconcileOpenPayments` |

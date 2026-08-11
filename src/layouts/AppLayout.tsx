@@ -3,9 +3,15 @@ import { ToastContainer } from "react-toastify";
 import { GlobalDrawerHost } from "@/components/drawer/GlobalDrawerHost";
 import { AppHeader } from "@/components/layout/AppHeader";
 import { PendingPaymentsDock } from "@/components/pending-payments/PendingPaymentsDock";
+import { useQuickPayCommitQueue } from "@/hooks/use-quick-pay-commit-queue";
 import { CREATE_TEAM_BG } from "@/views/admin/create-team/config";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth";
+
+function AdminQuickPayCommitFlush() {
+  useQuickPayCommitQueue();
+  return null;
+}
 
 export function AppLayout() {
   const location = useLocation();
@@ -29,6 +35,7 @@ export function AppLayout() {
         <Outlet />
       </main>
       {role === "admin" ? <GlobalDrawerHost /> : null}
+      {role === "admin" ? <AdminQuickPayCommitFlush /> : null}
       {role === "admin" && !isCreateTeam ? <PendingPaymentsDock /> : null}
       <ToastContainer
         position="top-right"

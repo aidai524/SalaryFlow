@@ -33,6 +33,12 @@ import {
   validatePaymentAssetMapping,
 } from "../payment-state";
 import { EVM_PAYOUT_NETWORKS, normalizePayoutAddress, PAYOUT_TOKENS } from "../payout";
+import {
+  QuickPayContextError,
+  signQuickPayContext,
+  verifyQuickPayContext,
+  type QuickPayContextPayload,
+} from "../quick-pay-context";
 import { nowIso, uuid, type AuthUser } from "../types";
 
 export const paymentRoutes = new Hono<AppEnv>();
@@ -500,7 +506,9 @@ paymentRoutes.post("/attempts/:attemptId/reconcile", requireRole("admin"), async
 });
 
 // ---------------------------------------------------------------------------
-// Quick Pay: standard (ORIGIN_CHAIN F2F) or private (EOA → confidential → dest)
+// Quick Pay: standard (ORIGIN_CHAIN F2F) or private (EOA → confidential → dest).
+// Live quotes are ephemeral (HMAC context). Rows are created only on commit
+// after the wallet returns a deposit tx hash.
 // ---------------------------------------------------------------------------
 
 const PRIVATE_FUNDING_BUFFER_BPS = 10; // 0.1% buffer so confidential balance covers leg B amountIn
@@ -715,44 +723,13 @@ paymentRoutes.post("/employees/:employeeId/quote", requireRole("admin"), async (
   if (!org?.payment_configured_at || !org.payment_cadence || !org.payment_date_key) {
     return c.json({ error: "Team payment preferences are not configured", code: "PAYMENT_NOT_CONFIGURED" }, 409);
   }
-  const period = resolveCurrentPeriod(
-    org.payment_cadence as TeamPaymentSchedule,
-    org.payment_date_key as TeamPaymentDateKey,
-  );
 
-  const existing = await c.env.DB.prepare(
-    "SELECT * FROM payment_attempts WHERE org_id = ? AND idempotency_key = ?",
-  ).bind(user.org_id, idempotencyKey).first<PaymentAttemptRow>();
-  if (existing) {
-    return c.json({ attempt: existing, reused: true });
-  }
-
-  const timestamp = nowIso();
+  // Live quotes are ephemeral: return a signed context token. Rows are created
+  // only after the wallet deposit succeeds (POST /payments/quick-pay/commit).
   const paymentId = uuid();
-  // Each live Quick Pay creates a new employee_payments row so paid/processing
-  // periods can still receive additional transfers. Period "paid" flags use EXISTS status=paid.
-  const insertedPayment = await c.env.DB.prepare(
-    `INSERT INTO employee_payments
-     (id, org_id, employee_id, period_key, amount_minor, token, network, status, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
-  ).bind(
-    paymentId,
-    user.org_id,
-    employee.id,
-    period.periodKey,
-    amountMinor,
-    destinationToken,
-    destinationNetwork,
-    timestamp,
-    timestamp,
-  ).run();
-  if (Number(insertedPayment.meta.changes || 0) !== 1) {
-    return c.json({ error: "Could not create employee payment row" }, 500);
-  }
-
   const attemptId = uuid();
 
-  // -------- Private live: quote payout (leg B) + generate intent, await signature --------
+  // -------- Private live: payout quote + intent + funding quote (no DB) --------
   if (mode === "private") {
     const payoutRequest: QuoteRequest = {
       dry: false,
@@ -769,39 +746,6 @@ paymentRoutes.post("/employees/:employeeId/quote", requireRole("admin"), async (
       deadline: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
       slippageTolerance: 100,
     };
-    const inserted = await c.env.DB.prepare(
-      `INSERT OR IGNORE INTO payment_attempts
-       (id, org_id, run_id, item_id, employee_payment_id, idempotency_key, flow, state, token, network,
-        amount_minor, recipient, signer_id, origin_asset_id, destination_asset_id,
-        quote_request, created_by, created_at, updated_at)
-       VALUES (?, ?, NULL, NULL, ?, ?, 'private', 'created', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).bind(
-      attemptId,
-      user.org_id,
-      paymentId,
-      idempotencyKey,
-      destinationToken,
-      destinationNetwork,
-      amountMinor,
-      recipient,
-      intentsAccountId,
-      origin.assetId,
-      destination.assetId,
-      JSON.stringify(payoutRequest),
-      user.id,
-      timestamp,
-      timestamp,
-    ).run();
-    if (Number(inserted.meta.changes || 0) !== 1) {
-      const concurrent = await c.env.DB.prepare(
-        "SELECT * FROM payment_attempts WHERE org_id = ? AND idempotency_key = ?",
-      ).bind(user.org_id, idempotencyKey).first<PaymentAttemptRow>();
-      if (concurrent) return c.json({ attempt: concurrent, reused: true });
-      return c.json({ error: "This employee payment already has an active attempt", code: "ACTIVE_ATTEMPT_EXISTS" }, 409);
-    }
-
-    await c.env.DB.prepare("UPDATE payment_attempts SET state = 'quoting', updated_at = ? WHERE id = ? AND state = 'created'")
-      .bind(nowIso(), attemptId).run();
 
     try {
       const quote = await requestQuote(c.env, payoutRequest);
@@ -819,23 +763,6 @@ paymentRoutes.post("/employees/:employeeId/quote", requireRole("admin"), async (
         throw new Error("1Click quote is missing a valid future deadline");
       }
 
-      await c.env.DB.prepare(
-        `UPDATE payment_attempts
-         SET state = 'generating', quote_response = ?, quote_hash = ?, correlation_id = ?,
-             deposit_address = ?, deposit_memo = ?, quote_expires_at = ?,
-             last_error = NULL, updated_at = ?
-         WHERE id = ? AND state = 'quoting'`,
-      ).bind(
-        JSON.stringify(quote),
-        verifiedQuoteHash,
-        quote.correlationId || null,
-        depositAddress,
-        quote.quote.depositMemo || null,
-        quoteExpiresAt,
-        nowIso(),
-        attemptId,
-      ).run();
-
       const generated = await generateIntent(c.env, {
         type: "swap_transfer",
         standard: "erc191",
@@ -850,79 +777,103 @@ paymentRoutes.post("/employees/:employeeId/quote", requireRole("admin"), async (
         throw new Error("1Click intent signer does not match the verified payment wallet");
       }
 
-      const quotedAt = nowIso();
-      await c.env.DB.batch([
-        c.env.DB.prepare(
-          `UPDATE payment_attempts
-           SET state = 'awaiting_signature', intent_payload = ?,
-               correlation_id = COALESCE(?, correlation_id), last_error = NULL, updated_at = ?
-           WHERE id = ? AND state = 'generating'`,
-        ).bind(JSON.stringify(generated.intent), generated.correlationId || null, quotedAt, attemptId),
-        c.env.DB.prepare(
-          `UPDATE employee_payments SET status = 'processing', updated_at = ? WHERE id = ?`,
-        ).bind(quotedAt, paymentId),
-        c.env.DB.prepare(
-          `INSERT INTO chain_records
-           (id, attempt_id, item_id, org_id, employee_name, token, network, amount_minor,
-            origin_chain, dest_chain, confidentiality, status, quote_at)
-           VALUES (?, ?, NULL, ?, ?, ?, ?, ?, 'confidential-intents', ?, 'advanced', 'awaiting_signature', ?)`,
-        ).bind(
-          uuid(),
-          attemptId,
-          user.org_id,
-          employee.name,
-          destinationToken,
-          destinationNetwork,
-          amountMinor,
-          destination.network,
-          quotedAt,
-        ),
-        c.env.DB.prepare(
-          "INSERT INTO audit_log (id, org_id, actor_id, action, detail) VALUES (?, ?, ?, 'payment.quoted', ?)",
-        ).bind(uuid(), user.org_id, user.id, `Quoted private Quick Pay for employee ${employee.id} as attempt ${attemptId}`),
-      ]);
+      const fundingAmount = applyFundingBuffer(String(quote.quote.amountIn));
+      const fundingRequest: QuoteRequest = {
+        dry: false,
+        swapType: "EXACT_OUTPUT",
+        originAsset: origin.assetId,
+        depositType: "ORIGIN_CHAIN",
+        destinationAsset: payoutRequest.originAsset,
+        amount: fundingAmount,
+        recipient: intentsAccountId,
+        recipientType: "CONFIDENTIAL_INTENTS",
+        refundTo,
+        refundType: "ORIGIN_CHAIN",
+        confidentiality: "advanced",
+        deadline: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+        slippageTolerance: 100,
+      };
+      const fundingQuote = await requestQuote(c.env, fundingRequest);
+      const fundingHash = verifyOneClickQuote(c.env, fundingRequest, fundingQuote);
+      const fundingDepositAddress = fundingQuote.quote?.depositAddress;
+      if (!fundingDepositAddress) throw new Error("1Click funding quote did not include a deposit address");
+      if (!/^\d+$/.test(String(fundingQuote.quote.amountIn || "")) || BigInt(fundingQuote.quote.amountIn) <= 0n) {
+        throw new Error("1Click funding quote input amount is invalid");
+      }
+      if (String(fundingQuote.quote.amountOut || "") !== fundingAmount) {
+        throw new Error("1Click funding exact-output quote does not match the buffered payout input");
+      }
+      const fundingExpiresAt = String(fundingQuote.quote.deadline || "");
+      if (!fundingExpiresAt || !Number.isFinite(Date.parse(fundingExpiresAt)) || Date.parse(fundingExpiresAt) <= Date.now()) {
+        throw new Error("1Click funding quote is missing a valid future deadline");
+      }
+
+      const intent = { standard: "erc191" as const, payload: generated.intent.payload };
+      const context = await signQuickPayContext(c.env, {
+        orgId: String(user.org_id),
+        userId: user.id,
+        signerId: intentsAccountId,
+        employeeId: employee.id,
+        employeeName: employee.name,
+        paymentId,
+        attemptId,
+        idempotencyKey,
+        mode: "private",
+        amountMinor,
+        token: destinationToken,
+        network: destinationNetwork,
+        recipient,
+        originAssetId: origin.assetId,
+        destinationAssetId: destination.assetId,
+        originNetwork: origin.network,
+        destinationNetwork: destination.network,
+        confidentiality: "advanced",
+        quoteRequest: payoutRequest,
+        quoteResponse: quote,
+        quoteHash: verifiedQuoteHash,
+        depositAddress,
+        depositMemo: quote.quote.depositMemo || null,
+        quoteExpiresAt,
+        intentPayload: JSON.stringify(intent),
+        fundingQuoteRequest: fundingRequest,
+        fundingQuoteResponse: fundingQuote,
+        fundingQuoteHash: fundingHash,
+        fundingDepositAddress,
+        fundingDepositMemo: fundingQuote.quote.depositMemo || null,
+        fundingExpiresAt,
+      });
+
+      return c.json({
+        mode,
+        context,
+        intent,
+        funding: {
+          depositAddress: fundingDepositAddress,
+          depositMemo: fundingQuote.quote.depositMemo || null,
+          amountIn: fundingQuote.quote.amountIn,
+          amountOut: fundingQuote.quote.amountOut,
+          deadline: fundingExpiresAt,
+        },
+        quote: {
+          amountIn: fundingQuote.quote.amountIn,
+          amountOut: quote.quote.amountOut,
+          depositAddress: fundingDepositAddress,
+          depositMemo: fundingQuote.quote.depositMemo || null,
+          timeEstimate: fundingQuote.quote.timeEstimate ?? quote.quote.timeEstimate ?? null,
+          deadline: fundingExpiresAt,
+          originAsset: origin,
+          destinationAsset: destination,
+          confidentiality: "advanced",
+          payoutAmountIn: quote.quote.amountIn,
+          fundingAmountOut: fundingQuote.quote.amountOut,
+        },
+      }, 200);
     } catch (error) {
-      const failedAt = nowIso();
-      await c.env.DB.batch([
-        c.env.DB.prepare(
-          "UPDATE payment_attempts SET state = 'failed', last_error = ?, failed_at = ?, updated_at = ? WHERE id = ?",
-        ).bind(providerError(error), failedAt, failedAt, attemptId),
-        c.env.DB.prepare(
-          `UPDATE employee_payments SET status = 'pending', updated_at = ? WHERE id = ?`,
-        ).bind(failedAt, paymentId),
-      ]);
       return c.json({ error: "Live private quote failed", code: "PAYMENT_PROVIDER_ERROR", detail: providerError(error) }, 502);
     }
-
-    const attempt = await getPaymentAttempt(c.env.DB, attemptId, user.org_id);
-    let quoteResponse: Record<string, unknown> | null = null;
-    try {
-      quoteResponse = attempt?.quote_response ? JSON.parse(String(attempt.quote_response)) as Record<string, unknown> : null;
-    } catch {
-      quoteResponse = null;
-    }
-    const quoteInner = (quoteResponse?.quote || {}) as Record<string, unknown>;
-    const intent = attempt?.intent_payload ? JSON.parse(String(attempt.intent_payload)) as { standard: "erc191"; payload: string } : null;
-    return c.json({
-      attempt,
-      reused: false,
-      mode,
-      intent,
-      quote: {
-        amountIn: quoteInner.amountIn,
-        amountOut: quoteInner.amountOut,
-        depositAddress: attempt?.deposit_address,
-        depositMemo: attempt?.deposit_memo,
-        timeEstimate: quoteInner.timeEstimate ?? null,
-        deadline: attempt?.quote_expires_at,
-        originAsset: origin,
-        destinationAsset: destination,
-        confidentiality: "advanced",
-      },
-    }, 201);
   }
 
-  // -------- Standard live: ORIGIN_CHAIN foreign-to-foreign --------
+  // -------- Standard live: ORIGIN_CHAIN foreign-to-foreign (no DB) --------
   const liveRequest: QuoteRequest = {
     dry: false,
     swapType: "EXACT_OUTPUT",
@@ -938,45 +889,6 @@ paymentRoutes.post("/employees/:employeeId/quote", requireRole("admin"), async (
     deadline: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
     slippageTolerance: 100,
   };
-  const inserted = await c.env.DB.prepare(
-    `INSERT OR IGNORE INTO payment_attempts
-     (id, org_id, run_id, item_id, employee_payment_id, idempotency_key, flow, state, token, network,
-      amount_minor, recipient, signer_id, origin_asset_id, destination_asset_id,
-      quote_request, created_by, created_at, updated_at)
-     VALUES (?, ?, NULL, NULL, ?, ?, 'standard', 'created', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).bind(
-    attemptId,
-    user.org_id,
-    paymentId,
-    idempotencyKey,
-    destinationToken,
-    destinationNetwork,
-    amountMinor,
-    recipient,
-    refundTo,
-    origin.assetId,
-    destination.assetId,
-    JSON.stringify(liveRequest),
-    user.id,
-    timestamp,
-    timestamp,
-  ).run();
-  if (Number(inserted.meta.changes || 0) !== 1) {
-    const concurrent = await c.env.DB.prepare(
-      "SELECT * FROM payment_attempts WHERE org_id = ? AND idempotency_key = ?",
-    ).bind(user.org_id, idempotencyKey).first<PaymentAttemptRow>();
-    if (concurrent) return c.json({ attempt: concurrent, reused: true });
-    const active = await c.env.DB.prepare(
-      `SELECT * FROM payment_attempts WHERE employee_payment_id = ?
-       AND state IN ('created', 'quoting', 'quoted', 'awaiting_deposit', 'deposit_submitted',
-         'awaiting_signature', 'funding_quoted', 'funding_deposit_submitted', 'funding_processing', 'processing')
-       ORDER BY created_at DESC LIMIT 1`,
-    ).bind(paymentId).first<PaymentAttemptRow>();
-    return c.json({ error: "This employee payment already has an active attempt", code: "ACTIVE_ATTEMPT_EXISTS", attempt: active }, 409);
-  }
-
-  await c.env.DB.prepare("UPDATE payment_attempts SET state = 'quoting', updated_at = ? WHERE id = ? AND state = 'created'")
-    .bind(nowIso(), attemptId).run();
 
   try {
     const quote = await requestQuote(c.env, liveRequest);
@@ -993,391 +905,357 @@ paymentRoutes.post("/employees/:employeeId/quote", requireRole("admin"), async (
     if (!quoteExpiresAt || !Number.isFinite(Date.parse(quoteExpiresAt)) || Date.parse(quoteExpiresAt) <= Date.now()) {
       throw new Error("1Click quote is missing a valid future deadline");
     }
-    const quotedAt = nowIso();
-    await c.env.DB.batch([
-      c.env.DB.prepare(
-        `UPDATE payment_attempts
-         SET state = 'awaiting_deposit', quote_response = ?, quote_hash = ?, correlation_id = ?,
-             deposit_address = ?, deposit_memo = ?, quote_expires_at = ?,
-             last_error = NULL, next_reconcile_at = ?, updated_at = ?
-         WHERE id = ? AND state = 'quoting'`,
-      ).bind(
-        JSON.stringify(quote),
-        verifiedQuoteHash,
-        quote.correlationId || null,
+
+    const context = await signQuickPayContext(c.env, {
+      orgId: String(user.org_id),
+      userId: user.id,
+      signerId: refundTo,
+      employeeId: employee.id,
+      employeeName: employee.name,
+      paymentId,
+      attemptId,
+      idempotencyKey,
+      mode: "standard",
+      amountMinor,
+      token: destinationToken,
+      network: destinationNetwork,
+      recipient,
+      originAssetId: origin.assetId,
+      destinationAssetId: destination.assetId,
+      originNetwork: origin.network,
+      destinationNetwork: destination.network,
+      confidentiality,
+      quoteRequest: liveRequest,
+      quoteResponse: quote,
+      quoteHash: verifiedQuoteHash,
+      depositAddress,
+      depositMemo: quote.quote.depositMemo || null,
+      quoteExpiresAt,
+    });
+
+    return c.json({
+      mode,
+      context,
+      quote: {
+        amountIn: quote.quote.amountIn,
+        amountOut: quote.quote.amountOut,
         depositAddress,
-        quote.quote.depositMemo || null,
-        quoteExpiresAt,
-        quotedAt,
-        quotedAt,
-        attemptId,
-      ),
-      c.env.DB.prepare(
-        `UPDATE employee_payments SET status = 'processing', updated_at = ? WHERE id = ?`,
-      ).bind(quotedAt, paymentId),
-      c.env.DB.prepare(
-        `INSERT INTO chain_records
-         (id, attempt_id, item_id, org_id, employee_name, token, network, amount_minor,
-          origin_chain, dest_chain, confidentiality, status, quote_at)
-         VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_deposit', ?)`,
-      ).bind(
-        uuid(),
-        attemptId,
-        user.org_id,
-        employee.name,
-        destinationToken,
-        destinationNetwork,
-        amountMinor,
-        origin.network,
-        destination.network,
+        depositMemo: quote.quote.depositMemo || null,
+        timeEstimate: quote.quote.timeEstimate ?? null,
+        deadline: quoteExpiresAt,
+        originAsset: origin,
+        destinationAsset: destination,
         confidentiality,
-        quotedAt,
-      ),
-      c.env.DB.prepare(
-        "INSERT INTO audit_log (id, org_id, actor_id, action, detail) VALUES (?, ?, ?, 'payment.quoted', ?)",
-      ).bind(uuid(), user.org_id, user.id, `Quoted Quick Pay for employee ${employee.id} as attempt ${attemptId}`),
-    ]);
+      },
+    }, 200);
   } catch (error) {
-    const failedAt = nowIso();
-    await c.env.DB.batch([
-      c.env.DB.prepare(
-        "UPDATE payment_attempts SET state = 'failed', last_error = ?, failed_at = ?, updated_at = ? WHERE id = ?",
-      ).bind(providerError(error), failedAt, failedAt, attemptId),
-      c.env.DB.prepare(
-        `UPDATE employee_payments SET status = 'pending', updated_at = ? WHERE id = ?`,
-      ).bind(failedAt, paymentId),
-    ]);
     return c.json({ error: "Live quote failed", code: "PAYMENT_PROVIDER_ERROR", detail: providerError(error) }, 502);
   }
-
-  const attempt = await getPaymentAttempt(c.env.DB, attemptId, user.org_id);
-  let quoteResponse: Record<string, unknown> | null = null;
-  try {
-    quoteResponse = attempt?.quote_response ? JSON.parse(String(attempt.quote_response)) as Record<string, unknown> : null;
-  } catch {
-    quoteResponse = null;
-  }
-  const quoteInner = (quoteResponse?.quote || {}) as Record<string, unknown>;
-  return c.json({
-    attempt,
-    reused: false,
-    mode,
-    quote: {
-      amountIn: quoteInner.amountIn,
-      amountOut: quoteInner.amountOut,
-      depositAddress: attempt?.deposit_address,
-      depositMemo: attempt?.deposit_memo,
-      timeEstimate: quoteInner.timeEstimate ?? null,
-      deadline: attempt?.quote_expires_at,
-      originAsset: origin,
-      destinationAsset: destination,
-      confidentiality,
-    },
-  }, 201);
 });
 
-/** Notify 1Click of an ORIGIN_CHAIN deposit transaction hash. */
-paymentRoutes.post("/attempts/:attemptId/deposit", requireRole("admin"), async (c) => {
+/**
+ * Persist a Quick Pay attempt after the ORIGIN_CHAIN deposit tx is confirmed by
+ * the wallet. Accepts the signed context from the live quote (no prior DB rows).
+ */
+paymentRoutes.post("/quick-pay/commit", requireRole("admin"), async (c) => {
   const blocked = liveGateResponse(c);
   if (blocked) return blocked;
   const user = c.get("user") as AuthUser;
-  const attemptId = c.req.param("attemptId");
-  let attempt = await getPaymentAttempt(c.env.DB, attemptId, user.org_id);
-  if (!attempt) return c.json({ error: "Payment attempt not found" }, 404);
-  if (!attempt.employee_payment_id) {
-    return c.json({ error: "Deposit submit is only supported for Quick Pay attempts" }, 409);
+  if (!user.wallet_address || !user.wallet_verified) {
+    return c.json({ error: "A signature-verified admin payment wallet is required", code: "PAYMENT_WALLET_NOT_VERIFIED" }, 422);
   }
-  if (["deposit_submitted", "processing", "confirmed"].includes(attempt.state) && attempt.deposit_tx_hash) {
-    return c.json({ attempt, reused: true });
-  }
-  if (attempt.state !== "awaiting_deposit" && attempt.state !== "quoted") {
-    return c.json({ error: `Cannot submit a deposit from state ${attempt.state}` }, 409);
-  }
-  if (!user.wallet_address || !user.wallet_verified || user.wallet_address.toLowerCase() !== String(attempt.signer_id).toLowerCase()) {
-    return c.json({ error: "The verified payment wallet no longer matches this attempt", code: "PAYMENT_WALLET_CHANGED" }, 409);
-  }
-  if (attempt.quote_expires_at && new Date(String(attempt.quote_expires_at)).getTime() <= Date.now()) {
-    return c.json({ error: "Payment quote has expired; create a new attempt", code: "QUOTE_EXPIRED" }, 409);
-  }
+
   const body = await c.req.json().catch(() => null);
+  const contextToken = String(body?.context || "");
   const txHash = String(body?.txHash || "").trim();
+  const signature = body?.signature != null ? String(body.signature) : "";
+
   if (!/^0x[a-fA-F0-9]{64}$/.test(txHash)) {
     return c.json({ error: "A valid EVM transaction hash is required" }, 400);
   }
-  if (!attempt.deposit_address) return c.json({ error: "Payment attempt has no deposit address" }, 500);
 
-  const submittedAt = nowIso();
+  let ctx: QuickPayContextPayload;
   try {
-    await submitDepositTx(c.env, { depositAddress: attempt.deposit_address, txHash });
+    ctx = await verifyQuickPayContext(c.env, contextToken, {
+      orgId: String(user.org_id),
+      signerId: user.wallet_address,
+    });
   } catch (error) {
-    // Non-fatal: 1Click can still detect the deposit on-chain; store hash and reconcile.
-    await c.env.DB.prepare(
-      `UPDATE payment_attempts
-       SET deposit_tx_hash = ?, state = 'deposit_submitted', provider_status = 'KNOWN_DEPOSIT_TX',
-           last_error = ?, next_reconcile_at = ?, submitted_at = ?, updated_at = ?
-       WHERE id = ? AND state IN ('awaiting_deposit', 'quoted')`,
-    ).bind(txHash, providerError(error), submittedAt, submittedAt, submittedAt, attempt.id).run();
-    attempt = await getPaymentAttempt(c.env.DB, attempt.id, user.org_id);
-    return c.json({ attempt, outcome: "unknown", reused: false }, 202);
+    if (error instanceof QuickPayContextError) {
+      const status = error.code === "QUICK_PAY_CONTEXT_EXPIRED" ? 409 : 400;
+      // Org/signer mismatch → 403 so the client queue keeps the item for the
+      // original account instead of treating it as a permanent drop.
+      if (
+        error.code === "QUICK_PAY_CONTEXT_ORG_MISMATCH"
+        || error.code === "QUICK_PAY_CONTEXT_SIGNER_MISMATCH"
+      ) {
+        return c.json({ error: error.message, code: error.code }, 403);
+      }
+      return c.json({ error: error.message, code: error.code }, status);
+    }
+    throw error;
   }
 
-  await c.env.DB.batch([
-    c.env.DB.prepare(
-      `UPDATE payment_attempts
-       SET deposit_tx_hash = ?, state = 'deposit_submitted', provider_status = 'KNOWN_DEPOSIT_TX',
-           last_error = NULL, next_reconcile_at = ?, submitted_at = ?, updated_at = ?
-       WHERE id = ? AND state IN ('awaiting_deposit', 'quoted')`,
-    ).bind(txHash, submittedAt, submittedAt, submittedAt, attempt.id),
-    c.env.DB.prepare(
-      `UPDATE chain_records SET status = 'deposit_submitted', provider_status = 'KNOWN_DEPOSIT_TX', submitted_at = ?, error = NULL
-       WHERE attempt_id = ?`,
-    ).bind(submittedAt, attempt.id),
-    c.env.DB.prepare(
-      "INSERT INTO audit_log (id, org_id, actor_id, action, detail) VALUES (?, ?, ?, 'payment.deposit_submitted', ?)",
-    ).bind(uuid(), user.org_id, user.id, `Deposit ${txHash} for attempt ${attempt.id}`),
-  ]);
-
-  attempt = await getPaymentAttempt(c.env.DB, attempt.id, user.org_id);
-  return c.json({ attempt, reused: false });
-});
-
-/** Store pre-signed private payout intent, then quote ORIGIN_CHAIN → CONFIDENTIAL_INTENTS funding. */
-paymentRoutes.post("/attempts/:attemptId/private/sign", requireRole("admin"), async (c) => {
-  const blocked = liveGateResponse(c);
-  if (blocked) return blocked;
-  const user = c.get("user") as AuthUser;
-  const attemptId = c.req.param("attemptId");
-  let attempt = await getPaymentAttempt(c.env.DB, attemptId, user.org_id);
-  if (!attempt) return c.json({ error: "Payment attempt not found" }, 404);
-  if (attempt.flow !== "private") {
-    return c.json({ error: "This endpoint is only for private Quick Pay attempts" }, 409);
+  // Idempotent reuse for frontend queue retries.
+  const existing = await c.env.DB.prepare(
+    "SELECT * FROM payment_attempts WHERE org_id = ? AND idempotency_key = ?",
+  ).bind(user.org_id, ctx.idempotencyKey).first<PaymentAttemptRow>();
+  if (existing) {
+    return c.json({ attempt: existing, reused: true, mode: ctx.mode });
   }
-  if (attempt.state === "funding_quoted" && attempt.funding_deposit_address && attempt.intent_signature) {
-    let fundingQuote: Record<string, unknown> | null = null;
+
+  if (ctx.mode === "private") {
+    if (!/^0x[a-fA-F0-9]{130}$/.test(signature)) {
+      return c.json({ error: "A valid 65-byte EVM signature is required", code: "QUICK_PAY_SIGNATURE_INVALID" }, 400);
+    }
+    if (!ctx.intentPayload || !ctx.fundingDepositAddress || !ctx.fundingQuoteRequest || !ctx.fundingQuoteResponse || !ctx.fundingQuoteHash) {
+      return c.json({ error: "Private Quick Pay context is missing funding or intent details", code: "QUICK_PAY_CONTEXT_INVALID" }, 400);
+    }
+    const intent = JSON.parse(ctx.intentPayload) as { standard?: string; payload?: unknown };
+    if (intent.standard !== "erc191" || typeof intent.payload !== "string") {
+      return c.json({ error: "Private Quick Pay context intent is invalid", code: "QUICK_PAY_CONTEXT_INVALID" }, 400);
+    }
+    let valid = false;
     try {
-      fundingQuote = attempt.funding_quote_response
-        ? JSON.parse(String(attempt.funding_quote_response)) as Record<string, unknown>
-        : null;
+      valid = await verifyMessage({
+        address: ctx.signerId as Address,
+        message: intent.payload,
+        signature: signature as Hex,
+      });
     } catch {
-      fundingQuote = null;
+      valid = false;
     }
-    const fundingInner = (fundingQuote?.quote || {}) as Record<string, unknown>;
-    return c.json({
-      attempt,
-      reused: true,
-      funding: {
-        depositAddress: attempt.funding_deposit_address,
-        depositMemo: attempt.funding_deposit_memo,
-        amountIn: fundingInner.amountIn,
-        amountOut: fundingInner.amountOut,
-        deadline: attempt.funding_expires_at,
-      },
-    });
-  }
-  if (attempt.state !== "awaiting_signature" || !attempt.intent_payload) {
-    return c.json({ error: `Cannot accept a private signature from state ${attempt.state}` }, 409);
-  }
-  if (!user.wallet_address || !user.wallet_verified || user.wallet_address.toLowerCase() !== String(attempt.signer_id).toLowerCase()) {
-    return c.json({ error: "The verified payment wallet no longer matches this attempt", code: "PAYMENT_WALLET_CHANGED" }, 409);
-  }
-  if (attempt.quote_expires_at && new Date(String(attempt.quote_expires_at)).getTime() <= Date.now()) {
-    return c.json({ error: "Payment quote has expired; create a new attempt", code: "QUOTE_EXPIRED" }, 409);
+    if (!valid) {
+      return c.json({
+        error: "Payment signature does not match the verified admin wallet",
+        code: "QUICK_PAY_SIGNATURE_INVALID",
+      }, 400);
+    }
   }
 
-  const body = await c.req.json().catch(() => null);
-  const signature = String(body?.signature || "");
-  if (!/^0x[a-fA-F0-9]{130}$/.test(signature)) {
-    return c.json({ error: "A valid 65-byte EVM signature is required" }, 400);
+  const org = await c.env.DB.prepare(
+    `SELECT payment_cadence, payment_date_key, payment_configured_at
+     FROM organizations WHERE id = ?`,
+  ).bind(user.org_id).first<{
+    payment_cadence: string | null;
+    payment_date_key: string | null;
+    payment_configured_at: string | null;
+  }>();
+  if (!org?.payment_configured_at || !org.payment_cadence || !org.payment_date_key) {
+    return c.json({ error: "Team payment preferences are not configured", code: "PAYMENT_NOT_CONFIGURED" }, 409);
   }
-  const intent = JSON.parse(attempt.intent_payload) as { standard?: string; payload?: unknown };
-  if (intent.standard !== "erc191" || typeof intent.payload !== "string") {
-    return c.json({ error: "Stored payment intent is invalid" }, 500);
-  }
-  let valid = false;
-  try {
-    valid = await verifyMessage({
-      address: attempt.signer_id as Address,
-      message: intent.payload,
-      signature: signature as Hex,
-    });
-  } catch {
-    valid = false;
-  }
-  if (!valid) return c.json({ error: "Payment signature does not match the verified admin wallet" }, 400);
+  const period = resolveCurrentPeriod(
+    org.payment_cadence as TeamPaymentSchedule,
+    org.payment_date_key as TeamPaymentDateKey,
+  );
 
-  if (!attempt.quote_response || !attempt.origin_asset_id) {
-    return c.json({ error: "Payment attempt is missing payout quote details" }, 500);
-  }
-  let payoutAmountIn = "";
-  try {
-    const payoutQuote = JSON.parse(String(attempt.quote_response)) as { quote?: { amountIn?: string } };
-    payoutAmountIn = String(payoutQuote.quote?.amountIn || "");
-  } catch {
-    payoutAmountIn = "";
-  }
-  if (!/^\d+$/.test(payoutAmountIn) || BigInt(payoutAmountIn) <= 0n) {
-    return c.json({ error: "Stored payout quote amount is invalid" }, 500);
-  }
-
-  let payoutRequest: QuoteRequest;
-  try {
-    payoutRequest = JSON.parse(String(attempt.quote_request)) as QuoteRequest;
-  } catch {
-    return c.json({ error: "Stored payout quote request is invalid" }, 500);
-  }
-
-  const fundingAmount = applyFundingBuffer(payoutAmountIn);
-  const fundingRequest: QuoteRequest = {
-    dry: false,
-    swapType: "EXACT_OUTPUT",
-    originAsset: String(attempt.origin_asset_id),
-    depositType: "ORIGIN_CHAIN",
-    destinationAsset: payoutRequest.originAsset,
-    amount: fundingAmount,
-    recipient: String(attempt.signer_id),
-    recipientType: "CONFIDENTIAL_INTENTS",
-    refundTo: normalizePayoutAddress(user.wallet_address) || String(attempt.signer_id),
-    refundType: "ORIGIN_CHAIN",
-    confidentiality: "advanced",
-    deadline: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
-    slippageTolerance: 100,
-  };
+  const timestamp = nowIso();
+  const depositAddressForNotify = ctx.mode === "private"
+    ? String(ctx.fundingDepositAddress)
+    : ctx.depositAddress;
 
   try {
-    const fundingQuote = await requestQuote(c.env, fundingRequest);
-    const fundingHash = verifyOneClickQuote(c.env, fundingRequest, fundingQuote);
-    const fundingDepositAddress = fundingQuote.quote?.depositAddress;
-    if (!fundingDepositAddress) throw new Error("1Click funding quote did not include a deposit address");
-    if (!/^\d+$/.test(String(fundingQuote.quote.amountIn || "")) || BigInt(fundingQuote.quote.amountIn) <= 0n) {
-      throw new Error("1Click funding quote input amount is invalid");
+    if (ctx.mode === "private") {
+      await c.env.DB.batch([
+        c.env.DB.prepare(
+          `INSERT INTO employee_payments
+           (id, org_id, employee_id, period_key, amount_minor, token, network, status, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'processing', ?, ?)`,
+        ).bind(
+          ctx.paymentId,
+          user.org_id,
+          ctx.employeeId,
+          period.periodKey,
+          ctx.amountMinor,
+          ctx.token,
+          ctx.network,
+          timestamp,
+          timestamp,
+        ),
+        c.env.DB.prepare(
+          `INSERT INTO payment_attempts
+           (id, org_id, run_id, item_id, employee_payment_id, idempotency_key, flow, state, token, network,
+            amount_minor, recipient, signer_id, origin_asset_id, destination_asset_id,
+            deposit_address, deposit_memo, quote_request, quote_response, quote_hash, quote_expires_at,
+            intent_payload, intent_signature,
+            funding_deposit_address, funding_deposit_memo, funding_tx_hash,
+            funding_quote_request, funding_quote_response, funding_quote_hash, funding_expires_at,
+            provider_status, next_reconcile_at, created_by, created_at, updated_at)
+           VALUES (?, ?, NULL, NULL, ?, ?, 'private', 'funding_deposit_submitted', ?, ?, ?, ?, ?, ?, ?,
+                   ?, ?, ?, ?, ?, ?,
+                   ?, ?,
+                   ?, ?, ?,
+                   ?, ?, ?, ?,
+                   'KNOWN_DEPOSIT_TX', ?, ?, ?, ?)`,
+        ).bind(
+          ctx.attemptId,
+          user.org_id,
+          ctx.paymentId,
+          ctx.idempotencyKey,
+          ctx.token,
+          ctx.network,
+          ctx.amountMinor,
+          ctx.recipient,
+          ctx.signerId,
+          ctx.originAssetId,
+          ctx.destinationAssetId,
+          ctx.depositAddress,
+          ctx.depositMemo,
+          JSON.stringify(ctx.quoteRequest),
+          JSON.stringify(ctx.quoteResponse),
+          ctx.quoteHash,
+          ctx.quoteExpiresAt,
+          ctx.intentPayload,
+          signature,
+          ctx.fundingDepositAddress,
+          ctx.fundingDepositMemo ?? null,
+          txHash,
+          JSON.stringify(ctx.fundingQuoteRequest),
+          JSON.stringify(ctx.fundingQuoteResponse),
+          ctx.fundingQuoteHash,
+          ctx.fundingExpiresAt ?? null,
+          timestamp,
+          user.id,
+          timestamp,
+          timestamp,
+        ),
+        c.env.DB.prepare(
+          `INSERT INTO chain_records
+           (id, attempt_id, item_id, org_id, employee_name, token, network, amount_minor,
+            origin_chain, dest_chain, confidentiality, status, provider_status, quote_at, signed_at)
+           VALUES (?, ?, NULL, ?, ?, ?, ?, ?, 'confidential-intents', ?, 'advanced', 'funding_deposit_submitted', 'KNOWN_DEPOSIT_TX', ?, ?)`,
+        ).bind(
+          uuid(),
+          ctx.attemptId,
+          user.org_id,
+          ctx.employeeName,
+          ctx.token,
+          ctx.network,
+          ctx.amountMinor,
+          ctx.destinationNetwork,
+          timestamp,
+          timestamp,
+        ),
+        c.env.DB.prepare(
+          "INSERT INTO audit_log (id, org_id, actor_id, action, detail) VALUES (?, ?, ?, 'payment.funding_deposit_submitted', ?)",
+        ).bind(
+          uuid(),
+          user.org_id,
+          user.id,
+          `Committed private Quick Pay funding deposit ${txHash} as attempt ${ctx.attemptId}`,
+        ),
+      ]);
+    } else {
+      await c.env.DB.batch([
+        c.env.DB.prepare(
+          `INSERT INTO employee_payments
+           (id, org_id, employee_id, period_key, amount_minor, token, network, status, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'processing', ?, ?)`,
+        ).bind(
+          ctx.paymentId,
+          user.org_id,
+          ctx.employeeId,
+          period.periodKey,
+          ctx.amountMinor,
+          ctx.token,
+          ctx.network,
+          timestamp,
+          timestamp,
+        ),
+        c.env.DB.prepare(
+          `INSERT INTO payment_attempts
+           (id, org_id, run_id, item_id, employee_payment_id, idempotency_key, flow, state, token, network,
+            amount_minor, recipient, signer_id, origin_asset_id, destination_asset_id,
+            deposit_address, deposit_memo, deposit_tx_hash,
+            quote_request, quote_response, quote_hash, quote_expires_at,
+            provider_status, submitted_at, next_reconcile_at, created_by, created_at, updated_at)
+           VALUES (?, ?, NULL, NULL, ?, ?, 'standard', 'deposit_submitted', ?, ?, ?, ?, ?, ?, ?,
+                   ?, ?, ?,
+                   ?, ?, ?, ?,
+                   'KNOWN_DEPOSIT_TX', ?, ?, ?, ?, ?)`,
+        ).bind(
+          ctx.attemptId,
+          user.org_id,
+          ctx.paymentId,
+          ctx.idempotencyKey,
+          ctx.token,
+          ctx.network,
+          ctx.amountMinor,
+          ctx.recipient,
+          ctx.signerId,
+          ctx.originAssetId,
+          ctx.destinationAssetId,
+          ctx.depositAddress,
+          ctx.depositMemo,
+          txHash,
+          JSON.stringify(ctx.quoteRequest),
+          JSON.stringify(ctx.quoteResponse),
+          ctx.quoteHash,
+          ctx.quoteExpiresAt,
+          timestamp,
+          timestamp,
+          user.id,
+          timestamp,
+          timestamp,
+        ),
+        c.env.DB.prepare(
+          `INSERT INTO chain_records
+           (id, attempt_id, item_id, org_id, employee_name, token, network, amount_minor,
+            origin_chain, dest_chain, confidentiality, status, provider_status, quote_at, submitted_at)
+           VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, 'deposit_submitted', 'KNOWN_DEPOSIT_TX', ?, ?)`,
+        ).bind(
+          uuid(),
+          ctx.attemptId,
+          user.org_id,
+          ctx.employeeName,
+          ctx.token,
+          ctx.network,
+          ctx.amountMinor,
+          ctx.originNetwork,
+          ctx.destinationNetwork,
+          ctx.confidentiality,
+          timestamp,
+          timestamp,
+        ),
+        c.env.DB.prepare(
+          "INSERT INTO audit_log (id, org_id, actor_id, action, detail) VALUES (?, ?, ?, 'payment.deposit_submitted', ?)",
+        ).bind(
+          uuid(),
+          user.org_id,
+          user.id,
+          `Committed Quick Pay deposit ${txHash} as attempt ${ctx.attemptId}`,
+        ),
+      ]);
     }
-    if (String(fundingQuote.quote.amountOut || "") !== fundingAmount) {
-      throw new Error("1Click funding exact-output quote does not match the buffered payout input");
-    }
-    const fundingExpiresAt = String(fundingQuote.quote.deadline || "");
-    if (!fundingExpiresAt || !Number.isFinite(Date.parse(fundingExpiresAt)) || Date.parse(fundingExpiresAt) <= Date.now()) {
-      throw new Error("1Click funding quote is missing a valid future deadline");
-    }
-
-    const signedAt = nowIso();
-    await c.env.DB.batch([
-      c.env.DB.prepare(
-        `UPDATE payment_attempts
-         SET state = 'funding_quoted', intent_signature = ?,
-             funding_deposit_address = ?, funding_deposit_memo = ?,
-             funding_quote_request = ?, funding_quote_response = ?, funding_quote_hash = ?,
-             funding_expires_at = ?, last_error = NULL, next_reconcile_at = ?, updated_at = ?
-         WHERE id = ? AND state = 'awaiting_signature'`,
-      ).bind(
-        signature,
-        fundingDepositAddress,
-        fundingQuote.quote.depositMemo || null,
-        JSON.stringify(fundingRequest),
-        JSON.stringify(fundingQuote),
-        fundingHash,
-        fundingExpiresAt,
-        signedAt,
-        signedAt,
-        attempt.id,
-      ),
-      c.env.DB.prepare(
-        `UPDATE chain_records
-         SET status = 'funding_quoted', signed_at = COALESCE(signed_at, ?), error = NULL
-         WHERE attempt_id = ?`,
-      ).bind(signedAt, attempt.id),
-      c.env.DB.prepare(
-        "INSERT INTO audit_log (id, org_id, actor_id, action, detail) VALUES (?, ?, ?, 'payment.private_signed', ?)",
-      ).bind(uuid(), user.org_id, user.id, `Pre-signed private payout for attempt ${attempt.id}`),
-    ]);
-
-    attempt = await getPaymentAttempt(c.env.DB, attempt.id, user.org_id);
-    return c.json({
-      attempt,
-      reused: false,
-      funding: {
-        depositAddress: fundingDepositAddress,
-        depositMemo: fundingQuote.quote.depositMemo || null,
-        amountIn: fundingQuote.quote.amountIn,
-        amountOut: fundingQuote.quote.amountOut,
-        deadline: fundingExpiresAt,
-      },
-    });
   } catch (error) {
-    await c.env.DB.prepare(
-      "UPDATE payment_attempts SET last_error = ?, updated_at = ? WHERE id = ? AND state = 'awaiting_signature'",
-    ).bind(providerError(error), nowIso(), attemptId).run();
-    return c.json({ error: "Funding quote failed", code: "PAYMENT_PROVIDER_ERROR", detail: providerError(error) }, 502);
-  }
-});
-
-/** Notify 1Click of the ORIGIN_CHAIN funding deposit for a private payment. */
-paymentRoutes.post("/attempts/:attemptId/private/deposit", requireRole("admin"), async (c) => {
-  const blocked = liveGateResponse(c);
-  if (blocked) return blocked;
-  const user = c.get("user") as AuthUser;
-  const attemptId = c.req.param("attemptId");
-  let attempt = await getPaymentAttempt(c.env.DB, attemptId, user.org_id);
-  if (!attempt) return c.json({ error: "Payment attempt not found" }, 404);
-  if (attempt.flow !== "private") {
-    return c.json({ error: "This endpoint is only for private Quick Pay attempts" }, 409);
-  }
-  if (!attempt.employee_payment_id) {
-    return c.json({ error: "Private deposit submit is only supported for Quick Pay attempts" }, 409);
-  }
-  if (["funding_deposit_submitted", "funding_processing", "submitting", "submitted", "processing", "confirmed"].includes(attempt.state)
-    && attempt.funding_tx_hash) {
-    return c.json({ attempt, reused: true });
-  }
-  if (attempt.state !== "funding_quoted") {
-    return c.json({ error: `Cannot submit a funding deposit from state ${attempt.state}` }, 409);
-  }
-  if (!user.wallet_address || !user.wallet_verified || user.wallet_address.toLowerCase() !== String(attempt.signer_id).toLowerCase()) {
-    return c.json({ error: "The verified payment wallet no longer matches this attempt", code: "PAYMENT_WALLET_CHANGED" }, 409);
-  }
-  if (attempt.funding_expires_at && new Date(String(attempt.funding_expires_at)).getTime() <= Date.now()) {
-    return c.json({ error: "Funding quote has expired; create a new attempt", code: "QUOTE_EXPIRED" }, 409);
-  }
-  const body = await c.req.json().catch(() => null);
-  const txHash = String(body?.txHash || "").trim();
-  if (!/^0x[a-fA-F0-9]{64}$/.test(txHash)) {
-    return c.json({ error: "A valid EVM transaction hash is required" }, 400);
-  }
-  if (!attempt.funding_deposit_address) {
-    return c.json({ error: "Payment attempt has no funding deposit address" }, 500);
+    // Concurrent commit with the same idempotency key.
+    const concurrent = await c.env.DB.prepare(
+      "SELECT * FROM payment_attempts WHERE org_id = ? AND idempotency_key = ?",
+    ).bind(user.org_id, ctx.idempotencyKey).first<PaymentAttemptRow>();
+    if (concurrent) {
+      return c.json({ attempt: concurrent, reused: true, mode: ctx.mode });
+    }
+    return c.json({
+      error: "Could not persist Quick Pay commit",
+      code: "QUICK_PAY_COMMIT_FAILED",
+      detail: providerError(error),
+    }, 500);
   }
 
-  const submittedAt = nowIso();
   try {
-    await submitDepositTx(c.env, { depositAddress: attempt.funding_deposit_address, txHash });
+    await submitDepositTx(c.env, { depositAddress: depositAddressForNotify, txHash });
   } catch (error) {
     await c.env.DB.prepare(
       `UPDATE payment_attempts
-       SET funding_tx_hash = ?, state = 'funding_deposit_submitted', provider_status = 'KNOWN_DEPOSIT_TX',
-           last_error = ?, next_reconcile_at = ?, updated_at = ?
-       WHERE id = ? AND state = 'funding_quoted'`,
-    ).bind(txHash, providerError(error), submittedAt, submittedAt, attempt.id).run();
-    attempt = await getPaymentAttempt(c.env.DB, attempt.id, user.org_id);
-    return c.json({ attempt, outcome: "unknown", reused: false }, 202);
+       SET last_error = ?, updated_at = ?
+       WHERE id = ?`,
+    ).bind(providerError(error), nowIso(), ctx.attemptId).run();
+    const attempt = await getPaymentAttempt(c.env.DB, ctx.attemptId, user.org_id);
+    return c.json({ attempt, reused: false, mode: ctx.mode, outcome: "unknown" }, 202);
   }
 
-  await c.env.DB.batch([
-    c.env.DB.prepare(
-      `UPDATE payment_attempts
-       SET funding_tx_hash = ?, state = 'funding_deposit_submitted', provider_status = 'KNOWN_DEPOSIT_TX',
-           last_error = NULL, next_reconcile_at = ?, updated_at = ?
-       WHERE id = ? AND state = 'funding_quoted'`,
-    ).bind(txHash, submittedAt, submittedAt, attempt.id),
-    c.env.DB.prepare(
-      `UPDATE chain_records SET status = 'funding_deposit_submitted', provider_status = 'KNOWN_DEPOSIT_TX', error = NULL
-       WHERE attempt_id = ?`,
-    ).bind(attempt.id),
-    c.env.DB.prepare(
-      "INSERT INTO audit_log (id, org_id, actor_id, action, detail) VALUES (?, ?, ?, 'payment.funding_deposit_submitted', ?)",
-    ).bind(uuid(), user.org_id, user.id, `Funding deposit ${txHash} for attempt ${attempt.id}`),
-  ]);
-
-  attempt = await getPaymentAttempt(c.env.DB, attempt.id, user.org_id);
-  return c.json({ attempt, reused: false });
+  const attempt = await getPaymentAttempt(c.env.DB, ctx.attemptId, user.org_id);
+  return c.json({ attempt, reused: false, mode: ctx.mode });
 });
 
 /** In-flight Quick Pay / payroll attempts for the Pending Payments dock. */

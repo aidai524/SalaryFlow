@@ -682,7 +682,10 @@ export const api = {
       body: JSON.stringify({ ...body, dry: true }),
     }),
 
-  /** Quick Pay live quote — standard ORIGIN_CHAIN deposit or private intent + funding. */
+  /**
+   * Quick Pay live quote — ephemeral (no DB rows). Returns a signed context token
+   * plus deposit details; persist via commitQuickPay after the on-chain deposit.
+   */
   quoteEmployeePayment: (employeeId: string, body: {
     originAsset: string;
     amount?: string;
@@ -692,39 +695,27 @@ export const api = {
     mode?: QuickPayMode;
   }) =>
     request<{
-      attempt: PaymentAttempt;
-      reused: boolean;
-      mode?: QuickPayMode;
+      mode: QuickPayMode;
+      context: string;
       intent?: { standard: "erc191"; payload: string } | null;
+      funding?: PrivateFundingQuote;
       quote: QuickPayQuote;
     }>(`/payments/employees/${employeeId}/quote`, {
       method: "POST",
       body: JSON.stringify(body),
     }),
 
-  submitPaymentDeposit: (attemptId: string, txHash: string) =>
-    request<{ attempt: PaymentAttempt; reused: boolean; outcome?: "unknown" }>(
-      `/payments/attempts/${attemptId}/deposit`,
-      { method: "POST", body: JSON.stringify({ txHash }) },
-    ),
-
-  /** Private flow: store ERC-191 signature and return ORIGIN_CHAIN funding quote. */
-  submitPrivateSignature: (attemptId: string, signature: string) =>
+  /** Persist Quick Pay after wallet deposit (idempotent; safe for queue retries). */
+  commitQuickPay: (body: { context: string; txHash: string; signature?: string }) =>
     request<{
       attempt: PaymentAttempt;
       reused: boolean;
-      funding: PrivateFundingQuote;
-    }>(`/payments/attempts/${attemptId}/private/sign`, {
+      mode: QuickPayMode;
+      outcome?: "unknown";
+    }>("/payments/quick-pay/commit", {
       method: "POST",
-      body: JSON.stringify({ signature }),
+      body: JSON.stringify(body),
     }),
-
-  /** Private flow: notify 1Click of the funding deposit tx. */
-  submitPrivateDeposit: (attemptId: string, txHash: string) =>
-    request<{ attempt: PaymentAttempt; reused: boolean; outcome?: "unknown" }>(
-      `/payments/attempts/${attemptId}/private/deposit`,
-      { method: "POST", body: JSON.stringify({ txHash }) },
-    ),
 
   listPendingPayments: () =>
     request<{ payments: PendingPaymentRow[] }>("/payments/pending"),
