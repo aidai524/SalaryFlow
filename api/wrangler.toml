@@ -21,7 +21,9 @@ REGISTER_INVITE_REQUIRED = "true"
 [[d1_databases]]
 binding = "DB"
 database_name = "salaryflow"
-database_id = "92d0f39e-c74c-40cc-a493-ede3642691ca"
+# Jimmygu's cf d1: 03c92177-2307-4ceb-8e3d-b224dcaf999c
+# Joe's cf d1: 92d0f39e-c74c-40cc-a493-ede3642691ca
+database_id = "03c92177-2307-4ceb-8e3d-b224dcaf999c"
 migrations_dir = "migrations"
 
 [triggers]

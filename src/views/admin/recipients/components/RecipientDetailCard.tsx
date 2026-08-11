@@ -1,7 +1,19 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { IdentityAvatar } from "@/components/IdentityAvatar";
 import { IconAlert } from "@/components/icons/alert";
+import { IconCalendar } from "@/components/icons/calendar";
+import { IconCash } from "@/components/icons/cash";
 import { IconCheck } from "@/components/icons/check";
+import { IconDatabase } from "@/components/icons/database";
+import { IconLock } from "@/components/icons/lock";
+import { IconMeno } from "@/components/icons/meno";
+import { IconMoney } from "@/components/icons/money";
+import { IconWallet } from "@/components/icons/wallet";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { getChainByNetwork } from "@/config/chains";
 import { useEmployeePaymentsInfiniteQuery } from "@/hooks/use-recipients-api";
 import type { Employee } from "@/lib/api";
@@ -38,6 +50,12 @@ function formatHistoryDateTime(value: string): string {
   return historyDateTimeFmt.format(d);
 }
 
+function hasDisplayValue(value: ReactNode): boolean {
+  if (value == null) return false;
+  if (typeof value === "string") return value.trim() !== "" && value !== "—";
+  return true;
+}
+
 export interface RecipientDetailCardProps {
   employee: Employee;
   onEdit: () => void;
@@ -52,6 +70,7 @@ export function RecipientDetailCard({
   className,
 }: RecipientDetailCardProps) {
   const [tab, setTab] = useState<DetailTab>("details");
+  const [copied, setCopied] = useState(false);
   const verified = isVerified(employee);
   const chain = getChainByNetwork(employee.network);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -65,6 +84,7 @@ export function RecipientDetailCard({
 
   useEffect(() => {
     setTab("details");
+    setCopied(false);
   }, [employee.id]);
 
   useEffect(() => {
@@ -81,6 +101,36 @@ export function RecipientDetailCard({
     return () => el.removeEventListener("scroll", onScroll);
   }, [tab, hasNextPage, isFetchingNextPage, fetchNextPage]);
 
+  const compensationValue =
+    employee.amount_minor > 0 ? formatCompensation(employee) : null;
+  const scheduleValue = scheduleLabel(employee.payment_cadence);
+  const payoutValue = employee.token ? (
+    <span className="inline-flex items-center gap-1.5">
+      <img
+        src={tokenLogoUrl(employee.token)}
+        alt=""
+        className="size-4 rounded-full object-cover"
+      />
+      <span>
+        {employee.token} · {chain?.chainName || employee.network || "—"}
+      </span>
+    </span>
+  ) : null;
+  const nextPaymentValue =
+    employee.nextPaydayDisplay
+    || (employee.nextPayday ? formatDate(employee.nextPayday) : null);
+
+  const copyWallet = async () => {
+    if (!employee.endpoint) return;
+    try {
+      await navigator.clipboard.writeText(employee.endpoint);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1600);
+    } catch {
+      setCopied(false);
+    }
+  };
+
   return (
     <aside
       className={cn(
@@ -88,7 +138,6 @@ export function RecipientDetailCard({
         className,
       )}
     >
-      {/* Header: avatar left, name/badges, verified pill top-right */}
       <div className="flex items-start gap-3 px-5 pt-5 pb-4">
         <IdentityAvatar
           seed={employee.name || employee.email || employee.id}
@@ -135,7 +184,6 @@ export function RecipientDetailCard({
         </div>
       </div>
 
-      {/* Tabs: text + underline */}
       <div className="relative flex gap-6 border-b border-black/10 px-5">
         {(["details", "history"] as const).map((item) => (
           <button
@@ -160,56 +208,79 @@ export function RecipientDetailCard({
           <dl className="space-y-[30px]">
             <DetailRow
               label="Compensation"
-              value={
-                employee.amount_minor > 0 ? formatCompensation(employee) : "—"
-              }
+              icon={<IconCash className="size-3.5" />}
+              value={compensationValue || "—"}
+              filled={!!compensationValue}
             />
             <DetailRow
               label="Payment Schedule"
-              value={scheduleLabel(employee.payment_cadence)}
+              icon={<IconCalendar className="size-3.5" />}
+              value={scheduleValue || "—"}
+              filled={hasDisplayValue(scheduleValue)}
             />
             <DetailRow
               label="Payout Preference"
+              icon={<IconDatabase className="size-3.5" />}
+              value={payoutValue || "—"}
+              filled={!!payoutValue}
+            />
+            <DetailRow
+              label="Destination Wallet"
+              icon={<IconWallet className="size-3.5" />}
+              filled={!!employee.endpoint}
               value={
-                employee.token ? (
-                  <span className="inline-flex items-center gap-1.5">
-                    <img
-                      src={tokenLogoUrl(employee.token)}
-                      alt=""
-                      className="size-4 rounded-full object-cover"
-                    />
-                    <span>
-                      {employee.token} · {chain?.chainName || employee.network || "—"}
-                    </span>
-                  </span>
+                employee.endpoint ? (
+                  <div className="flex flex-col gap-1">
+                    <div className="flex items-center gap-1.5">
+                      <span>{formatAddress(employee.endpoint, 5, 5)}</span>
+                      <Tooltip open={copied}>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            onClick={() => void copyWallet()}
+                            aria-label="Copy wallet address"
+                            className="inline-flex size-4 items-center justify-center opacity-60 transition-opacity hover:opacity-100"
+                          >
+                            <img src="/icons/copy.svg" alt="" className="size-3.5" />
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" className="flex items-center gap-1.5">
+                          <span className="inline-flex size-5 items-center justify-center rounded-full bg-[#0ed000] text-white">
+                            <IconCheck className="size-2.5" />
+                          </span>
+                          Copied!
+                        </TooltipContent>
+                      </Tooltip>
+                    </div>
+                    {verified ? (
+                      <span className="font-montserrat text-[12px] font-normal text-[#0cb400]">
+                        Verified by wallet
+                      </span>
+                    ) : null}
+                  </div>
                 ) : (
                   "—"
                 )
               }
             />
             <DetailRow
-              label="Destination Wallet"
+              label="Private Payment"
+              icon={<IconLock className="size-3.5" />}
+              filled
               value={
-                employee.endpoint ? (
-                  <span className="flex flex-col items-end gap-1">
-                    <span>{formatAddress(employee.endpoint, 5, 5)}</span>
-                    {verified ? (
-                      <span className="inline-flex items-center gap-1 font-montserrat text-[12px] font-normal text-[#0cb400]">
-                        Verified by wallet
-                      </span>
-                    ) : null}
+                <div className="flex flex-col gap-0.5">
+                  <span>Enabled</span>
+                  <span className="font-montserrat text-[12px] font-normal text-[#aaa]">
+                    Payments are confidential by default
                   </span>
-                ) : (
-                  "—"
-                )
+                </div>
               }
             />
             <DetailRow
               label="Next Payment"
-              value={
-                employee.nextPaydayDisplay
-                || (employee.nextPayday ? formatDate(employee.nextPayday) : "—")
-              }
+              icon={<IconMoney className="size-3.5" />}
+              value={nextPaymentValue || "—"}
+              filled={!!nextPaymentValue}
             />
           </dl>
         ) : (
@@ -217,13 +288,32 @@ export function RecipientDetailCard({
             {payments.map((p) => {
               const statusKey = mapPaymentStatus(p.status || "pending");
               const statusMeta = HISTORY_STATUS[statusKey];
+              const memoText = p.memo?.trim();
               return (
                 <li
                   key={p.id}
                   className="flex items-center gap-3 py-3.5 font-montserrat text-[14px] font-medium text-[#606060]"
                 >
-                  <span className="min-w-0 flex-1 truncate">
-                    {p.paid_at ? formatHistoryDateTime(p.paid_at) : p.period_key}
+                  <span className="inline-flex min-w-0 flex-1 items-center gap-1.5 truncate">
+                    <span className="truncate">
+                      {p.paid_at ? formatHistoryDateTime(p.paid_at) : p.period_key}
+                    </span>
+                    {memoText ? (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            className="inline-flex shrink-0 text-[#606060]"
+                            aria-label="Payment memo"
+                          >
+                            <IconMeno className="size-3" />
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent side="top">
+                          Memo: {memoText}
+                        </TooltipContent>
+                      </Tooltip>
+                    ) : null}
                   </span>
                   <span className={cn("shrink-0 font-montserrat text-[12px]", statusMeta.className)}>
                     {statusMeta.label}
@@ -285,11 +375,31 @@ export function RecipientDetailCard({
   );
 }
 
-function DetailRow({ label, value }: { label: string; value: ReactNode }) {
+function DetailRow({
+  label,
+  value,
+  icon,
+  filled,
+}: {
+  label: string;
+  value: ReactNode;
+  icon: ReactNode;
+  filled: boolean;
+}) {
   return (
-    <div className="flex items-start justify-between gap-3">
-      <dt className="shrink-0 font-montserrat text-[14px] font-medium text-[#606060]">{label}</dt>
-      <dd className="text-right font-montserrat text-[14px] font-medium text-black">{value}</dd>
+    <div className="flex items-start gap-3">
+      <span
+        className={cn(
+          "inline-flex size-8 shrink-0 items-center justify-center rounded-full",
+          filled ? "bg-[#d0f348] text-black" : "bg-[#e3e3e3] text-white",
+        )}
+      >
+        {icon}
+      </span>
+      <div className="min-w-0 flex-1">
+        <dt className="font-montserrat text-[14px] font-medium text-[#aaa]">{label}</dt>
+        <dd className="mt-1 font-montserrat text-[16px] font-medium text-black">{value}</dd>
+      </div>
     </div>
   );
 }

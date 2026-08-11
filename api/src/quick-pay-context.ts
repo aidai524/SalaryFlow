@@ -16,7 +16,8 @@ export interface QuickPayContextPayload {
   orgId: string;
   userId: string;
   signerId: string;
-  employeeId: string;
+  /** Null for ad-hoc address Quick Pay (not linked to a recipient row). */
+  employeeId: string | null;
   employeeName: string;
   paymentId: string;
   attemptId: string;
@@ -26,6 +27,8 @@ export interface QuickPayContextPayload {
   token: string;
   network: string;
   recipient: string;
+  /** User-facing transfer memo (admin-only history); not a 1Click deposit memo. Optional on legacy tokens. */
+  memo?: string | null;
   originAssetId: string;
   destinationAssetId: string;
   originNetwork: string;

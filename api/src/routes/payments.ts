@@ -520,48 +520,118 @@ function applyFundingBuffer(amountIn: string): string {
   return buffered.toString();
 }
 
-/** Preview quote (dry) or create a live deposit / private-intent attempt for one employee. */
-paymentRoutes.post("/employees/:employeeId/quote", requireRole("admin"), async (c) => {
+const PAYMENT_MEMO_MAX_LENGTH = 200;
+
+function parsePaymentMemo(raw: unknown): string | null | { error: string; code: string } {
+  if (raw === undefined || raw === null) return null;
+  const trimmed = String(raw).trim();
+  if (!trimmed) return null;
+  if (trimmed.length > PAYMENT_MEMO_MAX_LENGTH) {
+    return { error: `Memo must be at most ${PAYMENT_MEMO_MAX_LENGTH} characters`, code: "INVALID_MEMO" };
+  }
+  return trimmed;
+}
+
+function shortRecipientLabel(address: string): string {
+  if (address.length < 12) return address;
+  return `${address.slice(0, 6)}...${address.slice(-4)}`;
+}
+
+type QuickPayQuoteBody = {
+  dry?: boolean;
+  mode?: string;
+  originAsset?: string;
+  amount?: string | number | null;
+  destinationToken?: string;
+  destinationNetwork?: string;
+  idempotencyKey?: string;
+  memo?: unknown;
+  employeeId?: string;
+  destinationAddress?: string;
+};
+
+/**
+ * Shared Quick Pay quote — employee recipient or ad-hoc destination address.
+ * Preview quote (dry) or signed live context (no DB until commit).
+ */
+async function handleQuickPayQuote(
+  c: Context<AppEnv>,
+  body: QuickPayQuoteBody | null,
+  pathEmployeeId?: string,
+) {
   const user = c.get("user") as AuthUser;
-  const employeeId = c.req.param("employeeId");
-  const body = await c.req.json().catch(() => null);
   const dry = body?.dry === true;
   const modeRaw = String(body?.mode || "private").trim().toLowerCase();
   const mode = modeRaw === "standard" ? "standard" : "private";
   const originAssetId = String(body?.originAsset || "").trim();
   if (!originAssetId) return c.json({ error: "originAsset is required" }, 400);
 
-  const employee = await c.env.DB.prepare(
-    `SELECT id, name, token, network, amount_minor, endpoint, status, payout_verified_at, employee_type, created_at
-     FROM employees WHERE id = ? AND org_id = ?`,
-  ).bind(employeeId, user.org_id).first<{
-    id: string;
-    name: string;
-    token: string;
-    network: string;
-    amount_minor: number;
-    endpoint: string | null;
-    status: string;
-    payout_verified_at: string | null;
-    employee_type: string;
-    created_at: string;
-  }>();
-  if (!employee) return c.json({ error: "Employee not found" }, 404);
-  const recipient = normalizePayoutAddress(employee.endpoint);
-  if (!recipient) return c.json({ error: "Invalid employee payout address", code: "INVALID_PAYOUT_ADDRESS" }, 422);
+  const memoParsed = parsePaymentMemo(body?.memo);
+  if (memoParsed && typeof memoParsed === "object" && "error" in memoParsed) {
+    return c.json({ error: memoParsed.error, code: memoParsed.code }, 422);
+  }
+  const memo = memoParsed as string | null;
 
-  let amountMinor = Number(employee.amount_minor);
+  const employeeId = String(pathEmployeeId || body?.employeeId || "").trim() || null;
+  const destinationAddressRaw = String(body?.destinationAddress || "").trim();
+
+  let resolvedEmployeeId: string | null = null;
+  let employeeName: string;
+  let recipient: string;
+  let defaultAmountMinor: number | null = null;
+  let defaultToken: StableSymbol | null = null;
+  let defaultNetwork: string | null = null;
+
+  if (employeeId) {
+    const employee = await c.env.DB.prepare(
+      `SELECT id, name, token, network, amount_minor, endpoint, status, payout_verified_at, employee_type, created_at
+       FROM employees WHERE id = ? AND org_id = ?`,
+    ).bind(employeeId, user.org_id).first<{
+      id: string;
+      name: string;
+      token: string;
+      network: string;
+      amount_minor: number;
+      endpoint: string | null;
+      status: string;
+      payout_verified_at: string | null;
+      employee_type: string;
+      created_at: string;
+    }>();
+    if (!employee) return c.json({ error: "Employee not found" }, 404);
+    const normalized = normalizePayoutAddress(employee.endpoint);
+    if (!normalized) return c.json({ error: "Invalid employee payout address", code: "INVALID_PAYOUT_ADDRESS" }, 422);
+    resolvedEmployeeId = employee.id;
+    employeeName = employee.name;
+    recipient = normalized;
+    defaultAmountMinor = Number(employee.amount_minor);
+    defaultToken = employee.token as StableSymbol;
+    defaultNetwork = employee.network;
+  } else if (destinationAddressRaw) {
+    const normalized = normalizePayoutAddress(destinationAddressRaw);
+    if (!normalized) return c.json({ error: "Invalid destination address", code: "INVALID_PAYOUT_ADDRESS" }, 422);
+    recipient = normalized;
+    employeeName = shortRecipientLabel(normalized);
+    resolvedEmployeeId = null;
+  } else {
+    return c.json({ error: "employeeId or destinationAddress is required", code: "RECIPIENT_REQUIRED" }, 400);
+  }
+
+  let amountMinor = defaultAmountMinor;
   if (body?.amount !== undefined && body?.amount !== null && body?.amount !== "") {
     const parsed = parseTokenAmount(body.amount);
     if (parsed === null) return c.json({ error: "Amount must have at most 6 decimal places", code: "INVALID_AMOUNT" }, 422);
     amountMinor = parsed;
   }
+  if (amountMinor == null) {
+    return c.json({ error: "Amount is required for address payments", code: "INVALID_AMOUNT" }, 422);
+  }
   if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) {
     return c.json({ error: "Amount must be a positive token amount", code: "INVALID_AMOUNT" }, 422);
   }
 
-  let destinationToken = employee.token as StableSymbol;
-  let destinationNetwork = employee.network;
+  let destinationToken = defaultToken;
+  let destinationNetwork = defaultNetwork;
   if (body?.destinationToken) {
     const t = String(body.destinationToken).toUpperCase();
     if (t !== "USDC" && t !== "USDT") return c.json({ error: "Unsupported destination token" }, 400);
@@ -569,6 +639,12 @@ paymentRoutes.post("/employees/:employeeId/quote", requireRole("admin"), async (
   }
   if (body?.destinationNetwork) {
     destinationNetwork = String(body.destinationNetwork);
+  }
+  if (!destinationToken || !destinationNetwork) {
+    return c.json({
+      error: "destinationToken and destinationNetwork are required for address payments",
+      code: "DESTINATION_REQUIRED",
+    }, 400);
   }
 
   let supportedTokens;
@@ -810,8 +886,8 @@ paymentRoutes.post("/employees/:employeeId/quote", requireRole("admin"), async (
         orgId: String(user.org_id),
         userId: user.id,
         signerId: intentsAccountId,
-        employeeId: employee.id,
-        employeeName: employee.name,
+        employeeId: resolvedEmployeeId,
+        employeeName,
         paymentId,
         attemptId,
         idempotencyKey,
@@ -820,6 +896,7 @@ paymentRoutes.post("/employees/:employeeId/quote", requireRole("admin"), async (
         token: destinationToken,
         network: destinationNetwork,
         recipient,
+        memo,
         originAssetId: origin.assetId,
         destinationAssetId: destination.assetId,
         originNetwork: origin.network,
@@ -907,8 +984,8 @@ paymentRoutes.post("/employees/:employeeId/quote", requireRole("admin"), async (
       orgId: String(user.org_id),
       userId: user.id,
       signerId: refundTo,
-      employeeId: employee.id,
-      employeeName: employee.name,
+      employeeId: resolvedEmployeeId,
+      employeeName,
       paymentId,
       attemptId,
       idempotencyKey,
@@ -917,6 +994,7 @@ paymentRoutes.post("/employees/:employeeId/quote", requireRole("admin"), async (
       token: destinationToken,
       network: destinationNetwork,
       recipient,
+      memo,
       originAssetId: origin.assetId,
       destinationAssetId: destination.assetId,
       originNetwork: origin.network,
@@ -948,6 +1026,18 @@ paymentRoutes.post("/employees/:employeeId/quote", requireRole("admin"), async (
   } catch (error) {
     return c.json({ error: "Live quote failed", code: "PAYMENT_PROVIDER_ERROR", detail: providerError(error) }, 502);
   }
+}
+
+/** Unified Quick Pay quote (employee or ad-hoc destination address). */
+paymentRoutes.post("/quick-pay/quote", requireRole("admin"), async (c) => {
+  const body = await c.req.json().catch(() => null) as QuickPayQuoteBody | null;
+  return handleQuickPayQuote(c, body);
+});
+
+/** Preview quote (dry) or live context for one employee (compat wrapper). */
+paymentRoutes.post("/employees/:employeeId/quote", requireRole("admin"), async (c) => {
+  const body = await c.req.json().catch(() => null) as QuickPayQuoteBody | null;
+  return handleQuickPayQuote(c, body, c.req.param("employeeId"));
 });
 
 /**
@@ -1052,12 +1142,15 @@ paymentRoutes.post("/quick-pay/commit", requireRole("admin"), async (c) => {
     : ctx.depositAddress;
 
   try {
+    const paymentMemo = ctx.memo ?? null;
+    const recipientName = ctx.employeeName || null;
+
     if (ctx.mode === "private") {
       await c.env.DB.batch([
         c.env.DB.prepare(
           `INSERT INTO employee_payments
-           (id, org_id, employee_id, period_key, amount_minor, token, network, status, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 'processing', ?, ?)`,
+           (id, org_id, employee_id, period_key, amount_minor, token, network, status, memo, recipient_name, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'processing', ?, ?, ?, ?)`,
         ).bind(
           ctx.paymentId,
           user.org_id,
@@ -1066,6 +1159,8 @@ paymentRoutes.post("/quick-pay/commit", requireRole("admin"), async (c) => {
           ctx.amountMinor,
           ctx.token,
           ctx.network,
+          paymentMemo,
+          recipientName,
           timestamp,
           timestamp,
         ),
@@ -1146,8 +1241,8 @@ paymentRoutes.post("/quick-pay/commit", requireRole("admin"), async (c) => {
       await c.env.DB.batch([
         c.env.DB.prepare(
           `INSERT INTO employee_payments
-           (id, org_id, employee_id, period_key, amount_minor, token, network, status, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 'processing', ?, ?)`,
+           (id, org_id, employee_id, period_key, amount_minor, token, network, status, memo, recipient_name, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'processing', ?, ?, ?, ?)`,
         ).bind(
           ctx.paymentId,
           user.org_id,
@@ -1156,6 +1251,8 @@ paymentRoutes.post("/quick-pay/commit", requireRole("admin"), async (c) => {
           ctx.amountMinor,
           ctx.token,
           ctx.network,
+          paymentMemo,
+          recipientName,
           timestamp,
           timestamp,
         ),

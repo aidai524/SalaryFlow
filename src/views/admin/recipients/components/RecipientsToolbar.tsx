@@ -2,6 +2,7 @@ import {
   PaymentPeriodPicker,
   type PaymentPeriodPickerProps,
 } from "@/components/payment-period-picker/PaymentPeriodPicker";
+import { SearchInput } from "@/components/search-input/SearchInput";
 import type { TeamPaymentSchedule } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { TYPE_FILTERS, type TypeFilter } from "../config";
@@ -73,20 +74,13 @@ export function RecipientsToolbar({
         </div>
       </div>
 
-      <label className="relative block w-full max-w-[280px] shrink-0">
-        <img
-          src="/icons/search.svg"
-          alt=""
-          className="pointer-events-none absolute left-3.5 top-1/2 size-3.5 -translate-y-1/2 opacity-50"
-        />
-        <input
-          type="search"
-          value={search}
-          onChange={(e) => onSearchChange(e.target.value)}
-          placeholder="Search"
-          className="h-10 w-full rounded-[20px] border border-black/10 bg-white pl-10 pr-4 font-montserrat text-[14px] text-black outline-none placeholder:text-[#aaa] focus:border-black/30"
-        />
-      </label>
+      <SearchInput
+        value={search}
+        onChange={onSearchChange}
+        placeholder="Search"
+        className="max-w-[280px] shrink-0"
+        inputClassName="h-10 rounded-[20px] border-black/10 pl-10 placeholder:text-[#aaa]"
+      />
     </div>
   );
 }

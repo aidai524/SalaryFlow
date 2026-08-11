@@ -18,8 +18,9 @@ Parent index: [`docs/api.md`](../api.md)
 |---|---|---|
 | POST | `/api/payments/quote` | `api.quote` (forces `dry: true`) |
 | POST | `/api/payments/items/:itemId/quote` | `api.quotePaymentItem` (**legacy** payroll-run path) |
-| POST | `/api/payments/employees/:employeeId/quote` | `api.quoteEmployeePayment` / `quoteEmployeePaymentDry` (`mode`: `private` default or `standard`) |
-| POST | `/api/payments/quick-pay/commit` | `api.commitQuickPay` (persist after on-chain deposit) |
+| POST | `/api/payments/quick-pay/quote` | `api.quoteQuickPay` / `quoteQuickPayDry` (`employeeId` **or** `destinationAddress`; optional `memo`) |
+| POST | `/api/payments/employees/:employeeId/quote` | `api.quoteEmployeePayment` / `quoteEmployeePaymentDry` (compat wrapper → same handler) |
+| POST | `/api/payments/quick-pay/commit` | `api.commitQuickPay` (persist after on-chain deposit; writes `employee_payments.memo`) |
 | POST | `/api/payments/attempts/:attemptId/intent` | `api.generatePaymentIntent` (**legacy**) |
 | POST | `/api/payments/attempts/:attemptId/submit` | `api.submitPaymentAttempt` (**legacy**) |
 | POST | `/api/payments/attempts/:attemptId/reconcile` | `api.reconcilePaymentAttempt` |

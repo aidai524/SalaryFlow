@@ -127,7 +127,7 @@ Employee `status`: `pending` \| `ready` \| `update_required` — set by payout v
   | `periodKey` | Optional; default current period |
   | `q` | Case-insensitive substring on employee name |
 
-- **Response** — `{ org, period, payments: [{ id, employeeId, name, role_title, employee_type, amount_minor, token, network, status, paid_at, period_key }] }`
+- **Response** — `{ org, period, payments: [{ id, employeeId (nullable for ad-hoc address pay), name, role_title, employee_type, amount_minor, token, network, status, paid_at, period_key, memo }] }`
 - **Rules** — All payment statuses for the period; UI maps `processing` → Pending.
 - **Errors** — 400 invalid `periodKey`; 404 org; 409 `PAYMENT_NOT_CONFIGURED`
 
@@ -167,7 +167,7 @@ Employee `status`: `pending` \| `ready` \| `update_required` — set by payout v
 - **Auth** — admin
 - **Client** — `api.listEmployeePayments`
 - **Request** — `limit`, `cursor` (paid_at cursor)
-- **Response** — `{ payments: [{ id, paid_at, amount_minor, token, network, period_key, txHash, explorerUrl }], nextCursor }`
+- **Response** — `{ payments: [{ id, paid_at, amount_minor, token, network, period_key, status, memo, txHash, explorerUrl }], nextCursor }`
 - **Rules** — `status = paid` rows only; optional join to confirmed attempt `destination_tx_hash` (employee receive/settlement tx on destination chain, not admin funding/deposit).
 
 ---

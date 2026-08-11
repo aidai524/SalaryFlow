@@ -1,10 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { type Address, type Hex } from "viem";
+import { isAddress, type Address, type Hex } from "viem";
 import { useSendTransaction, useSwitchChain } from "wagmi";
 import { AddRecipientPillButton } from "@/components/AddRecipientPillButton";
 import { IdentityAvatar } from "@/components/IdentityAvatar";
+import { IconLock } from "@/components/icons/lock";
+import { SearchInput } from "@/components/search-input/SearchInput";
 import { TokenNetworkDialog } from "@/components/token-network-dialog/TokenNetworkDialog";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { getChainByNetwork, networkToChainId } from "@/config/chains";
 import { useEvmWalletInfo } from "@/hooks/use-evm-wallet-info";
 import { useEmployeesQuery } from "@/hooks/use-pay-api";
@@ -12,7 +19,7 @@ import { useTokenBalance } from "@/hooks/use-token-balances";
 import useToast from "@/hooks/use-toast";
 import { api, type QuickPayMode } from "@/lib/api";
 import { formatAddress, formatNumber, formatTokenMinor } from "@/lib/format";
-import { chainLogoUrl, routeLogoUrl } from "@/lib/logo";
+import { chainLogoUrl } from "@/lib/logo";
 import { formatQuoteErrorMessage } from "@/lib/quote-error";
 import { cn } from "@/lib/utils";
 import { useIntentsTokensStore, type IntentsToken } from "@/stores/intents-tokens";
@@ -50,8 +57,8 @@ export interface QuickPayPanelProps {
   compensationLayout?: "row" | "centered";
   /** Prevent changing destination token/network. */
   destinationTokenLocked?: boolean;
-  /** Opens Add Recipient dialog from the capsule list. */
-  onAddRecipient?: () => void;
+  /** Opens Add Recipient dialog from the capsule list (optional wallet prefill). */
+  onAddRecipient?: (endpoint?: string) => void;
 }
 
 export function QuickPayPanel({
@@ -78,6 +85,9 @@ export function QuickPayPanel({
   const setPaymentMode = useQuickPayPrefsStore((s) => s.setPaymentMode);
 
   const [employeeId, setEmployeeId] = useState<string | null>(initialEmployeeId);
+  const [adhocAddress, setAdhocAddress] = useState<string | null>(null);
+  const [recipientSearch, setRecipientSearch] = useState("");
+  const [memo, setMemo] = useState("");
   const [compensation, setCompensation] = useState("");
   const [destToken, setDestToken] = useState<IntentsToken | null>(null);
   const [originToken, setOriginToken] = useState<IntentsToken | null>(null);
@@ -94,13 +104,61 @@ export function QuickPayPanel({
   }, [ensureFresh]);
 
   useEffect(() => {
-    if (initialEmployeeId) setEmployeeId(initialEmployeeId);
+    if (initialEmployeeId) {
+      setEmployeeId(initialEmployeeId);
+      setAdhocAddress(null);
+    }
   }, [initialEmployeeId]);
 
   const employee = useMemo(
     () => employees.find((e) => e.id === employeeId) || null,
     [employees, employeeId],
   );
+
+  const filteredEmployees = useMemo(() => {
+    const q = recipientSearch.trim().toLowerCase();
+    if (!q) return employees;
+    return employees.filter((emp) => {
+      const name = (emp.name || "").toLowerCase();
+      const endpoint = (emp.endpoint || "").toLowerCase();
+      return name.includes(q) || endpoint.includes(q);
+    });
+  }, [employees, recipientSearch]);
+
+  const pastedAddress = useMemo(() => {
+    const raw = recipientSearch.trim();
+    if (!raw || !isAddress(raw)) return null;
+    return raw as Address;
+  }, [recipientSearch]);
+
+  const showEmptyRecipientHint = !recipientLocked
+    && recipientSearch.trim().length > 0
+    && filteredEmployees.length === 0;
+
+  useEffect(() => {
+    if (recipientLocked) return;
+    const raw = recipientSearch.trim();
+    if (!raw) return;
+    if (!pastedAddress) {
+      setAdhocAddress(null);
+      return;
+    }
+    const matched = employees.find(
+      (emp) => emp.endpoint && emp.endpoint.toLowerCase() === pastedAddress.toLowerCase(),
+    );
+    if (matched) {
+      setEmployeeId(matched.id);
+      setAdhocAddress(null);
+      return;
+    }
+    setEmployeeId(null);
+    setAdhocAddress(pastedAddress);
+    setPhase("idle");
+    setError(null);
+  }, [pastedAddress, recipientSearch, employees, recipientLocked]);
+
+  const destinationAddress = employee?.endpoint || adhocAddress;
+  const canQuoteDestination = !!destinationAddress && (!!employee || !!destToken);
 
   useEffect(() => {
     if (!employee) return;
@@ -127,26 +185,43 @@ export function QuickPayPanel({
 
   const amountForQuote = parseCompensationInput(compensation);
 
+  // Dry preview is for Est. Cost only — do not include memo in the queryKey / body.
+  // Memo is attached on the live quote at settle time.
   const dryQuoteQuery = useQuery({
     queryKey: [
       "quick-pay-dry-quote",
       paymentMode,
-      employee?.id,
+      employee?.id ?? null,
+      adhocAddress,
       originToken?.assetId,
       destToken?.assetId,
       amountForQuote,
     ],
     queryFn: async () => {
-      if (!employee || !originToken || !amountForQuote) throw new Error("Missing quote inputs");
-      return api.quoteEmployeePaymentDry(employee.id, {
-        originAsset: originToken.assetId,
-        amount: amountForQuote,
-        destinationToken: destToken?.symbol || employee.token,
-        destinationNetwork: destToken?.chain.chainName || employee.network,
-        mode: paymentMode,
-      });
+      if (!originToken || !amountForQuote) throw new Error("Missing quote inputs");
+      if (employee?.id && employee.endpoint) {
+        return api.quoteQuickPayDry({
+          employeeId: employee.id,
+          originAsset: originToken.assetId,
+          amount: amountForQuote,
+          destinationToken: destToken?.symbol || employee.token,
+          destinationNetwork: destToken?.chain.chainName || employee.network,
+          mode: paymentMode,
+        });
+      }
+      if (adhocAddress && destToken) {
+        return api.quoteQuickPayDry({
+          destinationAddress: adhocAddress,
+          originAsset: originToken.assetId,
+          amount: amountForQuote,
+          destinationToken: destToken.symbol as "USDC" | "USDT",
+          destinationNetwork: destToken.chain.chainName,
+          mode: paymentMode,
+        });
+      }
+      throw new Error("Missing quote inputs");
     },
-    enabled: !!employee && !!originToken && !!amountForQuote && !!employee.endpoint,
+    enabled: !!originToken && !!amountForQuote && canQuoteDestination,
     refetchInterval: 60_000,
     retry: 1,
   });
@@ -178,7 +253,10 @@ export function QuickPayPanel({
 
   const settleMutation = useMutation({
     mutationFn: async () => {
-      if (!employee || !originToken || !amountForQuote || !quote) {
+      if (!originToken || !amountForQuote || !quote || !destinationAddress) {
+        throw new Error("Missing payment inputs");
+      }
+      if (!employee && (!adhocAddress || !destToken)) {
         throw new Error("Missing payment inputs");
       }
       if (!wallet.isConnected || !wallet.account?.address) {
@@ -186,7 +264,6 @@ export function QuickPayPanel({
         throw new Error("Connect your payment wallet first");
       }
       if (!originToken.contractAddress) throw new Error("Origin token has no contract address");
-      if (!employee.endpoint) throw new Error("Recipient wallet address is missing");
       if (!quote.amountIn) throw new Error("Quote missing deposit details");
 
       const balance = await fetchOneBalance(wallet.account.address, originToken);
@@ -201,19 +278,36 @@ export function QuickPayPanel({
 
       setPhase("quoting");
       setError(null);
-      const idempotencyKey = `qp_${employee.id}_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
-      const live = await api.quoteEmployeePayment(employee.id, {
-        originAsset: originToken.assetId,
-        amount: amountForQuote,
-        destinationToken: destToken?.symbol || employee.token,
-        destinationNetwork: destToken?.chain.chainName || employee.network,
-        idempotencyKey,
-        mode: paymentMode,
-      });
+      const memoValue = memo.trim() || null;
+      const destSymbol = destToken?.symbol || employee?.token || "USDC";
+      const destNetwork = destToken?.chain.chainName || employee?.network || "";
+      const idempotencyKey = `qp_${employee?.id || adhocAddress}_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
+      const live = employee
+        ? await api.quoteQuickPay({
+          employeeId: employee.id,
+          originAsset: originToken.assetId,
+          amount: amountForQuote,
+          destinationToken: destSymbol,
+          destinationNetwork: destNetwork,
+          idempotencyKey,
+          mode: paymentMode,
+          memo: memoValue,
+        })
+        : await api.quoteQuickPay({
+          destinationAddress: adhocAddress!,
+          originAsset: originToken.assetId,
+          amount: amountForQuote,
+          destinationToken: destToken!.symbol as "USDC" | "USDT",
+          destinationNetwork: destToken!.chain.chainName,
+          idempotencyKey,
+          mode: paymentMode,
+          memo: memoValue,
+        });
       if (!live.context) throw new Error("Live quote missing commit context");
 
       const chainId = networkToChainId(originToken.chain.chainName) ?? originToken.chain.chainId;
-      const amountLabel = `${amountForQuote} ${destToken?.symbol || employee.token}`;
+      const amountLabel = `${amountForQuote} ${destSymbol}`;
+      const recipientLabel = employee?.name || formatAddress(adhocAddress || destinationAddress);
 
       if (paymentMode === "private") {
         const intentPayload = live.intent?.payload;
@@ -248,7 +342,7 @@ export function QuickPayPanel({
           context: live.context,
           txHash: hash,
           signature: signed.signature,
-          employeeName: employee.name,
+          employeeName: recipientLabel,
           amountLabel,
         });
         return { mode: "private" as QuickPayMode };
@@ -275,13 +369,14 @@ export function QuickPayPanel({
       enqueueQuickPayCommit({
         context: live.context,
         txHash: hash,
-        employeeName: employee.name,
+        employeeName: recipientLabel,
         amountLabel,
       });
       return { mode: "standard" as QuickPayMode };
     },
     onSuccess: async () => {
       setPhase("done");
+      setMemo("");
       toast.success({ title: "Payment submitted" });
       await queryClient.invalidateQueries({ queryKey: ["pending-payments"] });
       await queryClient.invalidateQueries({ queryKey: ["pay-overview"] });
@@ -405,37 +500,73 @@ export function QuickPayPanel({
       ) : (
         <div className="mb-5">
           <p className="mb-3 font-montserrat text-[14px] font-medium text-[#606060]">Recipient</p>
-          <div className="flex flex-wrap items-center gap-3">
-            {employees.map((emp) => {
-              const selected = employeeId === emp.id;
-              return (
+          <SearchInput
+            value={recipientSearch}
+            onChange={setRecipientSearch}
+            placeholder="Search name or paste address..."
+            className="w-full"
+            inputClassName="h-9 rounded-[18px]"
+          />
+          {showEmptyRecipientHint ? (
+            <p className="mt-[35px] text-center font-montserrat text-[14px] font-normal leading-[200%] text-[#606060]">
+              Not listed in recipient yet, you can send directly, or{" "}
+              <button
+                type="button"
+                onClick={() => onAddRecipient?.(pastedAddress || recipientSearch.trim() || undefined)}
+                className="text-black underline underline-offset-2"
+              >
+                add to recipients
+              </button>
+            </p>
+          ) : (
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              {filteredEmployees.map((emp) => {
+                const selected = employeeId === emp.id;
+                return (
+                  <button
+                    key={emp.id}
+                    type="button"
+                    onClick={() => {
+                      setEmployeeId(emp.id);
+                      setAdhocAddress(null);
+                      setPhase("idle");
+                      setError(null);
+                    }}
+                    className={cn(
+                      "inline-flex h-10 items-center gap-2 rounded-[26px] border px-2.5 pr-3 font-montserrat text-[14px] font-medium transition-colors",
+                      selected
+                        ? "border-black bg-black text-white"
+                        : "border-black/10 bg-transparent text-black hover:bg-black/5",
+                    )}
+                  >
+                    <IdentityAvatar
+                      seed={emp.email || emp.name}
+                      src={emp.avatar_url}
+                      size={26}
+                      alt=""
+                    />
+                    <span className="max-w-[140px] truncate">{emp.name}</span>
+                  </button>
+                );
+              })}
+              {adhocAddress && !employee ? (
                 <button
-                  key={emp.id}
                   type="button"
-                  onClick={() => {
-                    setEmployeeId(emp.id);
-                    setPhase("idle");
-                    setError(null);
-                  }}
-                  className={cn(
-                    "inline-flex h-10 items-center gap-2 rounded-[26px] border px-2.5 pr-3 font-montserrat text-[14px] font-medium transition-colors",
-                    selected
-                      ? "border-black bg-black text-white"
-                      : "border-black/10 bg-transparent text-black hover:bg-black/5",
-                  )}
+                  className="inline-flex h-10 items-center gap-2 rounded-[26px] border border-black bg-black px-2.5 pr-3 font-montserrat text-[14px] font-medium text-white"
                 >
-                  <IdentityAvatar
-                    seed={emp.email || emp.name}
-                    src={emp.avatar_url}
-                    size={26}
-                    alt=""
-                  />
-                  <span className="max-w-[140px] truncate">{emp.name}</span>
+                  <span className="inline-flex size-[26px] items-center justify-center rounded-full bg-white/20 text-[11px]">
+                    {adhocAddress.slice(2, 3).toUpperCase()}
+                  </span>
+                  <span className="max-w-[140px] truncate">{formatAddress(adhocAddress)}</span>
                 </button>
-              );
-            })}
-            {onAddRecipient ? <AddRecipientPillButton onClick={onAddRecipient} /> : null}
-          </div>
+              ) : null}
+              {onAddRecipient ? (
+                <AddRecipientPillButton
+                  onClick={() => onAddRecipient(pastedAddress || undefined)}
+                />
+              ) : null}
+            </div>
+          )}
         </div>
       )}
 
@@ -473,7 +604,7 @@ export function QuickPayPanel({
           <div className="mb-1 flex items-center justify-between">
             <p className="font-montserrat text-[14px] font-medium text-[#606060]">Amount</p>
             <p className="font-montserrat text-[12px] text-[#606060]">
-              {employee?.endpoint ? formatAddress(employee.endpoint) : "—"}
+              {destinationAddress ? formatAddress(destinationAddress) : "—"}
             </p>
           </div>
           <div className="mb-4 flex items-end justify-between gap-3 border-b border-black/10 pb-3">
@@ -506,7 +637,7 @@ export function QuickPayPanel({
               <button
                 type="button"
                 onClick={() => setDestDialogOpen(true)}
-                disabled={!employee}
+                disabled={!employee && !adhocAddress}
                 className="inline-flex h-9 shrink-0 items-center gap-2 rounded-[18px] border border-black/10 px-3 font-montserrat text-[14px] font-medium text-black transition-colors hover:bg-black/5 disabled:opacity-40"
               >
                 {destToken ? (
@@ -596,8 +727,8 @@ export function QuickPayPanel({
       <div className="mb-4 border-b border-black/10" />
 
       {/* Est. Cost row */}
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2 font-montserrat text-[12px]">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2 font-montserrat text-[12px]">
           <span className="text-[#70788a]">Est. Cost</span>
           <span className="text-[#444c59]">
             {amountInDisplay !== "—" && originToken
@@ -605,15 +736,13 @@ export function QuickPayPanel({
               : "—"}
           </span>
           {paymentMode === "private" ? (
-            <span className="rounded-full bg-black/5 px-2 py-0.5 text-[#0e3616]">Private</span>
+            <span className="inline-flex h-[26px] items-center gap-1.5 rounded-[13px] border border-[#d0f348] bg-[rgba(208,243,72,0.2)] px-2.5 font-montserrat text-[12px] font-medium text-[#84a20f]">
+              <IconLock className="size-3" />
+              Private by default
+            </span>
           ) : null}
         </div>
         <div className="flex items-center gap-3 font-space-grotesk text-[12px] text-[#444c59]">
-          {/* {originToken && destToken ? (
-            <span className="inline-flex items-center gap-1">
-              <img src={routeLogoUrl("logo-near-intents-simple.svg")} alt="" className="ml-2 size-3.5 object-contain" />
-            </span>
-          ) : null} */}
           {feeUsd != null ? (
             <span className="inline-flex items-center gap-1">
               <img src="/icons/fee.svg" alt="" className="size-3.5" />
@@ -629,9 +758,40 @@ export function QuickPayPanel({
         </div>
       </div>
 
+      <div className="mb-6 flex items-center gap-3">
+        <div className="flex shrink-0 items-center gap-1.5">
+          <span className="font-montserrat text-[14px] font-medium text-[#606060]">Memo</span>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button type="button" className="inline-flex size-3.5 items-center justify-center" aria-label="Memo help">
+                <img src="/icons/question.svg" alt="" className="size-3.5 opacity-60" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="max-w-[240px] text-left">
+              The memo will be displayed in the history, visible only to you
+            </TooltipContent>
+          </Tooltip>
+        </div>
+        <input
+          value={memo}
+          onChange={(e) => setMemo(e.target.value)}
+          maxLength={200}
+          placeholder="Intention of transfer"
+          className="h-9 min-w-0 flex-1 rounded-[6px] border border-[#e3e3e3] bg-[#f6f6f6] px-3 font-montserrat text-[14px] text-black outline-none placeholder:text-black/30 focus:border-black/30"
+        />
+      </div>
+
       <button
         type="button"
-        disabled={!employee || !originToken || !amountForQuote || busy || !employee.endpoint || quoting || !!quoteError || !quote}
+        disabled={
+          !originToken
+          || !amountForQuote
+          || busy
+          || !canQuoteDestination
+          || quoting
+          || !!quoteError
+          || !quote
+        }
         onClick={() => {
           setError(null);
           settleMutation.mutate();

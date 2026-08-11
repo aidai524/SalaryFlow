@@ -88,6 +88,8 @@ export interface AddRecipientDialogProps {
   /** admin = full form; self = employee profile edit (limited fields). */
   variant?: "admin" | "self";
   employee?: Employee | null;
+  /** Prefill wallet when opening add mode from Quick Pay address search. */
+  initialEndpoint?: string | null;
   teamCadence: TeamPaymentSchedule;
   teamPaymentDate: TeamPaymentDateKey;
 }
@@ -158,6 +160,7 @@ export function AddRecipientDialog({
   mode,
   variant = "admin",
   employee,
+  initialEndpoint = null,
   teamCadence,
   teamPaymentDate,
 }: AddRecipientDialogProps) {
@@ -197,7 +200,11 @@ export function AddRecipientDialog({
       try {
         if (mode === "add") {
           if (cancelled) return;
-          setForm(emptyForm(teamCadence, teamPaymentDate));
+          const next = emptyForm(teamCadence, teamPaymentDate);
+          if (initialEndpoint?.trim()) {
+            next.endpoint = initialEndpoint.trim();
+          }
+          setForm(next);
           setFormReady(true);
           return;
         }
@@ -247,7 +254,7 @@ export function AddRecipientDialog({
     };
     // Intentionally seed only when the dialog opens or the edit target changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, mode, isSelf, employee?.id]);
+  }, [open, mode, isSelf, employee?.id, initialEndpoint]);
 
   const isEmployee = form.employee_type === "employee";
   const scheduleLocked = isEmployee;
@@ -549,7 +556,7 @@ export function AddRecipientDialog({
 
             {!isSelf && (
               <>
-                <Field label="Compensation">
+                <Field label="Compensation (Required)">
                   <div className="relative">
                     <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 font-montserrat text-[14px] text-[#909090]">
                       $

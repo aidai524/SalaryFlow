@@ -4,6 +4,7 @@ import { AddRecipientPillButton } from "@/components/AddRecipientPillButton";
 import { IdentityAvatar } from "@/components/IdentityAvatar";
 import { IconAlert } from "@/components/icons/alert";
 import { IconCheck } from "@/components/icons/check";
+import { ConfidentialPaymentsBanner } from "@/components/quick-pay/ConfidentialPaymentsBanner";
 import { QuickPayPanel } from "@/components/quick-pay/QuickPayPanel";
 import { StatCell } from "@/components/stats/StatCell";
 import { useOrgContextQuery } from "@/hooks/use-org-api";
@@ -12,6 +13,7 @@ import type { TeamPaymentDateKey, TeamPaymentSchedule } from "@/lib/api";
 import { formatCurrencyFromMinor, formatDate } from "@/lib/format";
 import { useAuthStore } from "@/stores/auth";
 import { useIntentsTokensStore } from "@/stores/intents-tokens";
+import { useQuickPayPrefsStore } from "@/stores/quick-pay-prefs";
 import { DEFAULT_MONTHLY_PAYMENT_DATE, DEFAULT_PAYMENT_SCHEDULE } from "./create-team/config";
 import { AddRecipientDialog } from "./recipients/components/AddRecipientDialog";
 
@@ -44,6 +46,8 @@ export function PayView() {
   const teamPaymentDate: TeamPaymentDateKey =
     orgContextQuery.data?.org.payment_date_key || DEFAULT_MONTHLY_PAYMENT_DATE;
   const [addOpen, setAddOpen] = useState(false);
+  const [addEndpoint, setAddEndpoint] = useState<string | null>(null);
+  const paymentMode = useQuickPayPrefsStore((s) => s.paymentMode);
 
   useEffect(() => {
     void ensureFresh();
@@ -53,6 +57,11 @@ export function PayView() {
   const period = data?.period;
   const recipients = data?.recipients || [];
   const showEmptyRecipients = !isLoading && recipients.length === 0;
+
+  const openAddRecipient = (endpoint?: string) => {
+    setAddEndpoint(endpoint?.trim() || null);
+    setAddOpen(true);
+  };
 
   return (
     <div className="pb-10 pt-4 md:pt-5">
@@ -71,6 +80,8 @@ export function PayView() {
           <img src="/icons/to-down.svg" alt="" className="size-3.5" />
         </button> */}
       </div>
+
+      <ConfidentialPaymentsBanner visible={paymentMode === "private"} />
 
       {/* Stats strip */}
       <div className="mb-5 overflow-hidden rounded-[20px] border border-white bg-[#fdfdfd] shadow-[0px_0px_20px_0px_rgba(0,0,0,0.06)]">
@@ -108,7 +119,7 @@ export function PayView() {
       ) : null}
 
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,776fr)_minmax(0,604fr)]">
-        <QuickPayPanel onAddRecipient={() => setAddOpen(true)} />
+        <QuickPayPanel onAddRecipient={openAddRecipient} />
 
         <div className="flex flex-col gap-5">
           {/* Recipients card */}
@@ -130,7 +141,7 @@ export function PayView() {
                 <p className="font-montserrat text-[14px] text-[#606060]">No recipients yet</p>
                 <AddRecipientPillButton
                   className="mt-5"
-                  onClick={() => setAddOpen(true)}
+                  onClick={() => openAddRecipient()}
                 />
               </div>
             ) : (
@@ -206,8 +217,12 @@ export function PayView() {
 
       <AddRecipientDialog
         open={addOpen}
-        onOpenChange={setAddOpen}
+        onOpenChange={(next) => {
+          setAddOpen(next);
+          if (!next) setAddEndpoint(null);
+        }}
         mode="add"
+        initialEndpoint={addEndpoint}
         teamCadence={teamCadence}
         teamPaymentDate={teamPaymentDate}
       />

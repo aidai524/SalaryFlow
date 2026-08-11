@@ -4,6 +4,7 @@ import {
   formatPeriodLabel,
   periodKeyFromDate,
 } from "@/components/payment-period-picker/PaymentPeriodPicker";
+import { SearchInput } from "@/components/search-input/SearchInput";
 import { useOrgPaymentsQuery } from "@/hooks/use-overview-api";
 import { useOrgContextQuery } from "@/hooks/use-org-api";
 import type { TeamPaymentSchedule } from "@/lib/api";
@@ -64,20 +65,12 @@ export function PaymentHistoryView() {
       <section className={`${CARD_CLASS} overflow-hidden`}>
         <div className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
           <p className="font-montserrat text-[14px] font-medium text-black">{periodTitle}</p>
-          <label className="relative block w-full max-w-[230px]">
-            <img
-              src="/icons/search.svg"
-              alt=""
-              className="pointer-events-none absolute left-3.5 top-1/2 size-3.5 -translate-y-1/2 opacity-50"
-            />
-            <input
-              type="search"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search Recipient"
-              className="h-9 w-full rounded-[18px] border border-[#ebebeb] bg-white pl-9 pr-3 font-montserrat text-[14px] text-black outline-none placeholder:text-[#909090] focus:border-black/30"
-            />
-          </label>
+          <SearchInput
+            value={search}
+            onChange={setSearch}
+            placeholder="Search Recipient"
+            className="max-w-[230px]"
+          />
         </div>
         <PaymentHistoryTable payments={data?.payments} isLoading={isLoading} />
       </section>

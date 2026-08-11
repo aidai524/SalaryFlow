@@ -189,6 +189,7 @@ Details: [`docs/api/payments.md`](api/payments.md).
 | DELETE | `/api/payroll/:id` | admin | [payroll](api/payroll.md) | `api/src/routes/payroll.ts` | `api.archiveRun` |
 | POST | `/api/payments/quote` | admin | [payments](api/payments.md) | `api/src/routes/payments.ts` | `api.quote` |
 | POST | `/api/payments/items/:itemId/quote` | admin | [payments](api/payments.md) | `api/src/routes/payments.ts` | `api.quotePaymentItem` |
+| POST | `/api/payments/quick-pay/quote` | admin | [payments](api/payments.md) | `api/src/routes/payments.ts` | `api.quoteQuickPay` / `quoteQuickPayDry` |
 | POST | `/api/payments/employees/:employeeId/quote` | admin | [payments](api/payments.md) | `api/src/routes/payments.ts` | `api.quoteEmployeePayment` / `quoteEmployeePaymentDry` |
 | POST | `/api/payments/quick-pay/commit` | admin | [payments](api/payments.md) | `api/src/routes/payments.ts` | `api.commitQuickPay` |
 | POST | `/api/payments/attempts/:attemptId/intent` | admin | [payments](api/payments.md) | `api/src/routes/payments.ts` | `api.generatePaymentIntent` |

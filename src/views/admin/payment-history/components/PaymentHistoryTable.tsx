@@ -1,6 +1,11 @@
 import { IdentityAvatar } from "@/components/IdentityAvatar";
 import { IconAlert } from "@/components/icons/alert";
 import { IconCheck } from "@/components/icons/check";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { formatDateTime, formatTokenMinor } from "@/lib/format";
 import { tokenLogoUrl } from "@/lib/logo";
 import type { OrgPaymentRow } from "@/lib/api";
@@ -16,13 +21,14 @@ export function PaymentHistoryTable({
 }) {
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[900px] border-collapse">
+      <table className="w-full min-w-[980px] border-collapse">
         <thead>
           <tr className="border-b border-[#ebebeb] text-left">
             <th className="px-5 py-4 font-montserrat text-[14px] font-medium text-[#606060]">Name</th>
             <th className="px-3 py-4 font-montserrat text-[14px] font-medium text-[#606060]">Type</th>
             <th className="px-3 py-4 font-montserrat text-[14px] font-medium text-[#606060]">Amount</th>
             <th className="px-3 py-4 font-montserrat text-[14px] font-medium text-[#606060]">Token</th>
+            <th className="px-3 py-4 font-montserrat text-[14px] font-medium text-[#606060]">Memo</th>
             <th className="px-3 py-4 font-montserrat text-[14px] font-medium text-[#606060]">Payment Date</th>
             <th className="px-5 py-4 font-montserrat text-[14px] font-medium text-[#606060]">Status</th>
           </tr>
@@ -30,13 +36,13 @@ export function PaymentHistoryTable({
         <tbody>
           {isLoading ? (
             <tr>
-              <td colSpan={6} className="px-5 py-10 font-montserrat text-[14px] text-[#909090]">
+              <td colSpan={7} className="px-5 py-10 font-montserrat text-[14px] text-[#909090]">
                 Loading…
               </td>
             </tr>
           ) : !payments || payments.length === 0 ? (
             <tr>
-              <td colSpan={6} className="px-5 py-10 font-montserrat text-[14px] text-[#909090]">
+              <td colSpan={7} className="px-5 py-10 font-montserrat text-[14px] text-[#909090]">
                 No payments in this period
               </td>
             </tr>
@@ -45,6 +51,7 @@ export function PaymentHistoryTable({
               const statusKey = mapPaymentStatus(row.status);
               const status = HISTORY_STATUS[statusKey];
               const zebra = index % 2 === 1;
+              const memoText = row.memo?.trim() || "";
               return (
                 <tr
                   key={row.id}
@@ -80,6 +87,22 @@ export function PaymentHistoryTable({
                         {row.token} · {row.network}
                       </span>
                     </div>
+                  </td>
+                  <td className="max-w-[160px] px-3 py-3.5">
+                    {memoText ? (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <p className="truncate font-montserrat text-[14px] text-black">
+                            {memoText}
+                          </p>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" className="max-w-[280px]">
+                          Memo: {memoText}
+                        </TooltipContent>
+                      </Tooltip>
+                    ) : (
+                      <span className="font-montserrat text-[14px] text-[#909090]">—</span>
+                    )}
                   </td>
                   <td className="px-3 py-3.5 font-montserrat text-[14px] text-black">
                     {formatDateTime(row.paid_at)}

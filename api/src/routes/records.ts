@@ -145,6 +145,7 @@ recordRoutes.get("/me", requireRole("employee"), async (c) => {
   // Privacy: only return destination/receive tx — never admin deposit/funding tx or payer wallet.
   const rows = await c.env.DB.prepare(
     `SELECT ep.id, ep.paid_at, ep.amount_minor, ep.token, ep.network, ep.period_key, ep.status, ep.created_at,
+            ep.memo,
             pa.destination_tx_hash AS tx_hash,
             pa.destination_tx_explorer_url AS tx_explorer_url
      FROM employee_payments ep
@@ -161,6 +162,7 @@ recordRoutes.get("/me", requireRole("employee"), async (c) => {
     period_key: string;
     status: string;
     created_at: string;
+    memo: string | null;
     tx_hash: string | null;
     tx_explorer_url: string | null;
   }>();
@@ -174,6 +176,7 @@ recordRoutes.get("/me", requireRole("employee"), async (c) => {
       network: r.network,
       period_key: r.period_key,
       status: r.status,
+      memo: r.memo,
       txHash: r.tx_hash,
       explorerUrl: r.tx_explorer_url
         || (r.tx_hash && r.network ? explorerUrlForTx(r.network, r.tx_hash) : null),

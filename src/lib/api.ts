@@ -69,6 +69,8 @@ export interface EmployeePaymentHistoryItem {
   network: string;
   period_key: string;
   status: "pending" | "processing" | "paid" | "failed" | "refunded" | string;
+  /** Admin-only transfer memo (not shown to recipient wallets on-chain). */
+  memo: string | null;
   /** Destination-chain receive tx only — not admin funding/deposit. */
   txHash: string | null;
   explorerUrl: string | null;
@@ -106,6 +108,7 @@ export interface MyPaymentHistoryItem {
   network: string;
   period_key: string;
   status: "pending" | "processing" | "paid" | "failed" | "refunded";
+  memo: string | null;
   /** Destination-chain receive tx only — never admin funding/deposit. */
   txHash: string | null;
   explorerUrl: string | null;
@@ -212,7 +215,8 @@ export interface OrgOverview {
 
 export interface OrgPaymentRow {
   id: string;
-  employeeId: string;
+  /** Null for ad-hoc address Quick Pay. */
+  employeeId: string | null;
   name: string;
   role_title: string | null;
   employee_type: EmployeeType;
@@ -222,7 +226,20 @@ export interface OrgPaymentRow {
   status: string;
   paid_at: string;
   period_key: string;
+  memo: string | null;
 }
+
+export type QuickPayQuoteTarget = {
+  originAsset: string;
+  amount?: string;
+  destinationToken?: string;
+  destinationNetwork?: string;
+  mode?: QuickPayMode;
+  memo?: string | null;
+} & (
+  | { employeeId: string; destinationAddress?: never }
+  | { destinationAddress: string; employeeId?: never }
+);
 
 export interface OrgPaymentsResult {
   org: { id: string; name: string };
@@ -678,22 +695,45 @@ export const api = {
   reopenFailedPayments: (runId: string) =>
     request<{ ok: true; reopened: number }>(`/payments/runs/${runId}/reopen-failed`, { method: "POST" }),
 
-  /** Quick Pay dry preview (private or standard). */
+  /** Unified Quick Pay dry preview (employee or ad-hoc address). */
+  quoteQuickPayDry: (body: QuickPayQuoteTarget) =>
+    request<{ dry: true; mode?: QuickPayMode; quote: QuickPayQuote }>("/payments/quick-pay/quote", {
+      method: "POST",
+      body: JSON.stringify({ ...body, dry: true }),
+    }),
+
+  /**
+   * Unified Quick Pay live quote — ephemeral (no DB rows). Returns a signed context
+   * token plus deposit details; persist via commitQuickPay after the on-chain deposit.
+   */
+  quoteQuickPay: (body: QuickPayQuoteTarget & { idempotencyKey: string }) =>
+    request<{
+      mode: QuickPayMode;
+      context: string;
+      intent?: { standard: "erc191"; payload: string } | null;
+      funding?: PrivateFundingQuote;
+      quote: QuickPayQuote;
+    }>("/payments/quick-pay/quote", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  /** Quick Pay dry preview for an employee (compat). */
   quoteEmployeePaymentDry: (employeeId: string, body: {
     originAsset: string;
     amount?: string;
     destinationToken?: string;
     destinationNetwork?: string;
     mode?: QuickPayMode;
+    memo?: string | null;
   }) =>
-    request<{ dry: true; mode?: QuickPayMode; quote: QuickPayQuote }>(`/payments/employees/${employeeId}/quote`, {
+    request<{ dry: true; mode?: QuickPayMode; quote: QuickPayQuote }>("/payments/quick-pay/quote", {
       method: "POST",
-      body: JSON.stringify({ ...body, dry: true }),
+      body: JSON.stringify({ ...body, employeeId, dry: true }),
     }),
 
   /**
-   * Quick Pay live quote — ephemeral (no DB rows). Returns a signed context token
-   * plus deposit details; persist via commitQuickPay after the on-chain deposit.
+   * Quick Pay live quote for an employee (compat) — ephemeral (no DB rows).
    */
   quoteEmployeePayment: (employeeId: string, body: {
     originAsset: string;
@@ -702,6 +742,7 @@ export const api = {
     destinationNetwork?: string;
     idempotencyKey: string;
     mode?: QuickPayMode;
+    memo?: string | null;
   }) =>
     request<{
       mode: QuickPayMode;
@@ -709,9 +750,9 @@ export const api = {
       intent?: { standard: "erc191"; payload: string } | null;
       funding?: PrivateFundingQuote;
       quote: QuickPayQuote;
-    }>(`/payments/employees/${employeeId}/quote`, {
+    }>("/payments/quick-pay/quote", {
       method: "POST",
-      body: JSON.stringify(body),
+      body: JSON.stringify({ ...body, employeeId }),
     }),
 
   /** Persist Quick Pay after wallet deposit (idempotent; safe for queue retries). */

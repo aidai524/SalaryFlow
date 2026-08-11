@@ -301,13 +301,14 @@ orgRoutes.get("/overview", requireRole("admin"), async (c) => {
 
   const paidRows = await c.env.DB.prepare(
     `SELECT ep.id, ep.employee_id, ep.amount_minor, ep.period_key, ep.status, ep.paid_at, ep.created_at,
-            ep.token, ep.network, e.name, e.role_title, e.employee_type
+            ep.token, ep.network, ep.memo, ep.recipient_name,
+            e.name, e.role_title, e.employee_type
      FROM employee_payments ep
-     JOIN employees e ON e.id = ep.employee_id
+     LEFT JOIN employees e ON e.id = ep.employee_id AND e.org_id = ep.org_id
      WHERE ep.org_id = ?`,
   ).bind(user.org_id).all<{
     id: string;
-    employee_id: string;
+    employee_id: string | null;
     amount_minor: number;
     period_key: string;
     status: string;
@@ -315,9 +316,11 @@ orgRoutes.get("/overview", requireRole("admin"), async (c) => {
     created_at: string;
     token: string;
     network: string;
-    name: string;
+    memo: string | null;
+    recipient_name: string | null;
+    name: string | null;
     role_title: string | null;
-    employee_type: string;
+    employee_type: string | null;
   }>();
 
   const paidIdsSelected = new Set<string>();
@@ -325,9 +328,10 @@ orgRoutes.get("/overview", requireRole("admin"), async (c) => {
   let paidCount = 0;
   for (const row of paidRows.results) {
     if (row.period_key !== selected.periodKey || row.status !== "paid") continue;
+    if (!row.employee_id) continue;
     const emp = fullTime.find((e) => e.id === row.employee_id);
     if (!emp) continue;
-    paidIdsSelected.add(row.employee_id);
+    paidIdsSelected.add(emp.id);
     paidMinor += Number(row.amount_minor || 0);
     paidCount += 1;
   }
@@ -354,6 +358,8 @@ orgRoutes.get("/overview", requireRole("admin"), async (c) => {
   const paidByPeriod = new Map<string, number>();
   for (const row of paidRows.results) {
     if (row.status !== "paid") continue;
+    // Ad-hoc address payments (no employee_id) do not count toward payroll volume.
+    if (!row.employee_id) continue;
     const empType = row.employee_type || "employee";
     if (empType !== "employee") continue;
     paidByPeriod.set(row.period_key, (paidByPeriod.get(row.period_key) || 0) + Number(row.amount_minor || 0));
@@ -420,7 +426,7 @@ orgRoutes.get("/overview", requireRole("admin"), async (c) => {
     .map((r) => ({
       id: r.id,
       employeeId: r.employee_id,
-      name: r.name,
+      name: r.name || r.recipient_name || "Recipient",
       role_title: r.role_title,
       amount_minor: Number(r.amount_minor || 0),
       token: r.token,
@@ -428,6 +434,7 @@ orgRoutes.get("/overview", requireRole("admin"), async (c) => {
       status: r.status as "paid" | "processing",
       paid_at: r.paid_at || r.created_at,
       period_key: r.period_key,
+      memo: r.memo,
     }));
 
   const totalHeadcount = employees.results.length || 1;
@@ -531,15 +538,15 @@ orgRoutes.get("/payments", requireRole("admin"), async (c) => {
 
   const rows = await c.env.DB.prepare(
     `SELECT ep.id, ep.employee_id, ep.amount_minor, ep.token, ep.network, ep.status,
-            ep.paid_at, ep.created_at, ep.period_key,
+            ep.paid_at, ep.created_at, ep.period_key, ep.memo, ep.recipient_name,
             e.name, e.role_title, e.employee_type
      FROM employee_payments ep
-     JOIN employees e ON e.id = ep.employee_id AND e.org_id = ep.org_id
+     LEFT JOIN employees e ON e.id = ep.employee_id AND e.org_id = ep.org_id
      WHERE ep.org_id = ? AND ep.period_key = ?
      ORDER BY COALESCE(ep.paid_at, ep.created_at) DESC, ep.id DESC`,
   ).bind(user.org_id, selected.periodKey).all<{
     id: string;
-    employee_id: string;
+    employee_id: string | null;
     amount_minor: number;
     token: string;
     network: string;
@@ -547,26 +554,36 @@ orgRoutes.get("/payments", requireRole("admin"), async (c) => {
     paid_at: string | null;
     created_at: string;
     period_key: string;
-    name: string;
+    memo: string | null;
+    recipient_name: string | null;
+    name: string | null;
     role_title: string | null;
-    employee_type: string;
+    employee_type: string | null;
   }>();
 
   const payments = rows.results
-    .filter((r) => !q || r.name.toLowerCase().includes(q))
-    .map((r) => ({
-      id: r.id,
-      employeeId: r.employee_id,
-      name: r.name,
-      role_title: r.role_title,
-      employee_type: (r.employee_type || "employee") as EmployeeType,
-      amount_minor: Number(r.amount_minor || 0),
-      token: r.token,
-      network: r.network,
-      status: r.status,
-      paid_at: r.paid_at || r.created_at,
-      period_key: r.period_key,
-    }));
+    .map((r) => {
+      const name = r.name || r.recipient_name || "Recipient";
+      return {
+        id: r.id,
+        employeeId: r.employee_id,
+        name,
+        role_title: r.role_title,
+        employee_type: (r.employee_type || "others") as EmployeeType,
+        amount_minor: Number(r.amount_minor || 0),
+        token: r.token,
+        network: r.network,
+        status: r.status,
+        paid_at: r.paid_at || r.created_at,
+        period_key: r.period_key,
+        memo: r.memo,
+      };
+    })
+    .filter((r) => {
+      if (!q) return true;
+      const memo = (r.memo || "").toLowerCase();
+      return r.name.toLowerCase().includes(q) || memo.includes(q);
+    });
 
   return c.json({
     org: { id: org.id, name: org.name },
@@ -740,6 +757,7 @@ orgRoutes.get("/employees/:id/payments", requireRole("admin"), async (c) => {
   // Include all payment statuses (pending / processing / paid / failed / refunded).
   let sql = `
     SELECT ep.id, ep.paid_at, ep.amount_minor, ep.token, ep.network, ep.period_key, ep.status, ep.created_at,
+           ep.memo,
            pa.destination_tx_hash AS tx_hash,
            pa.destination_tx_explorer_url AS tx_explorer_url
     FROM employee_payments ep
@@ -766,6 +784,7 @@ orgRoutes.get("/employees/:id/payments", requireRole("admin"), async (c) => {
     period_key: string;
     status: string;
     created_at: string;
+    memo: string | null;
     tx_hash: string | null;
     tx_explorer_url: string | null;
   }>();
@@ -785,6 +804,7 @@ orgRoutes.get("/employees/:id/payments", requireRole("admin"), async (c) => {
       network: r.network,
       period_key: r.period_key,
       status: r.status,
+      memo: r.memo,
       txHash: r.tx_hash,
       explorerUrl: r.tx_explorer_url
         || (r.tx_hash && r.network ? explorerUrlForTx(r.network, r.tx_hash) : null),
