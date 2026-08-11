@@ -1,7 +1,14 @@
-import { checkSwapStatus, verifyOneClickQuote, type QuoteRequest } from "./intents";
+import { encodeErc191Signature } from "./erc191";
+import {
+  checkSwapStatus,
+  submitIntent,
+  verifyOneClickQuote,
+  type QuoteRequest,
+} from "./intents";
 import {
   employeePaymentStatusForAttempt,
   executionGate,
+  FUNDING_RECONCILE_STATES,
   isDefinitiveSubmitFailure,
   itemStatusForAttempt,
   mapProviderStatus,
@@ -19,6 +26,7 @@ export interface PaymentAttemptRow {
   item_id: string | null;
   employee_payment_id: string | null;
   idempotency_key: string;
+  flow: "standard" | "private";
   state: PaymentAttemptState;
   token: string;
   network: string;
@@ -34,13 +42,30 @@ export interface PaymentAttemptRow {
   quote_response: string | null;
   quote_hash: string | null;
   intent_payload: string | null;
+  intent_signature: string | null;
   intent_hash: string | null;
+  funding_deposit_address: string | null;
+  funding_deposit_memo: string | null;
+  funding_tx_hash: string | null;
+  funding_quote_request: string | null;
+  funding_quote_response: string | null;
+  funding_quote_hash: string | null;
+  funding_expires_at: string | null;
   provider_status: string | null;
   reconcile_failures: number;
   [key: string]: unknown;
 }
 
-const RECONCILE_STATES = ["submitting", "submitted", "awaiting_deposit", "deposit_submitted", "processing"] as const;
+const RECONCILE_STATES = [
+  "submitting",
+  "submitted",
+  "awaiting_deposit",
+  "deposit_submitted",
+  "funding_quoted",
+  "funding_deposit_submitted",
+  "funding_processing",
+  "processing",
+] as const;
 
 export async function getPaymentAttempt(db: D1Database, attemptId: string, orgId?: string | null): Promise<PaymentAttemptRow | null> {
   const query = orgId
@@ -75,7 +100,8 @@ export async function failAttemptAndReopenItem(
            next_reconcile_at = NULL, updated_at = ?
        WHERE id = ? AND state IN (
          'submitting', 'submitted', 'processing', 'awaiting_signature', 'quoted',
-         'generating', 'awaiting_deposit', 'deposit_submitted'
+         'generating', 'awaiting_deposit', 'deposit_submitted',
+         'funding_quoted', 'funding_deposit_submitted', 'funding_processing'
        )`,
     ).bind(detail, timestamp, timestamp, attempt.id),
     env.DB.prepare(
@@ -120,6 +146,13 @@ function shouldFailUnsubmittedExpiredAttempt(attempt: PaymentAttemptRow): string
   if (["awaiting_deposit", "quoted"].includes(attempt.state) && quoteRequestDeadlinePassed(attempt.quote_request)) {
     return "Quote request deadline passed before deposit; reopen for a new quote";
   }
+  // Private funding deposit never sent before funding quote expired.
+  if (
+    attempt.state === "funding_quoted"
+    && quoteRequestDeadlinePassed(attempt.funding_quote_request)
+  ) {
+    return "Funding quote deadline passed before deposit; reopen for a new quote";
+  }
   if (attempt.intent_hash) return null;
   if (!["submitting", "processing"].includes(attempt.state)) return null;
   const lastError = String(attempt.last_error || "");
@@ -132,8 +165,186 @@ function shouldFailUnsubmittedExpiredAttempt(attempt: PaymentAttemptRow): string
   return null;
 }
 
+function intentPayloadDeadlinePassed(intentPayloadJson: string | null | undefined): boolean {
+  if (!intentPayloadJson) return false;
+  try {
+    const intent = JSON.parse(intentPayloadJson) as { payload?: unknown };
+    const payload = typeof intent.payload === "string"
+      ? JSON.parse(intent.payload) as { deadline?: string }
+      : null;
+    const deadline = Date.parse(String(payload?.deadline || ""));
+    return Number.isFinite(deadline) && deadline <= Date.now();
+  } catch {
+    return false;
+  }
+}
+
+/** Poll funding (leg A) status; on SUCCESS submit the pre-signed private intent (leg B). */
+async function reconcileFundingLeg(
+  env: Env,
+  attempt: PaymentAttemptRow,
+): Promise<PaymentAttemptRow> {
+  if (!attempt.funding_deposit_address) {
+    throw new Error("Private payment attempt has no funding deposit address");
+  }
+  if (!attempt.funding_quote_request || !attempt.funding_quote_hash) {
+    throw new Error("Private payment attempt is missing funding quote evidence");
+  }
+  if (!attempt.intent_payload || !attempt.intent_signature) {
+    throw new Error("Private payment attempt is missing a pre-signed intent");
+  }
+
+  const provider = await checkSwapStatus(
+    env,
+    attempt.funding_deposit_address,
+    attempt.funding_deposit_memo || undefined,
+  );
+  const fundingRequest = JSON.parse(attempt.funding_quote_request) as QuoteRequest;
+  const statusQuoteHash = verifyOneClickQuote(env, fundingRequest, provider.quoteResponse);
+  if (statusQuoteHash !== attempt.funding_quote_hash) {
+    throw new Error("1Click funding status quote does not match the stored funding quote");
+  }
+  if (provider.quoteResponse.quote.depositAddress !== attempt.funding_deposit_address) {
+    throw new Error("1Click funding status deposit address does not match the payment attempt");
+  }
+
+  const timestamp = nowIso();
+  let fundingState = mapProviderStatus(provider.status);
+  if (!fundingState) throw new Error(`Unsupported funding provider status: ${provider.status}`);
+
+  // Keep funding_deposit_submitted until provider advances beyond PENDING_DEPOSIT.
+  if (attempt.state === "funding_deposit_submitted" && fundingState === "awaiting_deposit") {
+    fundingState = "funding_deposit_submitted";
+  } else if (fundingState === "awaiting_deposit") {
+    fundingState = attempt.state === "funding_quoted" ? "funding_quoted" : "funding_deposit_submitted";
+  } else if (fundingState === "processing") {
+    fundingState = "funding_processing";
+  }
+
+  if (fundingState === "failed" || fundingState === "refunded") {
+    return failAttemptAndReopenItem(
+      env,
+      attempt,
+      fundingState === "refunded"
+        ? "Funding deposit was refunded to the source wallet"
+        : "Confidential funding deposit failed",
+    );
+  }
+
+  if (fundingState !== "confirmed") {
+    const nextCheck = new Date(Date.now() + 30_000).toISOString();
+    await env.DB.prepare(
+      `UPDATE payment_attempts
+       SET state = ?, provider_status = ?, provider_response = ?,
+           last_error = NULL, reconcile_failures = 0, last_reconciled_at = ?,
+           next_reconcile_at = ?, updated_at = ?
+       WHERE id = ?`,
+    ).bind(
+      fundingState,
+      provider.status,
+      JSON.stringify(provider),
+      timestamp,
+      nextCheck,
+      timestamp,
+      attempt.id,
+    ).run();
+    const updated = await getPaymentAttempt(env.DB, attempt.id);
+    if (!updated) throw new Error("Payment attempt disappeared during funding reconciliation");
+    return updated;
+  }
+
+  // Funding SUCCESS — submit pre-signed intent for leg B.
+  if (intentPayloadDeadlinePassed(attempt.intent_payload) || quoteRequestDeadlinePassed(attempt.quote_request)) {
+    return failAttemptAndReopenItem(
+      env,
+      attempt,
+      "Funds arrived in the confidential balance but the payout intent expired; funds remain in confidential intents and can be retried with a fresh signed payout",
+    );
+  }
+
+  const intent = JSON.parse(attempt.intent_payload) as { standard?: string; payload?: unknown };
+  if (intent.standard !== "erc191" || typeof intent.payload !== "string") {
+    throw new Error("Stored private payment intent is invalid");
+  }
+  const providerSignature = encodeErc191Signature(attempt.intent_signature);
+  let submitted: { intentHash: string; correlationId?: string };
+  try {
+    submitted = await submitIntent(env, {
+      type: "swap_transfer",
+      signedData: {
+        standard: "erc191",
+        payload: intent.payload,
+        signature: providerSignature,
+      },
+    });
+  } catch (error) {
+    const detail = errorMessage(error);
+    if (isDefinitiveSubmitFailure(detail)) {
+      return failAttemptAndReopenItem(
+        env,
+        attempt,
+        `Funds arrived in the confidential balance but payout submit failed (${detail}); funds remain in confidential intents and can be retried with a fresh signed payout`,
+      );
+    }
+    throw error;
+  }
+  if (!submitted.intentHash) throw new Error("1Click did not return an intent hash after funding");
+
+  const submittedAt = nowIso();
+  const statements = [
+    env.DB.prepare(
+      `UPDATE payment_attempts
+       SET state = 'submitted', intent_hash = ?, correlation_id = COALESCE(?, correlation_id),
+           provider_status = 'SUBMITTED', submitted_at = ?, next_reconcile_at = ?,
+           last_error = NULL, reconcile_failures = 0, last_reconciled_at = ?, updated_at = ?
+       WHERE id = ? AND state IN ('funding_quoted', 'funding_deposit_submitted', 'funding_processing')`,
+    ).bind(
+      submitted.intentHash,
+      submitted.correlationId || null,
+      submittedAt,
+      submittedAt,
+      submittedAt,
+      submittedAt,
+      attempt.id,
+    ),
+    env.DB.prepare(
+      `UPDATE chain_records
+       SET status = 'submitted', intent_hash = ?, provider_status = 'SUBMITTED',
+           signed_at = COALESCE(signed_at, ?), submitted_at = ?, error = NULL
+       WHERE attempt_id = ?`,
+    ).bind(submitted.intentHash, submittedAt, submittedAt, attempt.id),
+    env.DB.prepare(
+      "INSERT INTO audit_log (id, org_id, actor_id, action, detail) VALUES (?, ?, ?, 'payment.submitted', ?)",
+    ).bind(
+      uuid(),
+      attempt.org_id,
+      null,
+      `Auto-submitted private payout intent for attempt ${attempt.id} as ${submitted.intentHash}`,
+    ),
+  ];
+  if (attempt.item_id) {
+    statements.push(
+      env.DB.prepare(
+        "UPDATE payrun_items SET status = 'processing', intent_hash = ?, signed_at = COALESCE(signed_at, ?), submitted_at = ?, error = NULL WHERE id = ?",
+      ).bind(submitted.intentHash, submittedAt, submittedAt, attempt.item_id),
+    );
+  }
+  if (attempt.employee_payment_id) {
+    statements.push(
+      env.DB.prepare(
+        `UPDATE employee_payments SET status = 'processing', updated_at = ? WHERE id = ?`,
+      ).bind(submittedAt, attempt.employee_payment_id),
+    );
+  }
+  await env.DB.batch(statements);
+
+  const afterSubmit = await getPaymentAttempt(env.DB, attempt.id);
+  if (!afterSubmit) throw new Error("Payment attempt disappeared after funding submit");
+  // Immediately reconcile leg B once.
+  return reconcilePaymentAttempt(env, afterSubmit, { force: true });
+}
+
 export async function reconcilePaymentAttempt(env: Env, attempt: PaymentAttemptRow, options: { force?: boolean } = {}): Promise<PaymentAttemptRow> {
-  if (!attempt.deposit_address) throw new Error("Payment attempt has no deposit address");
   if (!(RECONCILE_STATES as readonly string[]).includes(attempt.state)) {
     throw new Error(`Payment attempt in state ${attempt.state} cannot be reconciled`);
   }
@@ -156,6 +367,26 @@ export async function reconcilePaymentAttempt(env: Env, attempt: PaymentAttemptR
       return unchanged;
     }
   }
+
+  if ((FUNDING_RECONCILE_STATES as readonly string[]).includes(attempt.state)) {
+    try {
+      return await reconcileFundingLeg(env, attempt);
+    } catch (error) {
+      const failures = Number(attempt.reconcile_failures || 0) + 1;
+      const timestamp = nowIso();
+      await env.DB.prepare(
+        `UPDATE payment_attempts
+         SET last_error = ?, reconcile_failures = ?, last_reconciled_at = ?,
+             next_reconcile_at = ?, updated_at = ?
+         WHERE id = ?`,
+      ).bind(errorMessage(error), failures, timestamp, nextReconcileAt(failures), timestamp, attempt.id).run();
+      const updated = await getPaymentAttempt(env.DB, attempt.id);
+      if (!updated) throw new Error("Payment attempt disappeared during funding reconciliation");
+      return updated;
+    }
+  }
+
+  if (!attempt.deposit_address) throw new Error("Payment attempt has no deposit address");
 
   try {
     const provider = await checkSwapStatus(env, attempt.deposit_address, attempt.deposit_memo || undefined);
@@ -286,7 +517,11 @@ export async function reconcileOpenPayments(env: Env, limit = 1): Promise<{ chec
   if (!executionGate(env).allowed || !env.INTENTS_API_KEY) return { checked: 0, attempts: [] };
   const due = await env.DB.prepare(
     `SELECT * FROM payment_attempts
-     WHERE state IN ('submitting', 'submitted', 'awaiting_deposit', 'deposit_submitted', 'processing')
+     WHERE state IN (
+       'submitting', 'submitted', 'awaiting_deposit', 'deposit_submitted',
+       'funding_quoted', 'funding_deposit_submitted', 'funding_processing',
+       'processing'
+     )
        AND (next_reconcile_at IS NULL OR next_reconcile_at <= ?)
      ORDER BY COALESCE(next_reconcile_at, updated_at) ASC
      LIMIT ?`,

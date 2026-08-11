@@ -2,6 +2,7 @@ import { Outlet, useLocation } from "react-router-dom";
 import { ToastContainer } from "react-toastify";
 import { GlobalDrawerHost } from "@/components/drawer/GlobalDrawerHost";
 import { AppHeader } from "@/components/layout/AppHeader";
+import { PendingPaymentsDock } from "@/components/pending-payments/PendingPaymentsDock";
 import { CREATE_TEAM_BG } from "@/views/admin/create-team/config";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth";
@@ -28,6 +29,7 @@ export function AppLayout() {
         <Outlet />
       </main>
       {role === "admin" ? <GlobalDrawerHost /> : null}
+      {role === "admin" && !isCreateTeam ? <PendingPaymentsDock /> : null}
       <ToastContainer
         position="top-right"
         autoClose={5000}

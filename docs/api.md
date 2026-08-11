@@ -100,16 +100,33 @@ No shared types package. Frontend types in `api.ts` are a hand-maintained subset
 
 ### Quick Pay (current admin home)
 
+**Private** (default — fully private):
+
 ```mermaid
 flowchart TD
-  dry["POST /employees/:id/quote dry:true"] --> preview[Show amountIn]
+  dry["POST /employees/:id/quote dry mode=private"] --> preview[Show funding amountIn]
   preview --> live["POST /employees/:id/quote live"]
-  live --> transfer[Admin ERC-20 transfer to depositAddress]
-  transfer --> deposit["POST /attempts/:id/deposit txHash"]
-  deposit --> reconcile["POST /attempts/:id/reconcile or cron"]
+  live --> sign[Wallet signs erc191 payout intent]
+  sign --> privateSign["POST /attempts/:id/private/sign"]
+  privateSign --> transfer[Admin ERC-20 to funding depositAddress]
+  transfer --> privateDeposit["POST /attempts/:id/private/deposit"]
+  privateDeposit --> reconcile["cron / pending dock reconcile"]
+  reconcile --> autoSubmit[Auto submit-intent after funding SUCCESS]
+  autoSubmit --> payout[Track payout until SUCCESS]
 ```
 
-Uses `EXACT_OUTPUT` + `depositType: ORIGIN_CHAIN` + `confidentiality` from env `INTENTS_CONFIDENTIALITY` (default `advanced`). Assets resolve dynamically from 1Click `/v0/tokens` (phase-1 EVM USDT/USDC). Each live quote creates a new `employee_payments` row (multiple transfers per period); records also live in `payment_attempts`.
+**Standard** (foreign-to-foreign + `confidentiality`):
+
+```mermaid
+flowchart TD
+  dryStd["POST /employees/:id/quote dry mode=standard"] --> previewStd[Show amountIn]
+  previewStd --> liveStd["POST /employees/:id/quote live"]
+  liveStd --> transferStd[Admin ERC-20 transfer to depositAddress]
+  transferStd --> depositStd["POST /attempts/:id/deposit txHash"]
+  depositStd --> reconcileStd["POST /attempts/:id/reconcile or cron"]
+```
+
+Private payout uses `CONFIDENTIAL_INTENTS` with the selected `originAsset` as the confidential balance asset; funding deposits that same asset (`ORIGIN_CHAIN` → `CONFIDENTIAL_INTENTS`). Standard uses `ORIGIN_CHAIN` + `INTENTS_CONFIDENTIALITY` (default `advanced`). UI tracks in-flight attempts via `GET /payments/pending` + Pending Payments dock.
 
 ### Legacy payroll-run path (still available)
 
@@ -171,11 +188,14 @@ Details: [`docs/api/payments.md`](api/payments.md).
 | POST | `/api/payments/quote` | admin | [payments](api/payments.md) | `api/src/routes/payments.ts` | `api.quote` |
 | POST | `/api/payments/items/:itemId/quote` | admin | [payments](api/payments.md) | `api/src/routes/payments.ts` | `api.quotePaymentItem` |
 | POST | `/api/payments/employees/:employeeId/quote` | admin | [payments](api/payments.md) | `api/src/routes/payments.ts` | `api.quoteEmployeePayment` / `quoteEmployeePaymentDry` |
+| POST | `/api/payments/attempts/:attemptId/private/sign` | admin | [payments](api/payments.md) | `api/src/routes/payments.ts` | `api.submitPrivateSignature` |
+| POST | `/api/payments/attempts/:attemptId/private/deposit` | admin | [payments](api/payments.md) | `api/src/routes/payments.ts` | `api.submitPrivateDeposit` |
 | POST | `/api/payments/attempts/:attemptId/intent` | admin | [payments](api/payments.md) | `api/src/routes/payments.ts` | `api.generatePaymentIntent` |
 | POST | `/api/payments/attempts/:attemptId/submit` | admin | [payments](api/payments.md) | `api/src/routes/payments.ts` | `api.submitPaymentAttempt` |
 | POST | `/api/payments/attempts/:attemptId/deposit` | admin | [payments](api/payments.md) | `api/src/routes/payments.ts` | `api.submitPaymentDeposit` |
 | POST | `/api/payments/attempts/:attemptId/reconcile` | admin | [payments](api/payments.md) | `api/src/routes/payments.ts` | `api.reconcilePaymentAttempt` |
-| POST | `/api/payments/reconcile` | admin | [payments](api/payments.md) | `api/src/routes/payments.ts` | — |
+| GET | `/api/payments/pending` | admin | [payments](api/payments.md) | `api/src/routes/payments.ts` | `api.listPendingPayments` |
+| POST | `/api/payments/reconcile` | admin | [payments](api/payments.md) | `api/src/routes/payments.ts` | `api.reconcileOpenPayments` |
 | POST | `/api/payments/runs/:runId/reopen-failed` | admin | [payments](api/payments.md) | `api/src/routes/payments.ts` | `api.reopenFailedPayments` |
 | GET | `/api/payments/runs/:runId/attempts` | admin | [payments](api/payments.md) | `api/src/routes/payments.ts` | `api.listPaymentAttempts` |
 | POST | `/api/payments/generate-intent` | admin | [payments](api/payments.md) | `api/src/routes/payments.ts` | — **deprecated** |
@@ -257,8 +277,8 @@ Details: [`docs/api/payments.md`](api/payments.md).
 | `MOCK_EMAIL=true` | Skip real email; response may include `inviteUrl` |
 | `INTENTS_API_URL` | 1Click origin (live requires official/loopback) |
 | `INTENTS_API_KEY` | Live payments |
-| `INTENTS_ASSET_MAP` | **Deprecated** for Quick Pay (dynamic `/v0/tokens`). Still used by legacy payroll-run quotes |
-| `INTENTS_CONFIDENTIALITY` | `public` \| `basic` \| `advanced` (default `advanced`) for ORIGIN_CHAIN Quick Pay quotes |
+| `INTENTS_ASSET_MAP` | Required for **legacy payroll-run** quotes only. Private Quick Pay uses the selected `originAsset` as the confidential balance asset; standard Quick Pay resolves assets from `/v0/tokens` |
+| `INTENTS_CONFIDENTIALITY` | `public` \| `basic` \| `advanced` (default `advanced`) for **standard** ORIGIN_CHAIN Quick Pay quotes |
 | `INTENTS_QUOTE_PUBLIC_KEY` | Optional quote verify override |
 | `PAYMENTS_MODE` | `disabled` \| `dry-run` \| `live` |
 | `PAYMENTS_EXECUTION_ACK` | `local-test` \| `mainnet-live` |

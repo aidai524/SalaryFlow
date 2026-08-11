@@ -17,12 +17,15 @@ Parent index: [`docs/api.md`](../api.md)
 |---|---|---|
 | POST | `/api/payments/quote` | `api.quote` (forces `dry: true`) |
 | POST | `/api/payments/items/:itemId/quote` | `api.quotePaymentItem` (**legacy** payroll-run path) |
-| POST | `/api/payments/employees/:employeeId/quote` | `api.quoteEmployeePayment` / `quoteEmployeePaymentDry` |
+| POST | `/api/payments/employees/:employeeId/quote` | `api.quoteEmployeePayment` / `quoteEmployeePaymentDry` (`mode`: `private` default or `standard`) |
+| POST | `/api/payments/attempts/:attemptId/private/sign` | `api.submitPrivateSignature` (private Quick Pay) |
+| POST | `/api/payments/attempts/:attemptId/private/deposit` | `api.submitPrivateDeposit` (private Quick Pay funding) |
 | POST | `/api/payments/attempts/:attemptId/intent` | `api.generatePaymentIntent` (**legacy**) |
 | POST | `/api/payments/attempts/:attemptId/submit` | `api.submitPaymentAttempt` (**legacy**) |
-| POST | `/api/payments/attempts/:attemptId/deposit` | `api.submitPaymentDeposit` (Quick Pay ORIGIN_CHAIN) |
+| POST | `/api/payments/attempts/:attemptId/deposit` | `api.submitPaymentDeposit` (standard Quick Pay ORIGIN_CHAIN) |
 | POST | `/api/payments/attempts/:attemptId/reconcile` | `api.reconcilePaymentAttempt` |
-| POST | `/api/payments/reconcile` | — |
+| GET | `/api/payments/pending` | `api.listPendingPayments` (Pending Payments dock) |
+| POST | `/api/payments/reconcile` | `api.reconcileOpenPayments` |
 | POST | `/api/payments/runs/:runId/reopen-failed` | `api.reopenFailedPayments` |
 | GET | `/api/payments/runs/:runId/attempts` | `api.listPaymentAttempts` |
 | POST | `/api/payments/generate-intent` | — **deprecated** always 409 |
@@ -44,21 +47,29 @@ Local default should stay dry-run. Do not wire deprecated routes.
 
 ## Attempt state machine
 
-Legacy Confidential Intents (embedded) path:
+Legacy Confidential Intents (embedded) path / private leg B submit:
 
 ```text
 created → quoting → quoted → generating → awaiting_signature
   → submitting → submitted → processing → confirmed | failed | refunded
 ```
 
-Quick Pay ORIGIN_CHAIN deposit path:
+Quick Pay **standard** (foreign-to-foreign `ORIGIN_CHAIN` + `confidentiality`):
 
 ```text
 created → quoting → awaiting_deposit → deposit_submitted
   → processing → confirmed | failed | refunded
 ```
 
-Frontend type `PaymentAttemptState` includes both. Quick Pay rows set `employee_payment_id` and may leave `run_id` / `item_id` null.
+Quick Pay **private** (default — EOA → confidential intents → employee, pre-signed):
+
+```text
+created → quoting → generating → awaiting_signature
+  → funding_quoted → funding_deposit_submitted → funding_processing
+  → submitted → processing → confirmed | failed | refunded
+```
+
+On funding `SUCCESS`, cron / reconcile auto-calls `submit-intent` with the stored ERC-191 signature, then tracks the payout deposit address. Frontend type `PaymentAttemptState` includes all states. Quick Pay rows set `employee_payment_id` and may leave `run_id` / `item_id` null. `payment_attempts.flow` is `private` or `standard`.
 
 ## Failure matrix (high-frequency)
 
@@ -121,11 +132,35 @@ Frontend type `PaymentAttemptState` includes both. Quick Pay rows set `employee_
 - **Auth** — admin + **verified payment wallet** (live path)
 - **Source** — `payments.ts` + dynamic `/v0/tokens` via `api/src/assets.ts`
 - **Client** — `api.quoteEmployeePaymentDry` (`dry: true`) · `api.quoteEmployeePayment` (live)
-- **Request** — `{ originAsset, amount?, destinationToken?, destinationNetwork?, idempotencyKey?, dry? }`
-- **Response (dry)** — `{ dry: true, quote: { amountIn, amountOut, timeEstimate, deadline, originAsset, destinationAsset, confidentiality } }`
-- **Response (live)** — `201` `{ attempt, quote, reused }` — attempt state `awaiting_deposit`
-- **Rules** — `EXACT_OUTPUT`, `depositType: ORIGIN_CHAIN`, `recipientType: DESTINATION_CHAIN`, `refundType: ORIGIN_CHAIN`, `confidentiality` from `INTENTS_CONFIDENTIALITY` (default `advanced`). Each live quote inserts a new `employee_payments` row for the current team `period_key` (multiple transfers per period allowed). Period “paid” for Pay overview is still any `status=paid` row for that employee+period.
+- **Request** — `{ originAsset, amount?, destinationToken?, destinationNetwork?, idempotencyKey?, dry?, mode? }` — `mode` defaults to `private` (`standard` keeps F2F)
+- **Response (dry, standard)** — `{ dry: true, mode, quote: { amountIn, amountOut, … } }`
+- **Response (dry, private)** — chained dry quotes: payout (`CONFIDENTIAL_INTENTS` → dest) then funding (`ORIGIN_CHAIN` → confidential). `quote.amountIn` is the funding (You Pay) amount.
+- **Response (live, standard)** — `201` `{ attempt, quote, mode, reused }` — state `awaiting_deposit`
+- **Response (live, private)** — `201` `{ attempt, quote, mode, intent: { standard: "erc191", payload }, reused }` — state `awaiting_signature`
+- **Rules** — Each live quote inserts a new `employee_payments` row for the current team `period_key`. Private payout deadline is 1h (waits for funding). Private confidential origin = selected `originAsset` (fund and spend the same asset; no `INTENTS_ASSET_MAP`). Standard uses `INTENTS_CONFIDENTIALITY` (default `advanced`).
 - **Errors** — 422 payout/token; 409 idempotency/active attempt; live gate on non-dry; 502 provider
+
+---
+
+### POST /api/payments/attempts/:attemptId/private/sign
+
+- **Auth** — admin
+- **Client** — `api.submitPrivateSignature(attemptId, signature)`
+- **Request** — `{ signature }` — `0x` + 130 hex
+- **Response** — `{ attempt, funding: { depositAddress, depositMemo, amountIn, amountOut, deadline }, reused }`
+- **Rules** — Verifies ERC-191 against `signer_id`, stores `intent_signature`, requests funding quote (`ORIGIN_CHAIN` → `CONFIDENTIAL_INTENTS`, `EXACT_OUTPUT` = payout `amountIn` + 0.1% buffer). State → `funding_quoted`.
+- **Errors** — 400 bad signature; 409 wrong state / wallet / `QUOTE_EXPIRED`; 502 funding quote
+
+---
+
+### POST /api/payments/attempts/:attemptId/private/deposit
+
+- **Auth** — admin
+- **Client** — `api.submitPrivateDeposit(attemptId, txHash)`
+- **Request** — `{ txHash }` — `0x` + 64 hex
+- **Response** — `{ attempt, reused }` · `202` `{ outcome: "unknown" }` if 1Click notify fails but hash is stored
+- **Rules** — Private Quick Pay only. Forwards to 1Click `/v0/deposit/submit` for `funding_deposit_address`. State → `funding_deposit_submitted`. Cron / dock reconcile advances funding → auto `submit-intent` → payout settle.
+- **Errors** — 409 wrong state / wallet / funding quote expired; live gate
 
 ---
 
@@ -135,8 +170,17 @@ Frontend type `PaymentAttemptState` includes both. Quick Pay rows set `employee_
 - **Client** — `api.submitPaymentDeposit(attemptId, txHash)`
 - **Request** — `{ txHash }` — `0x` + 64 hex
 - **Response** — `{ attempt, reused }` · `202` `{ outcome: "unknown" }` if 1Click notify fails but hash is stored
-- **Rules** — Quick Pay only (`employee_payment_id` set). Forwards to 1Click `/v0/deposit/submit`. State → `deposit_submitted`.
+- **Rules** — Standard Quick Pay only (`employee_payment_id` set, `flow=standard`). Forwards to 1Click `/v0/deposit/submit`. State → `deposit_submitted`.
 - **Errors** — 409 wrong state / wallet changed / quote expired; live gate
+
+---
+
+### GET /api/payments/pending
+
+- **Auth** — admin
+- **Client** — `api.listPendingPayments`
+- **Response** — `{ payments: [{ attemptId, flow, state, token, network, amountMinor, recipient, employeeId, employeeName, providerStatus, lastError, createdAt, updatedAt, … }] }`
+- **Rules** — Non-terminal attempts for the org (Quick Pay + payroll), newest first, limit 50. Used by `PendingPaymentsDock`.
 
 ---
 
@@ -178,9 +222,9 @@ Frontend type `PaymentAttemptState` includes both. Quick Pay rows set `employee_
 ### POST /api/payments/reconcile
 
 - **Auth** — admin
-- **Client** — — (no frontend method)
-- **Response** — `{ checked, attempts }` from `reconcileOpenPayments(env, 1)`
-- **Rules** — Same as cron batch size 1. No-op if live gate closed.
+- **Client** — `api.reconcileOpenPayments`
+- **Response** — `{ checked, attempts }` from `reconcileOpenPayments(env, 5)`
+- **Rules** — Batch up to 5 open attempts (includes funding_* states). Pending Payments dock calls this while items are in flight. No-op if live gate closed.
 
 ---
 

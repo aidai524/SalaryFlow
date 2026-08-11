@@ -160,6 +160,10 @@ Rules:
 
 - Route `/pay` → `src/views/admin/PayView.tsx`
 - Quick Pay module: `src/components/quick-pay/QuickPayPanel.tsx` (capsule recipient select on `/pay`; Pay Now dialog uses `recipientLocked` + `compensationLayout="centered"` + `destinationTokenLocked`)
+- Payment mode toggle (persisted in `src/stores/quick-pay-prefs.ts`):
+  - **Private** (default) — pre-sign confidential payout intent, ERC-20 fund into Confidential Intents, cron/dock auto-submits intent after funding lands
+  - **Standard** — foreign-to-foreign `ORIGIN_CHAIN` + `confidentiality` (pseudo-privacy)
+- After wallet confirm, UI returns immediately with “Payment submitted”; settlement is tracked in Pending Payments (no blocked “Settling…” loop on the button)
 - Token/network picker: `src/components/token-network-dialog/TokenNetworkDialog.tsx`
 - Recipient drawer: `src/components/drawer/RecipientPickerDrawer.tsx` (kept mounted; Quick Pay no longer opens it)
 - Overview data: `GET /api/org/pay-overview` via `src/hooks/use-pay-api.ts`
@@ -167,6 +171,14 @@ Rules:
 - Recipients deep link: overview list → `/recipients?selected=<employeeId>`
 
 Team switcher control next to the greeting is **disabled** until multi-team lands.
+
+### Pending Payments dock
+
+- `src/components/pending-payments/PendingPaymentsDock.tsx` + `src/hooks/use-pending-payments.ts`
+- Mounted in `AppLayout` for admin (hidden on Create Team)
+- Polls `GET /api/payments/pending` (~8s) and triggers `POST /api/payments/reconcile` while items exist
+- Bottom-right floating card: recipient, amount + token, relative time, status label; max 3 visible rows with scroll; empty → hidden with slide-out
+- Collapsible header (chevron): collapsed shows title + count badge; new items auto-expand once
 
 ### Overview (admin dashboard)
 
@@ -221,9 +233,10 @@ Only EVM is implemented today (RainbowKit / wagmi / viem). NEAR and Solana stubs
 
 Primary wallet use cases:
 
-1. **Admin Quick Pay** — ERC-20 transfer on the chosen origin chain to the 1Click deposit address (ORIGIN_CHAIN confidential swap)
-2. **Admin payment signing** — legacy payroll-run path still uses ERC-191 intent signatures
-3. **Employee wallet verification** — prove ownership of a payout address
+1. **Admin Quick Pay (private)** — ERC-191 pre-sign of confidential payout intent, then ERC-20 transfer to the funding deposit address (ORIGIN_CHAIN → CONFIDENTIAL_INTENTS)
+2. **Admin Quick Pay (standard)** — ERC-20 transfer on the chosen origin chain to the 1Click deposit address (ORIGIN_CHAIN foreign-to-foreign + confidentiality)
+3. **Admin payment signing** — legacy payroll-run path still uses ERC-191 intent signatures
+4. **Employee wallet verification** — prove ownership of a payout address
 
 UI and payment flows should call:
 

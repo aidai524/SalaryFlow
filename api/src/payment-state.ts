@@ -11,10 +11,38 @@ export type PaymentAttemptState =
   | "submitted"
   | "awaiting_deposit"
   | "deposit_submitted"
+  | "funding_quoted"
+  | "funding_deposit_submitted"
+  | "funding_processing"
   | "processing"
   | "confirmed"
   | "failed"
   | "refunded";
+
+export type PaymentFlow = "standard" | "private";
+
+/** States still in flight for pending-payments dock / cron. */
+export const OPEN_PAYMENT_ATTEMPT_STATES: PaymentAttemptState[] = [
+  "created",
+  "quoting",
+  "quoted",
+  "generating",
+  "awaiting_signature",
+  "submitting",
+  "submitted",
+  "awaiting_deposit",
+  "deposit_submitted",
+  "funding_quoted",
+  "funding_deposit_submitted",
+  "funding_processing",
+  "processing",
+];
+
+export const FUNDING_RECONCILE_STATES: PaymentAttemptState[] = [
+  "funding_quoted",
+  "funding_deposit_submitted",
+  "funding_processing",
+];
 
 export type ConfidentialityLevel = "public" | "basic" | "advanced";
 
@@ -220,6 +248,9 @@ export function itemStatusForAttempt(state: PaymentAttemptState): "pending" | "p
     "submitted",
     "awaiting_deposit",
     "deposit_submitted",
+    "funding_quoted",
+    "funding_deposit_submitted",
+    "funding_processing",
     "processing",
   ].includes(state)) {
     return "processing";

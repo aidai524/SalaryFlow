@@ -482,7 +482,16 @@ paymentRoutes.post("/attempts/:attemptId/reconcile", requireRole("admin"), async
   const attempt = await getPaymentAttempt(c.env.DB, c.req.param("attemptId"), user.org_id);
   if (!attempt) return c.json({ error: "Payment attempt not found" }, 404);
   if (["confirmed", "failed", "refunded"].includes(attempt.state)) return c.json({ attempt, reused: true });
-  if (!["submitting", "submitted", "awaiting_deposit", "deposit_submitted", "processing"].includes(attempt.state)) {
+  if (![
+    "submitting",
+    "submitted",
+    "awaiting_deposit",
+    "deposit_submitted",
+    "funding_quoted",
+    "funding_deposit_submitted",
+    "funding_processing",
+    "processing",
+  ].includes(attempt.state)) {
     return c.json({ error: `Attempt in state ${attempt.state} is not ready for reconciliation` }, 409);
   }
   // Manual reconcile should always run (skip the cron lock) so stuck
@@ -491,15 +500,26 @@ paymentRoutes.post("/attempts/:attemptId/reconcile", requireRole("admin"), async
 });
 
 // ---------------------------------------------------------------------------
-// Quick Pay: ORIGIN_CHAIN → confidential intents → DESTINATION_CHAIN
+// Quick Pay: standard (ORIGIN_CHAIN F2F) or private (EOA → confidential → dest)
 // ---------------------------------------------------------------------------
 
-/** Preview quote (dry) or create a live ORIGIN_CHAIN deposit attempt for one employee. */
+const PRIVATE_FUNDING_BUFFER_BPS = 10; // 0.1% buffer so confidential balance covers leg B amountIn
+
+function applyFundingBuffer(amountIn: string): string {
+  const value = BigInt(amountIn);
+  if (value <= 0n) throw new Error("Invalid funding base amount");
+  const buffered = (value * BigInt(10_000 + PRIVATE_FUNDING_BUFFER_BPS) + 9_999n) / 10_000n;
+  return buffered.toString();
+}
+
+/** Preview quote (dry) or create a live deposit / private-intent attempt for one employee. */
 paymentRoutes.post("/employees/:employeeId/quote", requireRole("admin"), async (c) => {
   const user = c.get("user") as AuthUser;
   const employeeId = c.req.param("employeeId");
   const body = await c.req.json().catch(() => null);
   const dry = body?.dry === true;
+  const modeRaw = String(body?.mode || "private").trim().toLowerCase();
+  const mode = modeRaw === "standard" ? "standard" : "private";
   const originAssetId = String(body?.originAsset || "").trim();
   if (!originAssetId) return c.json({ error: "originAsset is required" }, 400);
 
@@ -571,29 +591,96 @@ paymentRoutes.post("/employees/:employeeId/quote", requireRole("admin"), async (
   const refundTo = normalizePayoutAddress(user.wallet_address);
   if (!refundTo) return c.json({ error: "Payment wallet is not a valid EVM address", code: "PAYMENT_WALLET_INVALID" }, 422);
 
-  const confidentiality = resolveConfidentiality(c.env);
-  const quoteRequest: QuoteRequest = {
-    dry,
-    swapType: "EXACT_OUTPUT",
-    originAsset: origin.assetId,
-    depositType: "ORIGIN_CHAIN",
-    destinationAsset: destination.assetId,
-    amount: providerAmount,
-    recipient,
-    recipientType: "DESTINATION_CHAIN",
-    refundTo,
-    refundType: "ORIGIN_CHAIN",
-    confidentiality,
-    deadline: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
-    slippageTolerance: 100,
-  };
+  let intentsAccountId: string;
+  try {
+    intentsAccountId = toIntentsUserId(user.wallet_address);
+  } catch {
+    return c.json({ error: "Payment wallet is not a valid EVM address", code: "PAYMENT_WALLET_INVALID" }, 422);
+  }
+
+  const confidentiality = mode === "private" ? "advanced" : resolveConfidentiality(c.env);
+
+  // Private: fund the selected originAsset into confidential intents, then spend
+  // that same asset from the confidential balance (matches docs/confidential.ts).
+  // Do not require INTENTS_ASSET_MAP for Quick Pay private mode.
+  const confidentialOriginAssetId = origin.assetId;
 
   // Dry preview: contact 1Click with dry:true, do not persist an attempt.
   if (dry) {
     try {
+      if (mode === "private") {
+        const payoutRequest: QuoteRequest = {
+          dry: true,
+          swapType: "EXACT_OUTPUT",
+          originAsset: confidentialOriginAssetId,
+          depositType: "CONFIDENTIAL_INTENTS",
+          destinationAsset: destination.assetId,
+          amount: providerAmount,
+          recipient,
+          recipientType: "DESTINATION_CHAIN",
+          refundTo: intentsAccountId,
+          refundType: "CONFIDENTIAL_INTENTS",
+          confidentiality: "advanced",
+          deadline: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+          slippageTolerance: 100,
+        };
+        const payoutQuote = await requestQuote(c.env, payoutRequest);
+        if (!/^\d+$/.test(String(payoutQuote.quote.amountIn || "")) || BigInt(payoutQuote.quote.amountIn) <= 0n) {
+          throw new Error("1Click private payout quote input amount is invalid");
+        }
+        const fundingAmount = applyFundingBuffer(String(payoutQuote.quote.amountIn));
+        const fundingRequest: QuoteRequest = {
+          dry: true,
+          swapType: "EXACT_OUTPUT",
+          originAsset: origin.assetId,
+          depositType: "ORIGIN_CHAIN",
+          destinationAsset: confidentialOriginAssetId,
+          amount: fundingAmount,
+          recipient: intentsAccountId,
+          recipientType: "CONFIDENTIAL_INTENTS",
+          refundTo,
+          refundType: "ORIGIN_CHAIN",
+          confidentiality: "advanced",
+          deadline: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+          slippageTolerance: 100,
+        };
+        const fundingQuote = await requestQuote(c.env, fundingRequest);
+        return c.json({
+          dry: true,
+          mode,
+          quote: {
+            amountIn: fundingQuote.quote.amountIn,
+            amountOut: payoutQuote.quote.amountOut,
+            timeEstimate: fundingQuote.quote.timeEstimate ?? payoutQuote.quote.timeEstimate ?? null,
+            deadline: fundingQuote.quote.deadline ?? fundingRequest.deadline,
+            originAsset: origin,
+            destinationAsset: destination,
+            confidentiality: "advanced",
+            payoutAmountIn: payoutQuote.quote.amountIn,
+            fundingAmountOut: fundingQuote.quote.amountOut,
+          },
+        });
+      }
+
+      const quoteRequest: QuoteRequest = {
+        dry: true,
+        swapType: "EXACT_OUTPUT",
+        originAsset: origin.assetId,
+        depositType: "ORIGIN_CHAIN",
+        destinationAsset: destination.assetId,
+        amount: providerAmount,
+        recipient,
+        recipientType: "DESTINATION_CHAIN",
+        refundTo,
+        refundType: "ORIGIN_CHAIN",
+        confidentiality,
+        deadline: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+        slippageTolerance: 100,
+      };
       const quote = await requestQuote(c.env, quoteRequest);
       return c.json({
         dry: true,
+        mode,
         quote: {
           amountIn: quote.quote.amountIn,
           amountOut: quote.quote.amountOut,
@@ -664,13 +751,199 @@ paymentRoutes.post("/employees/:employeeId/quote", requireRole("admin"), async (
   }
 
   const attemptId = uuid();
-  const liveRequest: QuoteRequest = { ...quoteRequest, dry: false };
+
+  // -------- Private live: quote payout (leg B) + generate intent, await signature --------
+  if (mode === "private") {
+    const payoutRequest: QuoteRequest = {
+      dry: false,
+      swapType: "EXACT_OUTPUT",
+      originAsset: confidentialOriginAssetId,
+      depositType: "CONFIDENTIAL_INTENTS",
+      destinationAsset: destination.assetId,
+      amount: providerAmount,
+      recipient,
+      recipientType: "DESTINATION_CHAIN",
+      refundTo: intentsAccountId,
+      refundType: "CONFIDENTIAL_INTENTS",
+      confidentiality: "advanced",
+      deadline: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      slippageTolerance: 100,
+    };
+    const inserted = await c.env.DB.prepare(
+      `INSERT OR IGNORE INTO payment_attempts
+       (id, org_id, run_id, item_id, employee_payment_id, idempotency_key, flow, state, token, network,
+        amount_minor, recipient, signer_id, origin_asset_id, destination_asset_id,
+        quote_request, created_by, created_at, updated_at)
+       VALUES (?, ?, NULL, NULL, ?, ?, 'private', 'created', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(
+      attemptId,
+      user.org_id,
+      paymentId,
+      idempotencyKey,
+      destinationToken,
+      destinationNetwork,
+      amountMinor,
+      recipient,
+      intentsAccountId,
+      origin.assetId,
+      destination.assetId,
+      JSON.stringify(payoutRequest),
+      user.id,
+      timestamp,
+      timestamp,
+    ).run();
+    if (Number(inserted.meta.changes || 0) !== 1) {
+      const concurrent = await c.env.DB.prepare(
+        "SELECT * FROM payment_attempts WHERE org_id = ? AND idempotency_key = ?",
+      ).bind(user.org_id, idempotencyKey).first<PaymentAttemptRow>();
+      if (concurrent) return c.json({ attempt: concurrent, reused: true });
+      return c.json({ error: "This employee payment already has an active attempt", code: "ACTIVE_ATTEMPT_EXISTS" }, 409);
+    }
+
+    await c.env.DB.prepare("UPDATE payment_attempts SET state = 'quoting', updated_at = ? WHERE id = ? AND state = 'created'")
+      .bind(nowIso(), attemptId).run();
+
+    try {
+      const quote = await requestQuote(c.env, payoutRequest);
+      const verifiedQuoteHash = verifyOneClickQuote(c.env, payoutRequest, quote);
+      const depositAddress = quote.quote?.depositAddress;
+      if (!depositAddress) throw new Error("1Click quote did not include a deposit address");
+      if (!/^\d+$/.test(String(quote.quote.amountIn || "")) || BigInt(quote.quote.amountIn) <= 0n) {
+        throw new Error("1Click quote input amount is invalid");
+      }
+      if (String(quote.quote.amountOut || "") !== providerAmount) {
+        throw new Error("1Click exact-output quote does not match the compensation amount");
+      }
+      const quoteExpiresAt = String(quote.quote.deadline || "");
+      if (!quoteExpiresAt || !Number.isFinite(Date.parse(quoteExpiresAt)) || Date.parse(quoteExpiresAt) <= Date.now()) {
+        throw new Error("1Click quote is missing a valid future deadline");
+      }
+
+      await c.env.DB.prepare(
+        `UPDATE payment_attempts
+         SET state = 'generating', quote_response = ?, quote_hash = ?, correlation_id = ?,
+             deposit_address = ?, deposit_memo = ?, quote_expires_at = ?,
+             last_error = NULL, updated_at = ?
+         WHERE id = ? AND state = 'quoting'`,
+      ).bind(
+        JSON.stringify(quote),
+        verifiedQuoteHash,
+        quote.correlationId || null,
+        depositAddress,
+        quote.quote.depositMemo || null,
+        quoteExpiresAt,
+        nowIso(),
+        attemptId,
+      ).run();
+
+      const generated = await generateIntent(c.env, {
+        type: "swap_transfer",
+        standard: "erc191",
+        signerId: intentsAccountId,
+        depositAddress,
+      });
+      if (generated.intent.standard !== "erc191" || typeof generated.intent.payload !== "string") {
+        throw new Error("1Click returned an unsupported intent payload");
+      }
+      const payload = JSON.parse(generated.intent.payload) as { signer_id?: string };
+      if (String(payload.signer_id || "").toLowerCase() !== intentsAccountId) {
+        throw new Error("1Click intent signer does not match the verified payment wallet");
+      }
+
+      const quotedAt = nowIso();
+      await c.env.DB.batch([
+        c.env.DB.prepare(
+          `UPDATE payment_attempts
+           SET state = 'awaiting_signature', intent_payload = ?,
+               correlation_id = COALESCE(?, correlation_id), last_error = NULL, updated_at = ?
+           WHERE id = ? AND state = 'generating'`,
+        ).bind(JSON.stringify(generated.intent), generated.correlationId || null, quotedAt, attemptId),
+        c.env.DB.prepare(
+          `UPDATE employee_payments SET status = 'processing', updated_at = ? WHERE id = ?`,
+        ).bind(quotedAt, paymentId),
+        c.env.DB.prepare(
+          `INSERT INTO chain_records
+           (id, attempt_id, item_id, org_id, employee_name, token, network, amount_minor,
+            origin_chain, dest_chain, confidentiality, status, quote_at)
+           VALUES (?, ?, NULL, ?, ?, ?, ?, ?, 'confidential-intents', ?, 'advanced', 'awaiting_signature', ?)`,
+        ).bind(
+          uuid(),
+          attemptId,
+          user.org_id,
+          employee.name,
+          destinationToken,
+          destinationNetwork,
+          amountMinor,
+          destination.network,
+          quotedAt,
+        ),
+        c.env.DB.prepare(
+          "INSERT INTO audit_log (id, org_id, actor_id, action, detail) VALUES (?, ?, ?, 'payment.quoted', ?)",
+        ).bind(uuid(), user.org_id, user.id, `Quoted private Quick Pay for employee ${employee.id} as attempt ${attemptId}`),
+      ]);
+    } catch (error) {
+      const failedAt = nowIso();
+      await c.env.DB.batch([
+        c.env.DB.prepare(
+          "UPDATE payment_attempts SET state = 'failed', last_error = ?, failed_at = ?, updated_at = ? WHERE id = ?",
+        ).bind(providerError(error), failedAt, failedAt, attemptId),
+        c.env.DB.prepare(
+          `UPDATE employee_payments SET status = 'pending', updated_at = ? WHERE id = ?`,
+        ).bind(failedAt, paymentId),
+      ]);
+      return c.json({ error: "Live private quote failed", code: "PAYMENT_PROVIDER_ERROR", detail: providerError(error) }, 502);
+    }
+
+    const attempt = await getPaymentAttempt(c.env.DB, attemptId, user.org_id);
+    let quoteResponse: Record<string, unknown> | null = null;
+    try {
+      quoteResponse = attempt?.quote_response ? JSON.parse(String(attempt.quote_response)) as Record<string, unknown> : null;
+    } catch {
+      quoteResponse = null;
+    }
+    const quoteInner = (quoteResponse?.quote || {}) as Record<string, unknown>;
+    const intent = attempt?.intent_payload ? JSON.parse(String(attempt.intent_payload)) as { standard: "erc191"; payload: string } : null;
+    return c.json({
+      attempt,
+      reused: false,
+      mode,
+      intent,
+      quote: {
+        amountIn: quoteInner.amountIn,
+        amountOut: quoteInner.amountOut,
+        depositAddress: attempt?.deposit_address,
+        depositMemo: attempt?.deposit_memo,
+        timeEstimate: quoteInner.timeEstimate ?? null,
+        deadline: attempt?.quote_expires_at,
+        originAsset: origin,
+        destinationAsset: destination,
+        confidentiality: "advanced",
+      },
+    }, 201);
+  }
+
+  // -------- Standard live: ORIGIN_CHAIN foreign-to-foreign --------
+  const liveRequest: QuoteRequest = {
+    dry: false,
+    swapType: "EXACT_OUTPUT",
+    originAsset: origin.assetId,
+    depositType: "ORIGIN_CHAIN",
+    destinationAsset: destination.assetId,
+    amount: providerAmount,
+    recipient,
+    recipientType: "DESTINATION_CHAIN",
+    refundTo,
+    refundType: "ORIGIN_CHAIN",
+    confidentiality,
+    deadline: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+    slippageTolerance: 100,
+  };
   const inserted = await c.env.DB.prepare(
     `INSERT OR IGNORE INTO payment_attempts
-     (id, org_id, run_id, item_id, employee_payment_id, idempotency_key, state, token, network,
+     (id, org_id, run_id, item_id, employee_payment_id, idempotency_key, flow, state, token, network,
       amount_minor, recipient, signer_id, origin_asset_id, destination_asset_id,
       quote_request, created_by, created_at, updated_at)
-     VALUES (?, ?, NULL, NULL, ?, ?, 'created', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, NULL, NULL, ?, ?, 'standard', 'created', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).bind(
     attemptId,
     user.org_id,
@@ -695,7 +968,8 @@ paymentRoutes.post("/employees/:employeeId/quote", requireRole("admin"), async (
     if (concurrent) return c.json({ attempt: concurrent, reused: true });
     const active = await c.env.DB.prepare(
       `SELECT * FROM payment_attempts WHERE employee_payment_id = ?
-       AND state IN ('created', 'quoting', 'quoted', 'awaiting_deposit', 'deposit_submitted', 'processing')
+       AND state IN ('created', 'quoting', 'quoted', 'awaiting_deposit', 'deposit_submitted',
+         'awaiting_signature', 'funding_quoted', 'funding_deposit_submitted', 'funding_processing', 'processing')
        ORDER BY created_at DESC LIMIT 1`,
     ).bind(paymentId).first<PaymentAttemptRow>();
     return c.json({ error: "This employee payment already has an active attempt", code: "ACTIVE_ATTEMPT_EXISTS", attempt: active }, 409);
@@ -787,6 +1061,7 @@ paymentRoutes.post("/employees/:employeeId/quote", requireRole("admin"), async (
   return c.json({
     attempt,
     reused: false,
+    mode,
     quote: {
       amountIn: quoteInner.amountIn,
       amountOut: quoteInner.amountOut,
@@ -866,10 +1141,324 @@ paymentRoutes.post("/attempts/:attemptId/deposit", requireRole("admin"), async (
   return c.json({ attempt, reused: false });
 });
 
+/** Store pre-signed private payout intent, then quote ORIGIN_CHAIN → CONFIDENTIAL_INTENTS funding. */
+paymentRoutes.post("/attempts/:attemptId/private/sign", requireRole("admin"), async (c) => {
+  const blocked = liveGateResponse(c);
+  if (blocked) return blocked;
+  const user = c.get("user") as AuthUser;
+  const attemptId = c.req.param("attemptId");
+  let attempt = await getPaymentAttempt(c.env.DB, attemptId, user.org_id);
+  if (!attempt) return c.json({ error: "Payment attempt not found" }, 404);
+  if (attempt.flow !== "private") {
+    return c.json({ error: "This endpoint is only for private Quick Pay attempts" }, 409);
+  }
+  if (attempt.state === "funding_quoted" && attempt.funding_deposit_address && attempt.intent_signature) {
+    let fundingQuote: Record<string, unknown> | null = null;
+    try {
+      fundingQuote = attempt.funding_quote_response
+        ? JSON.parse(String(attempt.funding_quote_response)) as Record<string, unknown>
+        : null;
+    } catch {
+      fundingQuote = null;
+    }
+    const fundingInner = (fundingQuote?.quote || {}) as Record<string, unknown>;
+    return c.json({
+      attempt,
+      reused: true,
+      funding: {
+        depositAddress: attempt.funding_deposit_address,
+        depositMemo: attempt.funding_deposit_memo,
+        amountIn: fundingInner.amountIn,
+        amountOut: fundingInner.amountOut,
+        deadline: attempt.funding_expires_at,
+      },
+    });
+  }
+  if (attempt.state !== "awaiting_signature" || !attempt.intent_payload) {
+    return c.json({ error: `Cannot accept a private signature from state ${attempt.state}` }, 409);
+  }
+  if (!user.wallet_address || !user.wallet_verified || user.wallet_address.toLowerCase() !== String(attempt.signer_id).toLowerCase()) {
+    return c.json({ error: "The verified payment wallet no longer matches this attempt", code: "PAYMENT_WALLET_CHANGED" }, 409);
+  }
+  if (attempt.quote_expires_at && new Date(String(attempt.quote_expires_at)).getTime() <= Date.now()) {
+    return c.json({ error: "Payment quote has expired; create a new attempt", code: "QUOTE_EXPIRED" }, 409);
+  }
+
+  const body = await c.req.json().catch(() => null);
+  const signature = String(body?.signature || "");
+  if (!/^0x[a-fA-F0-9]{130}$/.test(signature)) {
+    return c.json({ error: "A valid 65-byte EVM signature is required" }, 400);
+  }
+  const intent = JSON.parse(attempt.intent_payload) as { standard?: string; payload?: unknown };
+  if (intent.standard !== "erc191" || typeof intent.payload !== "string") {
+    return c.json({ error: "Stored payment intent is invalid" }, 500);
+  }
+  let valid = false;
+  try {
+    valid = await verifyMessage({
+      address: attempt.signer_id as Address,
+      message: intent.payload,
+      signature: signature as Hex,
+    });
+  } catch {
+    valid = false;
+  }
+  if (!valid) return c.json({ error: "Payment signature does not match the verified admin wallet" }, 400);
+
+  if (!attempt.quote_response || !attempt.origin_asset_id) {
+    return c.json({ error: "Payment attempt is missing payout quote details" }, 500);
+  }
+  let payoutAmountIn = "";
+  try {
+    const payoutQuote = JSON.parse(String(attempt.quote_response)) as { quote?: { amountIn?: string } };
+    payoutAmountIn = String(payoutQuote.quote?.amountIn || "");
+  } catch {
+    payoutAmountIn = "";
+  }
+  if (!/^\d+$/.test(payoutAmountIn) || BigInt(payoutAmountIn) <= 0n) {
+    return c.json({ error: "Stored payout quote amount is invalid" }, 500);
+  }
+
+  let payoutRequest: QuoteRequest;
+  try {
+    payoutRequest = JSON.parse(String(attempt.quote_request)) as QuoteRequest;
+  } catch {
+    return c.json({ error: "Stored payout quote request is invalid" }, 500);
+  }
+
+  const fundingAmount = applyFundingBuffer(payoutAmountIn);
+  const fundingRequest: QuoteRequest = {
+    dry: false,
+    swapType: "EXACT_OUTPUT",
+    originAsset: String(attempt.origin_asset_id),
+    depositType: "ORIGIN_CHAIN",
+    destinationAsset: payoutRequest.originAsset,
+    amount: fundingAmount,
+    recipient: String(attempt.signer_id),
+    recipientType: "CONFIDENTIAL_INTENTS",
+    refundTo: normalizePayoutAddress(user.wallet_address) || String(attempt.signer_id),
+    refundType: "ORIGIN_CHAIN",
+    confidentiality: "advanced",
+    deadline: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+    slippageTolerance: 100,
+  };
+
+  try {
+    const fundingQuote = await requestQuote(c.env, fundingRequest);
+    const fundingHash = verifyOneClickQuote(c.env, fundingRequest, fundingQuote);
+    const fundingDepositAddress = fundingQuote.quote?.depositAddress;
+    if (!fundingDepositAddress) throw new Error("1Click funding quote did not include a deposit address");
+    if (!/^\d+$/.test(String(fundingQuote.quote.amountIn || "")) || BigInt(fundingQuote.quote.amountIn) <= 0n) {
+      throw new Error("1Click funding quote input amount is invalid");
+    }
+    if (String(fundingQuote.quote.amountOut || "") !== fundingAmount) {
+      throw new Error("1Click funding exact-output quote does not match the buffered payout input");
+    }
+    const fundingExpiresAt = String(fundingQuote.quote.deadline || "");
+    if (!fundingExpiresAt || !Number.isFinite(Date.parse(fundingExpiresAt)) || Date.parse(fundingExpiresAt) <= Date.now()) {
+      throw new Error("1Click funding quote is missing a valid future deadline");
+    }
+
+    const signedAt = nowIso();
+    await c.env.DB.batch([
+      c.env.DB.prepare(
+        `UPDATE payment_attempts
+         SET state = 'funding_quoted', intent_signature = ?,
+             funding_deposit_address = ?, funding_deposit_memo = ?,
+             funding_quote_request = ?, funding_quote_response = ?, funding_quote_hash = ?,
+             funding_expires_at = ?, last_error = NULL, next_reconcile_at = ?, updated_at = ?
+         WHERE id = ? AND state = 'awaiting_signature'`,
+      ).bind(
+        signature,
+        fundingDepositAddress,
+        fundingQuote.quote.depositMemo || null,
+        JSON.stringify(fundingRequest),
+        JSON.stringify(fundingQuote),
+        fundingHash,
+        fundingExpiresAt,
+        signedAt,
+        signedAt,
+        attempt.id,
+      ),
+      c.env.DB.prepare(
+        `UPDATE chain_records
+         SET status = 'funding_quoted', signed_at = COALESCE(signed_at, ?), error = NULL
+         WHERE attempt_id = ?`,
+      ).bind(signedAt, attempt.id),
+      c.env.DB.prepare(
+        "INSERT INTO audit_log (id, org_id, actor_id, action, detail) VALUES (?, ?, ?, 'payment.private_signed', ?)",
+      ).bind(uuid(), user.org_id, user.id, `Pre-signed private payout for attempt ${attempt.id}`),
+    ]);
+
+    attempt = await getPaymentAttempt(c.env.DB, attempt.id, user.org_id);
+    return c.json({
+      attempt,
+      reused: false,
+      funding: {
+        depositAddress: fundingDepositAddress,
+        depositMemo: fundingQuote.quote.depositMemo || null,
+        amountIn: fundingQuote.quote.amountIn,
+        amountOut: fundingQuote.quote.amountOut,
+        deadline: fundingExpiresAt,
+      },
+    });
+  } catch (error) {
+    await c.env.DB.prepare(
+      "UPDATE payment_attempts SET last_error = ?, updated_at = ? WHERE id = ? AND state = 'awaiting_signature'",
+    ).bind(providerError(error), nowIso(), attemptId).run();
+    return c.json({ error: "Funding quote failed", code: "PAYMENT_PROVIDER_ERROR", detail: providerError(error) }, 502);
+  }
+});
+
+/** Notify 1Click of the ORIGIN_CHAIN funding deposit for a private payment. */
+paymentRoutes.post("/attempts/:attemptId/private/deposit", requireRole("admin"), async (c) => {
+  const blocked = liveGateResponse(c);
+  if (blocked) return blocked;
+  const user = c.get("user") as AuthUser;
+  const attemptId = c.req.param("attemptId");
+  let attempt = await getPaymentAttempt(c.env.DB, attemptId, user.org_id);
+  if (!attempt) return c.json({ error: "Payment attempt not found" }, 404);
+  if (attempt.flow !== "private") {
+    return c.json({ error: "This endpoint is only for private Quick Pay attempts" }, 409);
+  }
+  if (!attempt.employee_payment_id) {
+    return c.json({ error: "Private deposit submit is only supported for Quick Pay attempts" }, 409);
+  }
+  if (["funding_deposit_submitted", "funding_processing", "submitting", "submitted", "processing", "confirmed"].includes(attempt.state)
+    && attempt.funding_tx_hash) {
+    return c.json({ attempt, reused: true });
+  }
+  if (attempt.state !== "funding_quoted") {
+    return c.json({ error: `Cannot submit a funding deposit from state ${attempt.state}` }, 409);
+  }
+  if (!user.wallet_address || !user.wallet_verified || user.wallet_address.toLowerCase() !== String(attempt.signer_id).toLowerCase()) {
+    return c.json({ error: "The verified payment wallet no longer matches this attempt", code: "PAYMENT_WALLET_CHANGED" }, 409);
+  }
+  if (attempt.funding_expires_at && new Date(String(attempt.funding_expires_at)).getTime() <= Date.now()) {
+    return c.json({ error: "Funding quote has expired; create a new attempt", code: "QUOTE_EXPIRED" }, 409);
+  }
+  const body = await c.req.json().catch(() => null);
+  const txHash = String(body?.txHash || "").trim();
+  if (!/^0x[a-fA-F0-9]{64}$/.test(txHash)) {
+    return c.json({ error: "A valid EVM transaction hash is required" }, 400);
+  }
+  if (!attempt.funding_deposit_address) {
+    return c.json({ error: "Payment attempt has no funding deposit address" }, 500);
+  }
+
+  const submittedAt = nowIso();
+  try {
+    await submitDepositTx(c.env, { depositAddress: attempt.funding_deposit_address, txHash });
+  } catch (error) {
+    await c.env.DB.prepare(
+      `UPDATE payment_attempts
+       SET funding_tx_hash = ?, state = 'funding_deposit_submitted', provider_status = 'KNOWN_DEPOSIT_TX',
+           last_error = ?, next_reconcile_at = ?, updated_at = ?
+       WHERE id = ? AND state = 'funding_quoted'`,
+    ).bind(txHash, providerError(error), submittedAt, submittedAt, attempt.id).run();
+    attempt = await getPaymentAttempt(c.env.DB, attempt.id, user.org_id);
+    return c.json({ attempt, outcome: "unknown", reused: false }, 202);
+  }
+
+  await c.env.DB.batch([
+    c.env.DB.prepare(
+      `UPDATE payment_attempts
+       SET funding_tx_hash = ?, state = 'funding_deposit_submitted', provider_status = 'KNOWN_DEPOSIT_TX',
+           last_error = NULL, next_reconcile_at = ?, updated_at = ?
+       WHERE id = ? AND state = 'funding_quoted'`,
+    ).bind(txHash, submittedAt, submittedAt, attempt.id),
+    c.env.DB.prepare(
+      `UPDATE chain_records SET status = 'funding_deposit_submitted', provider_status = 'KNOWN_DEPOSIT_TX', error = NULL
+       WHERE attempt_id = ?`,
+    ).bind(attempt.id),
+    c.env.DB.prepare(
+      "INSERT INTO audit_log (id, org_id, actor_id, action, detail) VALUES (?, ?, ?, 'payment.funding_deposit_submitted', ?)",
+    ).bind(uuid(), user.org_id, user.id, `Funding deposit ${txHash} for attempt ${attempt.id}`),
+  ]);
+
+  attempt = await getPaymentAttempt(c.env.DB, attempt.id, user.org_id);
+  return c.json({ attempt, reused: false });
+});
+
+/** In-flight Quick Pay / payroll attempts for the Pending Payments dock. */
+paymentRoutes.get("/pending", requireRole("admin"), async (c) => {
+  const user = c.get("user") as AuthUser;
+  const rows = await c.env.DB.prepare(
+    `SELECT
+       pa.id,
+       pa.flow,
+       pa.state,
+       pa.token,
+       pa.network,
+       pa.amount_minor,
+       pa.recipient,
+       pa.provider_status,
+       pa.last_error,
+       pa.created_at,
+       pa.updated_at,
+       pa.employee_payment_id,
+       pa.item_id,
+       pa.run_id,
+       COALESCE(e.name, pi.employee_name, 'Recipient') AS employee_name,
+       COALESCE(e.id, pi.employee_id) AS employee_id
+     FROM payment_attempts pa
+     LEFT JOIN employee_payments ep ON ep.id = pa.employee_payment_id
+     LEFT JOIN employees e ON e.id = ep.employee_id
+     LEFT JOIN payrun_items pi ON pi.id = pa.item_id
+     WHERE pa.org_id = ?
+       AND pa.state IN (
+         'quoting', 'quoted', 'generating', 'awaiting_signature',
+         'submitting', 'submitted', 'awaiting_deposit', 'deposit_submitted',
+         'funding_quoted', 'funding_deposit_submitted', 'funding_processing',
+         'processing'
+       )
+     ORDER BY pa.created_at DESC
+     LIMIT 50`,
+  ).bind(user.org_id).all<{
+    id: string;
+    flow: string;
+    state: string;
+    token: string;
+    network: string;
+    amount_minor: number;
+    recipient: string;
+    provider_status: string | null;
+    last_error: string | null;
+    created_at: string;
+    updated_at: string;
+    employee_payment_id: string | null;
+    item_id: string | null;
+    run_id: string | null;
+    employee_name: string;
+    employee_id: string | null;
+  }>();
+
+  return c.json({
+    payments: rows.results.map((row) => ({
+      attemptId: row.id,
+      flow: row.flow === "private" ? "private" : "standard",
+      state: row.state,
+      token: row.token,
+      network: row.network,
+      amountMinor: row.amount_minor,
+      recipient: row.recipient,
+      employeeId: row.employee_id,
+      employeeName: row.employee_name,
+      providerStatus: row.provider_status,
+      lastError: row.last_error,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      employeePaymentId: row.employee_payment_id,
+      itemId: row.item_id,
+      runId: row.run_id,
+    })),
+  });
+});
+
 paymentRoutes.post("/reconcile", requireRole("admin"), async (c) => {
   const blocked = liveGateResponse(c);
   if (blocked) return blocked;
-  return c.json(await reconcileOpenPayments(c.env, 1));
+  return c.json(await reconcileOpenPayments(c.env, 5));
 });
 
 // Reopen failed payroll items so a fresh confidential quote can be created.

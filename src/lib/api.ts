@@ -250,6 +250,8 @@ export interface QuickPayAsset {
   contractAddress: string | null;
 }
 
+export type QuickPayMode = "private" | "standard";
+
 export interface QuickPayQuote {
   amountIn: string;
   amountOut: string;
@@ -260,6 +262,16 @@ export interface QuickPayQuote {
   originAsset: QuickPayAsset;
   destinationAsset: QuickPayAsset;
   confidentiality: string;
+  payoutAmountIn?: string;
+  fundingAmountOut?: string;
+}
+
+export interface PrivateFundingQuote {
+  depositAddress: string;
+  depositMemo?: string | null;
+  amountIn: string;
+  amountOut?: string;
+  deadline?: string | null;
 }
 
 export interface PayrollRun {
@@ -351,6 +363,9 @@ export type PaymentAttemptState =
   | "submitted"
   | "awaiting_deposit"
   | "deposit_submitted"
+  | "funding_quoted"
+  | "funding_deposit_submitted"
+  | "funding_processing"
   | "processing"
   | "confirmed"
   | "failed"
@@ -363,6 +378,7 @@ export interface PaymentAttempt {
   item_id: string | null;
   employee_payment_id?: string | null;
   idempotency_key: string;
+  flow?: QuickPayMode;
   state: PaymentAttemptState;
   token: "USDC" | "USDT";
   network: string;
@@ -374,7 +390,13 @@ export interface PaymentAttempt {
   deposit_address: string | null;
   deposit_memo: string | null;
   deposit_tx_hash?: string | null;
+  intent_payload?: string | null;
+  intent_signature?: string | null;
   intent_hash: string | null;
+  funding_deposit_address?: string | null;
+  funding_deposit_memo?: string | null;
+  funding_tx_hash?: string | null;
+  funding_expires_at?: string | null;
   provider_status: string | null;
   last_error: string | null;
   quote_request?: string | null;
@@ -382,6 +404,25 @@ export interface PaymentAttempt {
   quote_expires_at?: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface PendingPaymentRow {
+  attemptId: string;
+  flow: QuickPayMode;
+  state: PaymentAttemptState;
+  token: string;
+  network: string;
+  amountMinor: number;
+  recipient: string;
+  employeeId: string | null;
+  employeeName: string;
+  providerStatus: string | null;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+  employeePaymentId: string | null;
+  itemId: string | null;
+  runId: string | null;
 }
 
 export interface Invitation {
@@ -627,27 +668,35 @@ export const api = {
   reopenFailedPayments: (runId: string) =>
     request<{ ok: true; reopened: number }>(`/payments/runs/${runId}/reopen-failed`, { method: "POST" }),
 
-  /** Quick Pay dry preview (ORIGIN_CHAIN confidential quote). */
+  /** Quick Pay dry preview (private or standard). */
   quoteEmployeePaymentDry: (employeeId: string, body: {
     originAsset: string;
     amount?: string;
     destinationToken?: string;
     destinationNetwork?: string;
+    mode?: QuickPayMode;
   }) =>
-    request<{ dry: true; quote: QuickPayQuote }>(`/payments/employees/${employeeId}/quote`, {
+    request<{ dry: true; mode?: QuickPayMode; quote: QuickPayQuote }>(`/payments/employees/${employeeId}/quote`, {
       method: "POST",
       body: JSON.stringify({ ...body, dry: true }),
     }),
 
-  /** Quick Pay live quote — creates employee_payment + attempt awaiting ORIGIN_CHAIN deposit. */
+  /** Quick Pay live quote — standard ORIGIN_CHAIN deposit or private intent + funding. */
   quoteEmployeePayment: (employeeId: string, body: {
     originAsset: string;
     amount?: string;
     destinationToken?: string;
     destinationNetwork?: string;
     idempotencyKey: string;
+    mode?: QuickPayMode;
   }) =>
-    request<{ attempt: PaymentAttempt; reused: boolean; quote: QuickPayQuote }>(`/payments/employees/${employeeId}/quote`, {
+    request<{
+      attempt: PaymentAttempt;
+      reused: boolean;
+      mode?: QuickPayMode;
+      intent?: { standard: "erc191"; payload: string } | null;
+      quote: QuickPayQuote;
+    }>(`/payments/employees/${employeeId}/quote`, {
       method: "POST",
       body: JSON.stringify(body),
     }),
@@ -657,4 +706,28 @@ export const api = {
       `/payments/attempts/${attemptId}/deposit`,
       { method: "POST", body: JSON.stringify({ txHash }) },
     ),
+
+  /** Private flow: store ERC-191 signature and return ORIGIN_CHAIN funding quote. */
+  submitPrivateSignature: (attemptId: string, signature: string) =>
+    request<{
+      attempt: PaymentAttempt;
+      reused: boolean;
+      funding: PrivateFundingQuote;
+    }>(`/payments/attempts/${attemptId}/private/sign`, {
+      method: "POST",
+      body: JSON.stringify({ signature }),
+    }),
+
+  /** Private flow: notify 1Click of the funding deposit tx. */
+  submitPrivateDeposit: (attemptId: string, txHash: string) =>
+    request<{ attempt: PaymentAttempt; reused: boolean; outcome?: "unknown" }>(
+      `/payments/attempts/${attemptId}/private/deposit`,
+      { method: "POST", body: JSON.stringify({ txHash }) },
+    ),
+
+  listPendingPayments: () =>
+    request<{ payments: PendingPaymentRow[] }>("/payments/pending"),
+
+  reconcileOpenPayments: () =>
+    request<{ checked: number; attempts: PaymentAttempt[] }>("/payments/reconcile", { method: "POST" }),
 };

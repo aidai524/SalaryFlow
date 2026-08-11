@@ -8,9 +8,9 @@ import { getChainByNetwork, networkToChainId } from "@/config/chains";
 import { useEvmWalletInfo } from "@/hooks/use-evm-wallet-info";
 import { useEmployeesQuery } from "@/hooks/use-pay-api";
 import useToast from "@/hooks/use-toast";
-import { api } from "@/lib/api";
+import { api, type QuickPayMode } from "@/lib/api";
 import { formatAddress, formatNumber, formatTokenMinor } from "@/lib/format";
-import { chainLogoUrl, routeLogoUrl, tokenLogoUrl } from "@/lib/logo";
+import { chainLogoUrl, routeLogoUrl } from "@/lib/logo";
 import { formatQuoteErrorMessage } from "@/lib/quote-error";
 import { cn } from "@/lib/utils";
 import { useIntentsTokensStore, type IntentsToken } from "@/stores/intents-tokens";
@@ -66,6 +66,8 @@ export function QuickPayPanel({
   const tokensReady = useIntentsTokensStore((s) => s.tokens.length > 0);
   const savedOriginAssetId = useQuickPayPrefsStore((s) => s.originAssetId);
   const setSavedOriginAssetId = useQuickPayPrefsStore((s) => s.setOriginAssetId);
+  const paymentMode = useQuickPayPrefsStore((s) => s.paymentMode);
+  const setPaymentMode = useQuickPayPrefsStore((s) => s.setPaymentMode);
 
   const [employeeId, setEmployeeId] = useState<string | null>(initialEmployeeId);
   const [compensation, setCompensation] = useState("");
@@ -73,9 +75,8 @@ export function QuickPayPanel({
   const [originToken, setOriginToken] = useState<IntentsToken | null>(null);
   const [destDialogOpen, setDestDialogOpen] = useState(false);
   const [originDialogOpen, setOriginDialogOpen] = useState(false);
-  const [phase, setPhase] = useState<"idle" | "quoting" | "sending" | "settling" | "done" | "error">("idle");
+  const [phase, setPhase] = useState<"idle" | "quoting" | "signing" | "sending" | "done" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
-  const [liveAttemptId, setLiveAttemptId] = useState<string | null>(null);
 
   const { sendTransactionAsync } = useSendTransaction();
   const { switchChainAsync } = useSwitchChain();
@@ -121,6 +122,7 @@ export function QuickPayPanel({
   const dryQuoteQuery = useQuery({
     queryKey: [
       "quick-pay-dry-quote",
+      paymentMode,
       employee?.id,
       originToken?.assetId,
       destToken?.assetId,
@@ -133,6 +135,7 @@ export function QuickPayPanel({
         amount: amountForQuote,
         destinationToken: destToken?.symbol || employee.token,
         destinationNetwork: destToken?.chain.chainName || employee.network,
+        mode: paymentMode,
       });
     },
     enabled: !!employee && !!originToken && !!amountForQuote && !!employee.payout_verified_at,
@@ -202,48 +205,65 @@ export function QuickPayPanel({
         destinationToken: destToken?.symbol || employee.token,
         destinationNetwork: destToken?.chain.chainName || employee.network,
         idempotencyKey,
+        mode: paymentMode,
       });
+
+      const chainId = networkToChainId(originToken.chain.chainName) ?? originToken.chain.chainId;
+
+      if (paymentMode === "private") {
+        const intentPayload = live.intent?.payload;
+        if (!intentPayload) throw new Error("Private quote missing intent payload");
+
+        setPhase("signing");
+        const signed = await wallet.signMessage({ message: intentPayload });
+        const funded = await api.submitPrivateSignature(live.attempt.id, signed.signature);
+        const fundingAddress = funded.funding.depositAddress;
+        const amountIn = funded.funding.amountIn;
+        if (!fundingAddress || !amountIn) throw new Error("Funding quote missing deposit details");
+
+        setPhase("sending");
+        if (chainId && wallet.account.chainId !== chainId) {
+          await switchChainAsync({ chainId });
+        }
+        const data = encodeErc20Transfer(fundingAddress as Address, BigInt(amountIn));
+        const hash = await sendTransactionAsync({
+          to: originToken.contractAddress as Address,
+          data: data as Hex,
+          value: 0n,
+          chainId: chainId || undefined,
+        });
+        await api.submitPrivateDeposit(live.attempt.id, hash);
+        return { attemptId: live.attempt.id, mode: "private" as QuickPayMode };
+      }
+
       const depositAddress = live.quote.depositAddress || live.attempt.deposit_address;
       const amountIn = live.quote.amountIn;
       if (!depositAddress || !amountIn) throw new Error("Quote missing deposit details");
-      setLiveAttemptId(live.attempt.id);
 
       setPhase("sending");
-      const chainId = networkToChainId(originToken.chain.chainName) ?? originToken.chain.chainId;
       if (chainId && wallet.account.chainId !== chainId) {
         await switchChainAsync({ chainId });
       }
-      const amountWei = BigInt(amountIn);
-      const data = encodeErc20Transfer(depositAddress as Address, amountWei);
+      const data = encodeErc20Transfer(depositAddress as Address, BigInt(amountIn));
       const hash = await sendTransactionAsync({
         to: originToken.contractAddress as Address,
         data: data as Hex,
         value: 0n,
         chainId: chainId || undefined,
       });
-
-      setPhase("settling");
       await api.submitPaymentDeposit(live.attempt.id, hash);
-
-      // Poll reconcile until terminal.
-      for (let i = 0; i < 40; i++) {
-        await new Promise((r) => setTimeout(r, 3000));
-        const { attempt } = await api.reconcilePaymentAttempt(live.attempt.id);
-        if (["confirmed", "failed", "refunded"].includes(attempt.state)) {
-          if (attempt.state !== "confirmed") {
-            throw new Error(attempt.last_error || `Payment ${attempt.state}`);
-          }
-          return attempt;
-        }
-      }
-      throw new Error("Payment is still processing; check Payment History later");
+      return { attemptId: live.attempt.id, mode: "standard" as QuickPayMode };
     },
     onSuccess: async () => {
       setPhase("done");
+      toast.success({ title: "Payment submitted" });
+      await queryClient.invalidateQueries({ queryKey: ["pending-payments"] });
       await queryClient.invalidateQueries({ queryKey: ["pay-overview"] });
       await queryClient.invalidateQueries({ queryKey: ["org-overview"] });
       await queryClient.invalidateQueries({ queryKey: ["org-payments"] });
       await queryClient.invalidateQueries({ queryKey: ["employees"] });
+      // Release the button so the admin can start another payment.
+      setTimeout(() => setPhase("idle"), 1500);
     },
     onError: (err) => {
       if (err instanceof BalanceGateError) {
@@ -281,8 +301,61 @@ export function QuickPayPanel({
       {!hideTitle ? (
         <div className="mb-4 flex items-center justify-between gap-3">
           <h2 className="font-montserrat text-[20px] font-medium capitalize text-black">Quick Pay</h2>
+          <div className="inline-flex rounded-[20px] border border-black/10 bg-white p-0.5">
+            {([
+              { id: "private" as const, label: "Private" },
+              { id: "standard" as const, label: "Standard" },
+            ]).map((option) => (
+              <button
+                key={option.id}
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  setPaymentMode(option.id);
+                  setPhase("idle");
+                  setError(null);
+                }}
+                className={cn(
+                  "rounded-[18px] px-3 py-1 font-montserrat text-[12px] font-medium transition-colors",
+                  paymentMode === option.id
+                    ? "bg-black text-white"
+                    : "text-[#606060] hover:bg-black/5",
+                )}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
         </div>
-      ) : null}
+      ) : (
+        <div className="mb-4 flex justify-end">
+          <div className="inline-flex rounded-[20px] border border-black/10 bg-white p-0.5">
+            {([
+              { id: "private" as const, label: "Private" },
+              { id: "standard" as const, label: "Standard" },
+            ]).map((option) => (
+              <button
+                key={option.id}
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  setPaymentMode(option.id);
+                  setPhase("idle");
+                  setError(null);
+                }}
+                className={cn(
+                  "rounded-[18px] px-3 py-1 font-montserrat text-[12px] font-medium transition-colors",
+                  paymentMode === option.id
+                    ? "bg-black text-white"
+                    : "text-[#606060] hover:bg-black/5",
+                )}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {recipientLocked ? (
         employee ? (
@@ -315,7 +388,6 @@ export function QuickPayPanel({
                       setEmployeeId(emp.id);
                       setPhase("idle");
                       setError(null);
-                      setLiveAttemptId(null);
                     }}
                     className={cn(
                       "inline-flex h-10 items-center gap-2 rounded-[26px] border px-2.5 pr-3 font-montserrat text-[14px] font-medium transition-colors",
@@ -492,6 +564,9 @@ export function QuickPayPanel({
               ? `${amountInDisplay} ${originToken.symbol}`
               : "—"}
           </span>
+          {paymentMode === "private" ? (
+            <span className="rounded-full bg-black/5 px-2 py-0.5 text-[#0e3616]">Private</span>
+          ) : null}
         </div>
         <div className="flex items-center gap-3 font-space-grotesk text-[12px] text-[#444c59]">
           {originToken && destToken ? (
@@ -529,10 +604,10 @@ export function QuickPayPanel({
         {busy
           ? phase === "quoting"
             ? "Getting quote…"
-            : phase === "sending"
-              ? "Confirm in wallet…"
-              : phase === "settling"
-                ? "Settling…"
+            : phase === "signing"
+              ? "Sign intent…"
+              : phase === "sending"
+                ? "Confirm in wallet…"
                 : "Review & Sign"
           : "Review & Sign"}
       </button>
@@ -543,7 +618,7 @@ export function QuickPayPanel({
         <p className="mt-3 font-montserrat text-[13px] text-red-600">{quoteError}</p>
       ) : null}
       {phase === "done" ? (
-        <p className="mt-3 font-montserrat text-[13px] text-[#0ed000]">Payment confirmed{liveAttemptId ? "." : ""}</p>
+        <p className="mt-3 font-montserrat text-[13px] text-[#0ed000]">Payment submitted. Track progress in Pending Payments.</p>
       ) : null}
 
       <TokenNetworkDialog
