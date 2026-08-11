@@ -2,11 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type Address, type Hex } from "viem";
 import { useSendTransaction, useSwitchChain } from "wagmi";
+import { AddRecipientPillButton } from "@/components/AddRecipientPillButton";
 import { IdentityAvatar } from "@/components/IdentityAvatar";
 import { TokenNetworkDialog } from "@/components/token-network-dialog/TokenNetworkDialog";
 import { getChainByNetwork, networkToChainId } from "@/config/chains";
 import { useEvmWalletInfo } from "@/hooks/use-evm-wallet-info";
 import { useEmployeesQuery } from "@/hooks/use-pay-api";
+import { useTokenBalance } from "@/hooks/use-token-balances";
 import useToast from "@/hooks/use-toast";
 import { api, type QuickPayMode } from "@/lib/api";
 import { formatAddress, formatNumber, formatTokenMinor } from "@/lib/format";
@@ -16,8 +18,9 @@ import { cn } from "@/lib/utils";
 import { useIntentsTokensStore, type IntentsToken } from "@/stores/intents-tokens";
 import { enqueueQuickPayCommit } from "@/stores/quick-pay-commit-queue";
 import { useQuickPayPrefsStore } from "@/stores/quick-pay-prefs";
+import { useTokenBalancesStore } from "@/stores/token-balances";
 import { useWallet } from "@/wallet";
-import { encodeErc20Transfer, readErc20Balance } from "@/wallet/evm/transfer";
+import { encodeErc20Transfer } from "@/wallet/evm/transfer";
 
 /** Thrown when balance check already showed a toast; skip inline error UI. */
 class BalanceGateError extends Error {
@@ -46,6 +49,8 @@ export interface QuickPayPanelProps {
   compensationLayout?: "row" | "centered";
   /** Prevent changing destination token/network. */
   destinationTokenLocked?: boolean;
+  /** Opens Add Recipient dialog from the capsule list. */
+  onAddRecipient?: () => void;
 }
 
 export function QuickPayPanel({
@@ -55,6 +60,7 @@ export function QuickPayPanel({
   recipientLocked = false,
   compensationLayout = "row",
   destinationTokenLocked = false,
+  onAddRecipient,
 }: QuickPayPanelProps) {
   const wallet = useWallet("evm");
   const walletInfo = useEvmWalletInfo();
@@ -156,21 +162,18 @@ export function QuickPayPanel({
     })
     : "—";
 
-  const balanceQuery = useQuery({
-    queryKey: ["erc20-balance", wallet.account?.address, originToken?.assetId],
-    queryFn: async () => {
-      if (!wallet.account?.address || !originToken?.contractAddress) return null;
-      return readErc20Balance({
-        network: originToken.blockchain,
-        tokenAddress: originToken.contractAddress as Address,
-        owner: wallet.account.address as Address,
-        decimals: originToken.decimals,
-      });
-    },
-    enabled: !!wallet.isConnected && !!originToken?.contractAddress && !!wallet.account?.address,
-    staleTime: 0,
-    refetchInterval: 20_000,
-  });
+  const ownerAddress = wallet.account?.address ?? null;
+  const fetchOneBalance = useTokenBalancesStore((s) => s.fetchOne);
+  const originBalance = useTokenBalance(ownerAddress, originToken?.assetId);
+
+  useEffect(() => {
+    if (!wallet.isConnected || !ownerAddress || !originToken?.contractAddress) return;
+    void fetchOneBalance(ownerAddress, originToken);
+    const id = window.setInterval(() => {
+      void fetchOneBalance(ownerAddress, originToken);
+    }, 20_000);
+    return () => window.clearInterval(id);
+  }, [wallet.isConnected, ownerAddress, originToken, fetchOneBalance]);
 
   const verified = !!employee?.payout_verified_at && employee.status === "ready";
 
@@ -187,8 +190,8 @@ export function QuickPayPanel({
       if (!verified) throw new Error("Recipient wallet is not verified");
       if (!quote.amountIn) throw new Error("Quote missing deposit details");
 
-      const { data: balance, error: balanceError } = await balanceQuery.refetch();
-      if (balanceError || !balance) {
+      const balance = await fetchOneBalance(wallet.account.address, originToken);
+      if (!balance || balance.status !== "success" || balance.raw == null) {
         toast.fail({ title: "Could not read wallet balance" });
         throw new BalanceGateError("Could not read wallet balance");
       }
@@ -384,7 +387,12 @@ export function QuickPayPanel({
       {recipientLocked ? (
         employee ? (
           <div className="mb-5 flex items-center gap-3">
-            <IdentityAvatar seed={employee.email || employee.name} size={32} alt="" />
+            <IdentityAvatar
+              seed={employee.email || employee.name}
+              src={employee.avatar_url}
+              size={32}
+              alt=""
+            />
             <p className="min-w-0 flex-1 truncate font-montserrat text-[16px] font-medium text-black">
               {employee.name}
             </p>
@@ -398,35 +406,37 @@ export function QuickPayPanel({
       ) : (
         <div className="mb-5">
           <p className="mb-3 font-montserrat text-[14px] font-medium text-[#606060]">Recipient</p>
-          {employees.length === 0 ? (
-            <p className="font-montserrat text-[14px] text-[#606060]">No recipients</p>
-          ) : (
-            <div className="flex flex-wrap gap-3">
-              {employees.map((emp) => {
-                const selected = employeeId === emp.id;
-                return (
-                  <button
-                    key={emp.id}
-                    type="button"
-                    onClick={() => {
-                      setEmployeeId(emp.id);
-                      setPhase("idle");
-                      setError(null);
-                    }}
-                    className={cn(
-                      "inline-flex h-10 items-center gap-2 rounded-[26px] border px-2.5 pr-3 font-montserrat text-[14px] font-medium transition-colors",
-                      selected
-                        ? "border-black bg-black text-white"
-                        : "border-black/10 bg-transparent text-black hover:bg-black/5",
-                    )}
-                  >
-                    <IdentityAvatar seed={emp.email || emp.name} size={26} alt="" />
-                    <span className="max-w-[140px] truncate">{emp.name}</span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
+          <div className="flex flex-wrap items-center gap-3">
+            {employees.map((emp) => {
+              const selected = employeeId === emp.id;
+              return (
+                <button
+                  key={emp.id}
+                  type="button"
+                  onClick={() => {
+                    setEmployeeId(emp.id);
+                    setPhase("idle");
+                    setError(null);
+                  }}
+                  className={cn(
+                    "inline-flex h-10 items-center gap-2 rounded-[26px] border px-2.5 pr-3 font-montserrat text-[14px] font-medium transition-colors",
+                    selected
+                      ? "border-black bg-black text-white"
+                      : "border-black/10 bg-transparent text-black hover:bg-black/5",
+                  )}
+                >
+                  <IdentityAvatar
+                    seed={emp.email || emp.name}
+                    src={emp.avatar_url}
+                    size={26}
+                    alt=""
+                  />
+                  <span className="max-w-[140px] truncate">{emp.name}</span>
+                </button>
+              );
+            })}
+            {onAddRecipient ? <AddRecipientPillButton onClick={onAddRecipient} /> : null}
+          </div>
         </div>
       )}
 
@@ -572,9 +582,16 @@ export function QuickPayPanel({
       <p className="mb-4 font-space-grotesk text-[12px]">
         <span className="text-[#9fa7ba]">Balance: </span>
         <span className="text-[#0e3616]">
-          {balanceQuery.data
-            ? formatNumber(Number(balanceQuery.data.formatted), { maximumFractionDigits: 2 })
-            : "—"}
+          {originBalance?.status === "loading" ? (
+            <span
+              className="inline-block size-3 animate-spin rounded-full border-2 border-[#0e3616] border-r-transparent align-middle"
+              aria-label="Loading balance"
+            />
+          ) : originBalance?.status === "success" && originBalance.formatted != null ? (
+            formatNumber(Number(originBalance.formatted), { maximumFractionDigits: 2 })
+          ) : (
+            "—"
+          )}
         </span>
       </p>
       <div className="mb-4 border-b border-black/10" />
@@ -659,12 +676,13 @@ export function QuickPayPanel({
         title="You pay with"
         initialSymbol={(originToken?.symbol || "USDT") as "USDC" | "USDT"}
         selectedAssetId={originToken?.assetId}
+        showBalances
         onSelect={({ token }) => {
           setOriginToken(token);
           setSavedOriginAssetId(token.assetId);
-          void queryClient.invalidateQueries({
-            queryKey: ["erc20-balance", wallet.account?.address, token.assetId],
-          });
+          if (wallet.account?.address) {
+            void fetchOneBalance(wallet.account.address, token);
+          }
         }}
       />
     </section>

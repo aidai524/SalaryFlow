@@ -44,6 +44,8 @@ export interface Employee {
   payout_verified_at: string | null;
   last_paid_at: string | null;
   created_at: string;
+  /** Preset path e.g. /avatars/avatar-1.png */
+  avatar_url?: string | null;
   /** Effective schedule (team for employees; own for contractors). */
   payment_cadence?: ContractorPaymentCadence | TeamPaymentSchedule | null;
   payment_date_key?: TeamPaymentDateKey | null;
@@ -66,6 +68,7 @@ export interface EmployeePaymentHistoryItem {
   token: string;
   network: string;
   period_key: string;
+  status: "pending" | "processing" | "paid" | "failed" | "refunded" | string;
   /** Destination-chain receive tx only — not admin funding/deposit. */
   txHash: string | null;
   explorerUrl: string | null;
@@ -90,6 +93,7 @@ export interface MyPayout {
   payment_date_key?: TeamPaymentDateKey | null;
   nextPayday?: string | null;
   nextPaydayDisplay?: string | null;
+  avatar_url?: string | null;
   totalReceivedMinor: number;
 }
 
@@ -136,6 +140,7 @@ export interface PayOverview {
     verified: boolean;
     status: string;
     created_at: string;
+    avatar_url?: string | null;
   }>;
   highPriority: {
     verification: { count: number; names: string[] } | null;
@@ -636,6 +641,7 @@ export const api = {
     token?: string;
     network?: string;
     endpoint?: string;
+    avatar_url?: string | null;
   }) =>
     request<{ payout: MyPayout | null; payoutChanged: boolean }>("/records/me/profile", {
       method: "PATCH",

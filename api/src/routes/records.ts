@@ -9,7 +9,11 @@ import {
 } from "../org-payment";
 import { formatPaydayDisplay, resolveNextPeriod } from "../pay-period";
 import { normalizePayoutAddress, normalizePayoutNetwork, normalizePayoutToken } from "../payout";
-import { resolveRecipientSchedule, type EmployeeType } from "../recipient";
+import {
+  normalizePresetAvatarUrl,
+  resolveRecipientSchedule,
+  type EmployeeType,
+} from "../recipient";
 import { nowIso, uuid, type AuthUser } from "../types";
 
 export const recordRoutes = new Hono<AppEnv>();
@@ -30,6 +34,7 @@ type EmpRow = {
   created_at: string;
   payment_cadence: string | null;
   payment_date_key: string | null;
+  avatar_url: string | null;
 };
 
 function explorerUrlForTx(network: string, txHash: string): string | null {
@@ -46,7 +51,8 @@ function explorerUrlForTx(network: string, txHash: string): string | null {
 async function loadEnrichedPayout(db: D1Database, userId: string, orgId: string) {
   const emp = await db.prepare(
     `SELECT id, name, email, role_title, employee_type, token, network, amount_minor, endpoint,
-            status, payout_verified_at, last_paid_at, created_at, payment_cadence, payment_date_key
+            status, payout_verified_at, last_paid_at, created_at, payment_cadence, payment_date_key,
+            avatar_url
      FROM employees WHERE user_id = ? AND org_id = ?`,
   ).bind(userId, orgId).first<EmpRow>();
   if (!emp) return null;
@@ -112,6 +118,7 @@ async function loadEnrichedPayout(db: D1Database, userId: string, orgId: string)
     payment_date_key: displayDateKey,
     nextPayday,
     nextPaydayDisplay: nextPayday ? formatPaydayDisplay(nextPayday) : null,
+    avatar_url: emp.avatar_url || null,
     totalReceivedMinor: Number(paid?.total || 0),
   };
 }
@@ -258,6 +265,12 @@ recordRoutes.patch("/me/profile", requireRole("employee"), async (c) => {
     if (endpoint.toLowerCase() !== String(existing.endpoint || "").toLowerCase()) payoutChanged = true;
     fields.push("endpoint = ?");
     values.push(endpoint);
+  }
+  if (body?.avatar_url !== undefined || body?.avatarUrl !== undefined) {
+    const avatarUrl = normalizePresetAvatarUrl(body?.avatar_url ?? body?.avatarUrl);
+    if (avatarUrl === null) return c.json({ error: "Choose a valid preset avatar" }, 400);
+    fields.push("avatar_url = ?");
+    values.push(avatarUrl || null);
   }
 
   if (payoutChanged) {

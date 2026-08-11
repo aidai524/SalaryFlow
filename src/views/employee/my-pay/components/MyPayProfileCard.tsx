@@ -41,6 +41,7 @@ export function MyPayProfileCard({
       <div className="flex items-start gap-3 px-5 pt-5 pb-4">
         <IdentityAvatar
           seed={payout.name || payout.email || payout.id}
+          src={payout.avatar_url}
           size={60}
           alt=""
         />

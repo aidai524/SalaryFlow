@@ -24,6 +24,7 @@ import {
 import { normalizePayoutAddress, normalizePayoutNetwork, normalizePayoutToken } from "../payout";
 import {
   normalizeEmployeeType,
+  normalizePresetAvatarUrl,
   normalizeRoleTitle,
   parseContractorScheduleInput,
   resolveRecipientSchedule,
@@ -166,7 +167,7 @@ orgRoutes.get("/pay-overview", requireRole("admin"), async (c) => {
 
   const employees = await c.env.DB.prepare(
     `SELECT id, name, role_title, employee_type, amount_minor, token, network, endpoint,
-            status, payout_verified_at, last_paid_at, created_at
+            status, payout_verified_at, last_paid_at, created_at, avatar_url
      FROM employees WHERE org_id = ? ORDER BY created_at DESC`,
   ).bind(user.org_id).all<{
     id: string;
@@ -181,6 +182,7 @@ orgRoutes.get("/pay-overview", requireRole("admin"), async (c) => {
     payout_verified_at: string | null;
     last_paid_at: string | null;
     created_at: string;
+    avatar_url: string | null;
   }>();
 
   const paidThisPeriod = await c.env.DB.prepare(
@@ -210,6 +212,7 @@ orgRoutes.get("/pay-overview", requireRole("admin"), async (c) => {
     verified: !!e.payout_verified_at && e.status === "ready",
     status: e.status,
     created_at: e.created_at,
+    avatar_url: e.avatar_url || null,
   }));
 
   return c.json({
@@ -274,7 +277,7 @@ orgRoutes.get("/overview", requireRole("admin"), async (c) => {
 
   const employees = await c.env.DB.prepare(
     `SELECT id, name, role_title, employee_type, amount_minor, token, network, endpoint,
-            status, payout_verified_at, last_paid_at, created_at
+            status, payout_verified_at, last_paid_at, created_at, avatar_url
      FROM employees WHERE org_id = ? ORDER BY created_at DESC`,
   ).bind(user.org_id).all<{
     id: string;
@@ -289,6 +292,7 @@ orgRoutes.get("/overview", requireRole("admin"), async (c) => {
     payout_verified_at: string | null;
     last_paid_at: string | null;
     created_at: string;
+    avatar_url: string | null;
   }>();
 
   const fullTime = employees.results.filter((e) => (e.employee_type || "employee") === "employee");
@@ -650,7 +654,7 @@ orgRoutes.get("/employees", requireRole("admin"), async (c) => {
   const rows = await c.env.DB.prepare(
     `SELECT id, user_id, email, name, role_title, location, employee_type, token, network,
             amount_minor, endpoint, status, payout_verified_at, last_paid_at, created_at,
-            payment_cadence, payment_date_key
+            payment_cadence, payment_date_key, avatar_url
      FROM employees WHERE org_id = ? ORDER BY created_at DESC`,
   ).bind(user.org_id).all<EmployeeRow>();
 
@@ -705,7 +709,7 @@ orgRoutes.get("/employees/:id", requireRole("admin"), async (c) => {
   const emp = await c.env.DB.prepare(
     `SELECT id, user_id, email, name, role_title, location, employee_type, token, network,
             amount_minor, endpoint, status, payout_verified_at, last_paid_at, created_at,
-            payment_cadence, payment_date_key
+            payment_cadence, payment_date_key, avatar_url
      FROM employees WHERE id = ? AND org_id = ?`,
   ).bind(employeeId, user.org_id).first<EmployeeRow>();
   if (!emp) return c.json({ error: "Employee not found" }, 404);
@@ -725,20 +729,24 @@ orgRoutes.get("/employees/:id/payments", requireRole("admin"), async (c) => {
   const cursor = String(c.req.query("cursor") || "").trim();
 
   // History Tx = employee destination/receive settlement, not admin deposit/funding.
+  // Include all payment statuses (pending / processing / paid / failed / refunded).
   let sql = `
     SELECT ep.id, ep.paid_at, ep.amount_minor, ep.token, ep.network, ep.period_key, ep.status, ep.created_at,
            pa.destination_tx_hash AS tx_hash,
            pa.destination_tx_explorer_url AS tx_explorer_url
     FROM employee_payments ep
     LEFT JOIN payment_attempts pa ON pa.employee_payment_id = ep.id AND pa.state = 'confirmed'
-    WHERE ep.org_id = ? AND ep.employee_id = ? AND ep.status = 'paid'
+    WHERE ep.org_id = ? AND ep.employee_id = ?
   `;
   const binds: unknown[] = [user.org_id, employeeId];
   if (cursor) {
-    sql += ` AND (ep.paid_at < ? OR (ep.paid_at = ? AND ep.id < ?))`;
+    sql += ` AND (
+      COALESCE(ep.paid_at, ep.created_at) < ?
+      OR (COALESCE(ep.paid_at, ep.created_at) = ? AND ep.id < ?)
+    )`;
     binds.push(cursor, cursor, cursor);
   }
-  sql += ` ORDER BY ep.paid_at DESC, ep.id DESC LIMIT ?`;
+  sql += ` ORDER BY COALESCE(ep.paid_at, ep.created_at) DESC, ep.id DESC LIMIT ?`;
   binds.push(limit + 1);
 
   const rows = await c.env.DB.prepare(sql).bind(...binds).all<{
@@ -768,6 +776,7 @@ orgRoutes.get("/employees/:id/payments", requireRole("admin"), async (c) => {
       token: r.token,
       network: r.network,
       period_key: r.period_key,
+      status: r.status,
       txHash: r.tx_hash,
       explorerUrl: r.tx_explorer_url
         || (r.tx_hash && r.network ? explorerUrlForTx(r.network, r.tx_hash) : null),
@@ -823,13 +832,20 @@ orgRoutes.post("/employees", requireRole("admin"), async (c) => {
   const endpointInput = String(body?.endpoint || "").trim();
   const endpoint = endpointInput ? normalizePayoutAddress(endpointInput) : "";
   if (endpoint === null) return c.json({ error: "A valid EVM payout address is required" }, 400);
+  if (employeeType === "contractor" && !endpoint) {
+    return c.json({ error: "A wallet address is required for contractors" }, 400);
+  }
+  const avatarUrl = body?.avatar_url !== undefined || body?.avatarUrl !== undefined
+    ? normalizePresetAvatarUrl(body?.avatar_url ?? body?.avatarUrl)
+    : "";
+  if (avatarUrl === null) return c.json({ error: "Choose a valid preset avatar" }, 400);
   const amountMinor = body?.amount === undefined ? 0 : parseTokenAmount(body.amount, { allowZero: true });
   if (amountMinor === null) return c.json({ error: "Amount must have at most 6 decimal places" }, 400);
   await c.env.DB.prepare(
     `INSERT INTO employees (
        id, org_id, email, name, role_title, location, employee_type, token, network,
-       amount_minor, endpoint, status, payment_cadence, payment_date_key, created_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+       amount_minor, endpoint, status, payment_cadence, payment_date_key, avatar_url, created_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`,
   ).bind(
     id,
     user.org_id,
@@ -844,6 +860,7 @@ orgRoutes.post("/employees", requireRole("admin"), async (c) => {
     endpoint,
     paymentCadence,
     paymentDateKey,
+    avatarUrl || null,
     nowIso(),
   ).run();
   await c.env.DB.prepare(
@@ -956,6 +973,25 @@ orgRoutes.patch("/employees/:id", requireRole("admin"), async (c) => {
     }
     fields.push("endpoint = ?");
     values.push(endpoint);
+  }
+  if (body?.avatar_url !== undefined || body?.avatarUrl !== undefined) {
+    const avatarUrl = normalizePresetAvatarUrl(body?.avatar_url ?? body?.avatarUrl);
+    if (avatarUrl === null) return c.json({ error: "Choose a valid preset avatar" }, 400);
+    fields.push("avatar_url = ?");
+    values.push(avatarUrl || null);
+  }
+  const resolvedEndpoint = body?.endpoint !== undefined
+    ? (() => {
+        const endpointInput = String(body.endpoint).trim();
+        const normalized = endpointInput ? normalizePayoutAddress(endpointInput) : "";
+        return normalized === null ? null : normalized;
+      })()
+    : String(existing.endpoint || "");
+  if (resolvedEndpoint === null) {
+    return c.json({ error: "A valid EVM payout address is required" }, 400);
+  }
+  if (nextType === "contractor" && !resolvedEndpoint) {
+    return c.json({ error: "A wallet address is required for contractors" }, 400);
   }
   if (payoutChanged) {
     fields.push("status = 'update_required'", "payout_verified_at = NULL");

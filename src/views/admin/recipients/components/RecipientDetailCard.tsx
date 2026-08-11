@@ -9,6 +9,10 @@ import { formatAddress, formatDate, formatTokenMinor } from "@/lib/format";
 import { tokenLogoUrl } from "@/lib/logo";
 import { cn } from "@/lib/utils";
 import {
+  HISTORY_STATUS,
+  mapPaymentStatus,
+} from "@/views/admin/payment-history/config";
+import {
   formatCompensation,
   isVerified,
   roleBadgeAbbrev,
@@ -88,6 +92,7 @@ export function RecipientDetailCard({
       <div className="flex items-start gap-3 px-5 pt-5 pb-4">
         <IdentityAvatar
           seed={employee.name || employee.email || employee.id}
+          src={employee.avatar_url}
           size={60}
           alt=""
         />
@@ -209,31 +214,38 @@ export function RecipientDetailCard({
           </dl>
         ) : (
           <ul className="space-y-0">
-            {payments.map((p) => (
-              <li
-                key={p.id}
-                className="flex items-center gap-3 py-3.5 font-montserrat text-[14px] font-medium text-[#606060]"
-              >
-                <span className="min-w-0 flex-1 truncate">
-                  {p.paid_at ? formatHistoryDateTime(p.paid_at) : p.period_key}
-                </span>
-                <span className="shrink-0">
-                  {formatTokenMinor(p.amount_minor, { maximumFractionDigits: 0 })} {p.token}
-                </span>
-                {p.explorerUrl || p.txHash ? (
-                  <a
-                    href={p.explorerUrl || `https://nearblocks.io/txns/${p.txHash}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="shrink-0 text-[#4da0ff] underline underline-offset-2 hover:opacity-80"
-                  >
-                    Tx
-                  </a>
-                ) : (
-                  <span className="w-5 shrink-0" />
-                )}
-              </li>
-            ))}
+            {payments.map((p) => {
+              const statusKey = mapPaymentStatus(p.status || "pending");
+              const statusMeta = HISTORY_STATUS[statusKey];
+              return (
+                <li
+                  key={p.id}
+                  className="flex items-center gap-3 py-3.5 font-montserrat text-[14px] font-medium text-[#606060]"
+                >
+                  <span className="min-w-0 flex-1 truncate">
+                    {p.paid_at ? formatHistoryDateTime(p.paid_at) : p.period_key}
+                  </span>
+                  <span className={cn("shrink-0 font-montserrat text-[12px]", statusMeta.className)}>
+                    {statusMeta.label}
+                  </span>
+                  <span className="shrink-0">
+                    {formatTokenMinor(p.amount_minor, { maximumFractionDigits: 0 })} {p.token}
+                  </span>
+                  {p.explorerUrl || p.txHash ? (
+                    <a
+                      href={p.explorerUrl || `https://nearblocks.io/txns/${p.txHash}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="shrink-0 text-[#4da0ff] underline underline-offset-2 hover:opacity-80"
+                    >
+                      Tx
+                    </a>
+                  ) : (
+                    <span className="w-5 shrink-0" />
+                  )}
+                </li>
+              );
+            })}
             {paymentsLoading ? (
               <li className="py-8 text-center font-montserrat text-[13px] text-[#909090]">
                 Loading…

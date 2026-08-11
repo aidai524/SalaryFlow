@@ -103,3 +103,13 @@ export function parseContractorScheduleInput(body: {
 }
 
 export { normalizeTeamPaymentSchedule, normalizeTeamPaymentDateKey };
+
+/** Allowed preset avatar paths under /public/avatars. Empty string clears. */
+const PRESET_AVATAR_RE = /^\/avatars\/avatar-(?:[1-9]|10)\.png$/;
+
+export function normalizePresetAvatarUrl(value: unknown): string | null {
+  if (value === undefined || value === null) return "";
+  const raw = String(value).trim();
+  if (!raw) return "";
+  return PRESET_AVATAR_RE.test(raw) ? raw : null;
+}

@@ -53,6 +53,7 @@ export function useUpdateMyProfileMutation() {
       token?: string;
       network?: string;
       endpoint?: string;
+      avatar_url?: string | null;
     }) => api.updateMyProfile(body),
     onSuccess: async (result) => {
       await Promise.all([

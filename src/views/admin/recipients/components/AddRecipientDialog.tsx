@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { isAddress } from "viem";
+import { IdentityAvatar } from "@/components/IdentityAvatar";
 import { PayoutOwnershipActions } from "@/components/PayoutOwnershipActions";
 import {
   Dialog,
@@ -47,6 +49,7 @@ import {
 } from "@/views/admin/create-team/utils";
 import {
   CONTRACTOR_SCHEDULE_OPTIONS,
+  PRESET_AVATARS,
   ROLE_OPTIONS,
   TOKEN_OPTIONS,
 } from "../config";
@@ -70,6 +73,7 @@ function toSavedPayout(emp: Employee, totalReceivedMinor = 0): MyPayout {
     payment_date_key: emp.payment_date_key,
     nextPayday: emp.nextPayday,
     nextPaydayDisplay: emp.nextPaydayDisplay,
+    avatar_url: emp.avatar_url ?? null,
     totalReceivedMinor,
   };
 }
@@ -95,6 +99,7 @@ function employeeFromMyPayout(payout: MyPayout, userId: string | null): Employee
     payment_date_key: payout.payment_date_key,
     nextPayday: payout.nextPayday,
     nextPaydayDisplay: payout.nextPaydayDisplay,
+    avatar_url: payout.avatar_url ?? null,
   };
 }
 
@@ -124,6 +129,7 @@ interface FormState {
   token: "USDC" | "USDT";
   network: string;
   endpoint: string;
+  avatar_url: string;
 }
 
 function emptyForm(
@@ -141,6 +147,7 @@ function emptyForm(
     token: "USDC",
     network: "Base",
     endpoint: "",
+    avatar_url: "",
   };
 }
 
@@ -167,6 +174,7 @@ function fromEmployee(
     token: emp.token || "USDC",
     network: emp.network || "Base",
     endpoint: emp.endpoint || "",
+    avatar_url: emp.avatar_url || "",
   };
 }
 
@@ -193,12 +201,15 @@ export function AddRecipientDialog({
   const [needsVerify, setNeedsVerify] = useState(false);
   const [formReady, setFormReady] = useState(false);
   const [loadError, setLoadError] = useState("");
+  const [avatarPickerOpen, setAvatarPickerOpen] = useState(false);
+  const walletRequired = isSelf || form.employee_type !== "employee";
 
   // Fetch latest profile whenever the dialog opens (admin GET by id / employee myPayout).
   useEffect(() => {
     if (!open) {
       setFormReady(false);
       setLoadError("");
+      setAvatarPickerOpen(false);
       return;
     }
 
@@ -386,6 +397,7 @@ export function AddRecipientDialog({
         token: form.token,
         network: form.network,
         endpoint: form.endpoint.trim(),
+        avatar_url: form.avatar_url || null,
       });
       if (result.payout) setSavedPayout(result.payout);
       if (result.payoutChanged) {
@@ -412,6 +424,20 @@ export function AddRecipientDialog({
       toast.fail({ title: "Enter a valid compensation amount" });
       return;
     }
+    if (form.employee_type !== "employee") {
+      const wallet = form.endpoint.trim();
+      if (!wallet) {
+        toast.fail({ title: "Wallet address is required" });
+        return;
+      }
+      if (!isAddress(wallet)) {
+        toast.fail({ title: "Enter a valid EVM wallet address" });
+        return;
+      }
+    } else if (form.endpoint.trim() && !isAddress(form.endpoint.trim())) {
+      toast.fail({ title: "Enter a valid EVM wallet address" });
+      return;
+    }
 
     const body = {
       name: form.name.trim(),
@@ -422,6 +448,7 @@ export function AddRecipientDialog({
       token: form.token,
       network: form.network,
       endpoint: form.endpoint.trim(),
+      avatar_url: form.avatar_url || null,
       ...(form.employee_type === "contractor"
         ? {
             payment_cadence: form.payment_cadence,
@@ -493,13 +520,51 @@ export function AddRecipientDialog({
           <div className="mb-5 flex flex-col items-center">
             <button
               type="button"
-              onClick={() => toast.info({ title: "Photo upload coming soon" })}
-              className="inline-flex size-20 items-center justify-center rounded-full bg-[#f6f6f6] transition-colors hover:bg-black/5"
-              aria-label="Add photo"
+              onClick={() => setAvatarPickerOpen((open) => !open)}
+              className="inline-flex size-20 items-center justify-center overflow-hidden rounded-full bg-[#f6f6f6] transition-colors hover:bg-black/5"
+              aria-label="Choose avatar"
+              aria-expanded={avatarPickerOpen}
             >
-              <img src="/icons/camera.svg" alt="" className="size-6 opacity-60" />
+              {form.avatar_url ? (
+                <IdentityAvatar
+                  seed={form.name || form.email || "avatar"}
+                  src={form.avatar_url}
+                  size={80}
+                  alt=""
+                />
+              ) : (
+                <img src="/icons/camera.svg" alt="" className="size-6 opacity-60" />
+              )}
             </button>
-            <p className="mt-2 font-montserrat text-[12px] text-[#909090]">Add Photo</p>
+            <p className="mt-2 font-montserrat text-[12px] text-[#909090]">
+              {form.avatar_url ? "Change Photo" : "Add Photo"}
+            </p>
+            {avatarPickerOpen ? (
+              <div className="mt-3 grid w-full max-w-[280px] grid-cols-5 gap-2">
+                {PRESET_AVATARS.map((src) => {
+                  const selected = form.avatar_url === src;
+                  return (
+                    <button
+                      key={src}
+                      type="button"
+                      onClick={() => {
+                        setField("avatar_url", src);
+                        setAvatarPickerOpen(false);
+                      }}
+                      className={cn(
+                        "size-12 overflow-hidden rounded-full border-2 transition-colors",
+                        selected
+                          ? "border-black"
+                          : "border-transparent hover:border-black/20",
+                      )}
+                      aria-label={`Select avatar ${src}`}
+                    >
+                      <img src={src} alt="" className="size-full object-cover" />
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2">
@@ -658,7 +723,7 @@ export function AddRecipientDialog({
               </Select>
             </Field>
             <Field
-              label={isSelf ? "Wallet Address (Required)" : "Wallet"}
+              label={walletRequired ? "Wallet Address (Required)" : "Wallet"}
               className="sm:col-span-2"
             >
               <input
@@ -666,7 +731,7 @@ export function AddRecipientDialog({
                 onChange={(e) => setField("endpoint", e.target.value)}
                 className={fieldInputClass}
                 placeholder="0x…"
-                required={isSelf}
+                required={walletRequired}
               />
             </Field>
           </div>

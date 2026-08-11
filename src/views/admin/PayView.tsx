@@ -1,14 +1,19 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { AddRecipientPillButton } from "@/components/AddRecipientPillButton";
 import { IdentityAvatar } from "@/components/IdentityAvatar";
 import { IconAlert } from "@/components/icons/alert";
 import { IconCheck } from "@/components/icons/check";
 import { QuickPayPanel } from "@/components/quick-pay/QuickPayPanel";
 import { StatCell } from "@/components/stats/StatCell";
+import { useOrgContextQuery } from "@/hooks/use-org-api";
 import { usePayOverviewQuery } from "@/hooks/use-pay-api";
+import type { TeamPaymentDateKey, TeamPaymentSchedule } from "@/lib/api";
 import { formatCurrencyFromMinor, formatDate } from "@/lib/format";
 import { useAuthStore } from "@/stores/auth";
 import { useIntentsTokensStore } from "@/stores/intents-tokens";
+import { DEFAULT_MONTHLY_PAYMENT_DATE, DEFAULT_PAYMENT_SCHEDULE } from "./create-team/config";
+import { AddRecipientDialog } from "./recipients/components/AddRecipientDialog";
 
 function VerifiedPill({ verified }: { verified: boolean }) {
   if (verified) {
@@ -29,9 +34,16 @@ function VerifiedPill({ verified }: { verified: boolean }) {
 }
 
 export function PayView() {
+  const orgId = useAuthStore((s) => s.orgId);
   const orgName = useAuthStore((s) => s.orgName) || "Team";
   const ensureFresh = useIntentsTokensStore((s) => s.ensureFresh);
   const { data, isLoading, isError, error } = usePayOverviewQuery();
+  const orgContextQuery = useOrgContextQuery(orgId);
+  const teamCadence: TeamPaymentSchedule =
+    orgContextQuery.data?.org.payment_cadence || DEFAULT_PAYMENT_SCHEDULE;
+  const teamPaymentDate: TeamPaymentDateKey =
+    orgContextQuery.data?.org.payment_date_key || DEFAULT_MONTHLY_PAYMENT_DATE;
+  const [addOpen, setAddOpen] = useState(false);
 
   useEffect(() => {
     void ensureFresh();
@@ -39,6 +51,8 @@ export function PayView() {
 
   const stats = data?.stats;
   const period = data?.period;
+  const recipients = data?.recipients || [];
+  const showEmptyRecipients = !isLoading && recipients.length === 0;
 
   return (
     <div className="pb-10 pt-4 md:pt-5">
@@ -94,7 +108,7 @@ export function PayView() {
       ) : null}
 
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,776fr)_minmax(0,604fr)]">
-        <QuickPayPanel />
+        <QuickPayPanel onAddRecipient={() => setAddOpen(true)} />
 
         <div className="flex flex-col gap-5">
           {/* Recipients card */}
@@ -111,37 +125,42 @@ export function PayView() {
                 <img src="/icons/all.svg" alt="" className="h-2.5 w-auto" />
               </Link>
             </div>
-            <ul className="flex flex-col gap-1">
-              {(data?.recipients || []).map((r) => (
-                <li key={r.id}>
-                  <Link
-                    to={`/recipients?selected=${r.id}`}
-                    className="flex items-center gap-3 rounded-[12px] px-2 py-2 transition-colors hover:bg-[#f6f6f6]"
-                  >
-                    <IdentityAvatar seed={r.name} size={32} alt="" />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate font-montserrat text-[14px] font-medium text-black">
-                        {r.name}
+            {showEmptyRecipients ? (
+              <div className="flex flex-col items-center justify-center py-6">
+                <p className="font-montserrat text-[14px] text-[#606060]">No recipients yet</p>
+                <AddRecipientPillButton
+                  className="mt-5"
+                  onClick={() => setAddOpen(true)}
+                />
+              </div>
+            ) : (
+              <ul className="flex flex-col gap-1">
+                {recipients.map((r) => (
+                  <li key={r.id}>
+                    <Link
+                      to={`/recipients?selected=${r.id}`}
+                      className="flex items-center gap-3 rounded-[12px] px-2 py-2 transition-colors hover:bg-[#f6f6f6]"
+                    >
+                      <IdentityAvatar seed={r.name} src={r.avatar_url} size={32} alt="" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate font-montserrat text-[14px] font-medium text-black">
+                          {r.name}
+                        </span>
+                        <span className="block truncate font-montserrat text-[10px] text-[#606060]">
+                          {r.role_title || "—"}
+                        </span>
                       </span>
-                      <span className="block truncate font-montserrat text-[10px] text-[#606060]">
-                        {r.role_title || "—"}
-                      </span>
-                    </span>
-                    <VerifiedPill verified={r.verified} />
-                    <img
-                      src="/icons/to-down.svg"
-                      alt=""
-                      className="size-2.5 shrink-0 -rotate-90 opacity-40"
-                    />
-                  </Link>
-                </li>
-              ))}
-              {!isLoading && (!data?.recipients || data.recipients.length === 0) && (
-                <li className="px-2 py-6 font-montserrat text-[14px] text-[#606060]">
-                  No recipients yet
-                </li>
-              )}
-            </ul>
+                      <VerifiedPill verified={r.verified} />
+                      <img
+                        src="/icons/to-down.svg"
+                        alt=""
+                        className="size-2.5 shrink-0 -rotate-90 opacity-40"
+                      />
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
           </section>
 
           {/* High Priority card */}
@@ -150,21 +169,11 @@ export function PayView() {
               <h2 className="font-montserrat text-[20px] font-medium capitalize text-black">
                 High Priority
               </h2>
-              {/* TODO(high-priority): View All destination not designed yet. */}
-              {/* <button
-                type="button"
-                disabled
-                className="inline-flex items-center gap-1 font-montserrat text-[12px] text-[#606060] opacity-50"
-              >
-                View All
-                <img src="/icons/all.svg" alt="" className="h-2.5 w-auto" />
-              </button> */}
             </div>
 
             <ul className="flex flex-col">
               {data?.highPriority.verification ? (
                 <li>
-                  {/* TODO(high-priority): detail navigation not designed yet. */}
                   <button
                     type="button"
                     disabled
@@ -181,7 +190,6 @@ export function PayView() {
                         {data.highPriority.verification.names.join(" and ")}
                       </span>
                     </span>
-                    {/* <img src="/icons/to-down.svg" alt="" className="size-2.5 -rotate-90 opacity-40" /> */}
                   </button>
                 </li>
               ) : null}
@@ -195,6 +203,14 @@ export function PayView() {
           </section>
         </div>
       </div>
+
+      <AddRecipientDialog
+        open={addOpen}
+        onOpenChange={setAddOpen}
+        mode="add"
+        teamCadence={teamCadence}
+        teamPaymentDate={teamPaymentDate}
+      />
     </div>
   );
 }

@@ -5,6 +5,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { useEnsureTokenBalances } from "@/hooks/use-token-balances";
+import { formatNumber } from "@/lib/format";
 import { chainLogoUrl, tokenLogoUrl } from "@/lib/logo";
 import { cn } from "@/lib/utils";
 import {
@@ -12,6 +14,8 @@ import {
   type IntentsToken,
   type StableSymbol,
 } from "@/stores/intents-tokens";
+import { useTokenBalancesStore } from "@/stores/token-balances";
+import { useWallet } from "@/wallet";
 
 export interface TokenNetworkSelection {
   token: IntentsToken;
@@ -25,10 +29,24 @@ interface TokenNetworkDialogProps {
   initialSymbol?: StableSymbol;
   /** Currently selected assetId. */
   selectedAssetId?: string | null;
+  /** Fetch & show wallet balances; sort chains by balance desc. Origin pay only. */
+  showBalances?: boolean;
   onSelect: (selection: TokenNetworkSelection) => void;
 }
 
 const SYMBOLS: StableSymbol[] = ["USDT", "USDC"];
+
+/** Sort by human units, not raw wei — USDC decimals differ by chain (e.g. BSC 18 vs ETH 6). */
+function balanceSortValue(
+  formatted: string | null | undefined,
+  status: string | undefined,
+): number {
+  if (status === "success" && formatted != null) {
+    const asNumber = Number(formatted);
+    return Number.isFinite(asNumber) ? asNumber : -1;
+  }
+  return -1;
+}
 
 export function TokenNetworkDialog({
   open,
@@ -36,11 +54,15 @@ export function TokenNetworkDialog({
   title = "Select token",
   initialSymbol = "USDC",
   selectedAssetId,
+  showBalances = false,
   onSelect,
 }: TokenNetworkDialogProps) {
+  const wallet = useWallet("evm");
+  const owner = wallet.account?.address ?? null;
   const ensureFresh = useIntentsTokensStore((s) => s.ensureFresh);
   const tokens = useIntentsTokensStore((s) => s.tokens);
   const loading = useIntentsTokensStore((s) => s.loading);
+  const balances = useTokenBalancesStore((s) => s.balances);
   const [symbol, setSymbol] = useState<StableSymbol>(initialSymbol);
 
   useEffect(() => {
@@ -51,11 +73,32 @@ export function TokenNetworkDialog({
   }, [open, ensureFresh, initialSymbol]);
 
   const chainsForSymbol = useMemo(() => {
-    return tokens
-      .filter((t) => t.symbol === symbol)
-      .slice()
-      .sort((a, b) => a.chain.chainName.localeCompare(b.chain.chainName));
+    return tokens.filter((t) => t.symbol === symbol);
   }, [tokens, symbol]);
+
+  useEnsureTokenBalances({
+    owner,
+    tokens: chainsForSymbol,
+    enabled: showBalances && open && !!owner && chainsForSymbol.length > 0,
+  });
+
+  const sortedChains = useMemo(() => {
+    if (!showBalances) {
+      return chainsForSymbol
+        .slice()
+        .sort((a, b) => a.chain.chainName.localeCompare(b.chain.chainName));
+    }
+    return chainsForSymbol.slice().sort((a, b) => {
+      const aKey = owner ? `${owner.toLowerCase()}:${a.assetId}` : "";
+      const bKey = owner ? `${owner.toLowerCase()}:${b.assetId}` : "";
+      const aEntry = aKey ? balances[aKey] : undefined;
+      const bEntry = bKey ? balances[bKey] : undefined;
+      const aVal = balanceSortValue(aEntry?.formatted, aEntry?.status);
+      const bVal = balanceSortValue(bEntry?.formatted, bEntry?.status);
+      if (bVal !== aVal) return bVal - aVal;
+      return a.chain.chainName.localeCompare(b.chain.chainName);
+    });
+  }, [chainsForSymbol, balances, owner, showBalances]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -96,14 +139,20 @@ export function TokenNetworkDialog({
           {loading && tokens.length === 0 && (
             <p className="px-2 py-4 font-montserrat text-[13px] text-[#606060]">Loading chains…</p>
           )}
-          {!loading && chainsForSymbol.length === 0 && (
+          {!loading && sortedChains.length === 0 && (
             <p className="px-2 py-4 font-montserrat text-[13px] text-[#606060]">
               No chains available for {symbol}
             </p>
           )}
           <ul className="flex flex-col gap-0.5">
-            {chainsForSymbol.map((token) => {
+            {sortedChains.map((token) => {
               const selected = token.assetId === selectedAssetId;
+              const entry = showBalances && owner
+                ? balances[`${owner.toLowerCase()}:${token.assetId}`]
+                : undefined;
+              const loadingBalance = showBalances
+                && !!owner
+                && (!entry || entry.status === "loading");
               return (
                 <li key={token.assetId}>
                   <button
@@ -122,9 +171,25 @@ export function TokenNetworkDialog({
                       alt=""
                       className="size-6 rounded-[4px] object-cover"
                     />
-                    <span className="font-montserrat text-[14px] text-black">
+                    <span className="min-w-0 flex-1 font-montserrat text-[14px] text-black">
                       {token.chain.chainName}
                     </span>
+                    {showBalances ? (
+                      <span className="shrink-0 font-montserrat text-[13px] text-[#606060]">
+                        {!owner ? (
+                          "—"
+                        ) : loadingBalance ? (
+                          <span
+                            className="inline-block size-3.5 animate-spin rounded-full border-2 border-[#606060] border-r-transparent"
+                            aria-label="Loading balance"
+                          />
+                        ) : entry?.status === "success" && entry.formatted != null ? (
+                          formatNumber(Number(entry.formatted), { maximumFractionDigits: 2 })
+                        ) : (
+                          "—"
+                        )}
+                      </span>
+                    ) : null}
                   </button>
                 </li>
               );

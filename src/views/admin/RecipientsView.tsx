@@ -23,6 +23,7 @@ import { RecipientDetailCard } from "./recipients/components/RecipientDetailCard
 import { RecipientsTable } from "./recipients/components/RecipientsTable";
 import { RecipientsToolbar } from "./recipients/components/RecipientsToolbar";
 import { RemoveRecipientDialog } from "./recipients/components/RemoveRecipientDialog";
+import { isVerified } from "./recipients/utils";
 
 function useDebouncedValue<T>(value: T, delayMs: number): T {
   const [debounced, setDebounced] = useState(value);
@@ -155,6 +156,10 @@ export function RecipientsView() {
   };
 
   const openInviteToVerify = (employee: Employee) => {
+    if (isVerified(employee)) {
+      toast.fail({ title: "Recipient is already verified" });
+      return;
+    }
     if (!employee.email) {
       toast.fail({ title: "Recipient has no email to invite" });
       return;

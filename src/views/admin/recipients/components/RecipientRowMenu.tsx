@@ -12,6 +12,8 @@ export interface RecipientRowMenuProps {
   onInviteToVerify: () => void;
   onPayNow: () => void;
   onRemove: () => void;
+  /** When false, hide "Invites to verify" (e.g. already verified). */
+  canInviteToVerify?: boolean;
   className?: string;
 }
 
@@ -20,6 +22,7 @@ export function RecipientRowMenu({
   onInviteToVerify,
   onPayNow,
   onRemove,
+  canInviteToVerify = true,
   className,
 }: RecipientRowMenuProps) {
   return (
@@ -49,13 +52,15 @@ export function RecipientRowMenu({
           <IconPen className="size-3.5 text-[#AAA]" />
           Edit
         </DropdownMenuItem>
-        <DropdownMenuItem
-          className="cursor-pointer gap-2 rounded-[8px] px-3 py-2 font-montserrat text-[13px] text-black focus:bg-black/5"
-          onSelect={onInviteToVerify}
-        >
-          <IconLink className="size-3.5 text-[#AAA]" />
-          Invites to verify
-        </DropdownMenuItem>
+        {canInviteToVerify ? (
+          <DropdownMenuItem
+            className="cursor-pointer gap-2 rounded-[8px] px-3 py-2 font-montserrat text-[13px] text-black focus:bg-black/5"
+            onSelect={onInviteToVerify}
+          >
+            <IconLink className="size-3.5 text-[#AAA]" />
+            Invites to verify
+          </DropdownMenuItem>
+        ) : null}
         <DropdownMenuItem
           className="cursor-pointer gap-2 rounded-[8px] px-3 py-2 font-montserrat text-[13px] text-black focus:bg-black/5"
           onSelect={onPayNow}

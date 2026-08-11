@@ -66,7 +66,12 @@ export function RecipientsTable({
               >
                 <td className="px-3 py-3.5 first:pl-5">
                   <div className="flex min-w-0 items-center gap-3">
-                    <IdentityAvatar seed={emp.name || emp.email || emp.id} size={36} alt="" />
+                    <IdentityAvatar
+                      seed={emp.name || emp.email || emp.id}
+                      src={emp.avatar_url}
+                      size={36}
+                      alt=""
+                    />
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-1.5">
                         <span className="truncate font-montserrat text-[14px] font-medium text-black">
@@ -133,6 +138,7 @@ export function RecipientsTable({
                     onInviteToVerify={() => onInviteToVerify(emp)}
                     onPayNow={() => onPayNow(emp)}
                     onRemove={() => onRemove(emp)}
+                    canInviteToVerify={!verified}
                   />
                 </td>
               </tr>
