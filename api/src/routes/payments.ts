@@ -1336,7 +1336,10 @@ paymentRoutes.get("/pending", requireRole("admin"), async (c) => {
 paymentRoutes.post("/reconcile", requireRole("admin"), async (c) => {
   const blocked = liveGateResponse(c);
   if (blocked) return blocked;
-  return c.json(await reconcileOpenPayments(c.env, 5));
+  // Interactive dock reconcile must skip the cron claim/backoff lock; otherwise
+  // a failed cron tick can leave next_reconcile_at in the future and the UI
+  // appears "stuck" even while the admin page is open.
+  return c.json(await reconcileOpenPayments(c.env, 5, { force: true }));
 });
 
 // Reopen failed payroll items so a fresh confidential quote can be created.

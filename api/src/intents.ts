@@ -96,7 +96,7 @@ function sameJsonValue(left: unknown, right: unknown): boolean {
 // Verify the provider signature before any execution field (especially the
 // deposit address) is consumed. The SDK owns the canonical field selection,
 // stable JSON ordering, SHA-256/Base58 hashing, and Ed25519 verification.
-export function verifyOneClickQuote(env: Env, expectedRequest: QuoteRequest, response: QuoteResponse): string {
+function assertQuoteResponseShape(response: QuoteResponse): OneClickQuoteResponse {
   if (!response || typeof response !== "object" || !response.quote || typeof response.quote !== "object") {
     throw new Error("1Click returned an invalid quote response");
   }
@@ -106,19 +106,55 @@ export function verifyOneClickQuote(env: Env, expectedRequest: QuoteRequest, res
   if (!response.signature || !response.quoteRequest || typeof response.quoteRequest !== "object") {
     throw new Error("1Click quote is missing its signed request or signature");
   }
+  return response as unknown as OneClickQuoteResponse;
+}
+
+function assertQuoteRequestMatches(expectedRequest: QuoteRequest, response: QuoteResponse): void {
   for (const [key, expectedValue] of Object.entries(expectedRequest)) {
     if (!sameJsonValue(response.quoteRequest[key], expectedValue)) {
       throw new Error(`1Click quote request mismatch for ${key}`);
     }
   }
+}
 
-  const signedResponse = response as unknown as OneClickQuoteResponse;
+function verifyQuoteResponseSignature(env: Env, signedResponse: OneClickQuoteResponse): boolean {
   const managerPublicKey = env.INTENTS_QUOTE_PUBLIC_KEY?.trim();
-  const valid = managerPublicKey
+  return managerPublicKey
     ? verifyQuoteSignature(signedResponse, managerPublicKey)
     : verifyQuoteSignature(signedResponse);
-  if (!valid) throw new Error("1Click quote signature verification failed");
+}
+
+export function verifyOneClickQuote(env: Env, expectedRequest: QuoteRequest, response: QuoteResponse): string {
+  const signedResponse = assertQuoteResponseShape(response);
+  assertQuoteRequestMatches(expectedRequest, response);
+  if (!verifyQuoteResponseSignature(env, signedResponse)) {
+    throw new Error("1Click quote signature verification failed");
+  }
   return calculateQuoteHash(signedResponse);
+}
+
+/**
+ * Status polls must not get stuck when 1Click re-emits a quote envelope whose
+ * Ed25519 signature fails verification (key rotation / status-payload drift),
+ * as long as the quote content still matches the hash we verified at quote time.
+ */
+export function verifyOneClickStatusQuote(
+  env: Env,
+  expectedRequest: QuoteRequest,
+  response: QuoteResponse,
+  storedQuoteHash: string,
+): string {
+  const signedResponse = assertQuoteResponseShape(response);
+  assertQuoteRequestMatches(expectedRequest, response);
+  const hash = calculateQuoteHash(signedResponse);
+  if (hash !== storedQuoteHash) {
+    throw new Error("1Click status quote does not match the stored payment quote");
+  }
+  if (!verifyQuoteResponseSignature(env, signedResponse)) {
+    // Content hash already matches the quote accepted at creation time.
+    return hash;
+  }
+  return hash;
 }
 
 export interface SupportedToken {

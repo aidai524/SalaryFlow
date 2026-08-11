@@ -46,9 +46,11 @@ export default {
   fetch: app.fetch,
   scheduled(_controller, env, ctx) {
     if (!env.JWT_SECRET) return;
+    // Batch a few due attempts each minute so settlement progresses even when
+    // no admin session is open (Pages UI poll is secondary).
     ctx.waitUntil(Promise.all([
       materializePayrollSchedules(env),
-      reconcileOpenPayments(env, 1),
+      reconcileOpenPayments(env, 5),
     ]));
   },
 } satisfies ExportedHandler<Env>;

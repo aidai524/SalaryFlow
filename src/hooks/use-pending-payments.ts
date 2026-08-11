@@ -6,6 +6,18 @@ const PENDING_QUERY_KEY = ["pending-payments"] as const;
 const ACTIVE_POLL_MS = 8_000;
 const IDLE_POLL_MS = 30_000;
 
+/** States the reconcile API will accept (wallet signature not involved yet → skip). */
+const RECONCILABLE_STATES = new Set<PendingPaymentRow["state"]>([
+  "submitting",
+  "submitted",
+  "awaiting_deposit",
+  "deposit_submitted",
+  "funding_quoted",
+  "funding_deposit_submitted",
+  "funding_processing",
+  "processing",
+]);
+
 function statusLabel(state: PendingPaymentRow["state"]): string {
   switch (state) {
     case "awaiting_deposit":
@@ -50,11 +62,28 @@ export function usePendingPaymentsQuery() {
       if (first.payments.length === 0) return first.payments;
 
       // Advance in-flight attempts inside the same poll tick.
+      // Prefer per-attempt force reconcile so a cron claim/backoff cannot stall
+      // the dock; fall back to batch reconcile if the single-attempt call fails.
       // Do not invalidate pending after reconcile — that caused an infinite loop.
+      const reconcilable = first.payments
+        .filter((payment) => RECONCILABLE_STATES.has(payment.state))
+        .slice(0, 5);
       try {
-        await api.reconcileOpenPayments();
+        if (reconcilable.length > 0) {
+          await Promise.all(
+            reconcilable.map((payment) =>
+              api.reconcilePaymentAttempt(payment.attemptId).catch(() => null),
+            ),
+          );
+        } else {
+          await api.reconcileOpenPayments();
+        }
       } catch {
-        return first.payments;
+        try {
+          await api.reconcileOpenPayments();
+        } catch {
+          return first.payments;
+        }
       }
       const refreshed = await api.listPendingPayments();
       return refreshed.payments;

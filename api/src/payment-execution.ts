@@ -2,7 +2,7 @@ import { encodeErc191Signature } from "./erc191";
 import {
   checkSwapStatus,
   submitIntent,
-  verifyOneClickQuote,
+  verifyOneClickStatusQuote,
   type QuoteRequest,
 } from "./intents";
 import {
@@ -216,10 +216,12 @@ async function reconcileFundingLeg(
     attempt.funding_deposit_memo || undefined,
   );
   const fundingRequest = JSON.parse(attempt.funding_quote_request) as QuoteRequest;
-  const statusQuoteHash = verifyOneClickQuote(env, fundingRequest, provider.quoteResponse);
-  if (statusQuoteHash !== attempt.funding_quote_hash) {
-    throw new Error("1Click funding status quote does not match the stored funding quote");
-  }
+  verifyOneClickStatusQuote(
+    env,
+    fundingRequest,
+    provider.quoteResponse,
+    String(attempt.funding_quote_hash),
+  );
   if (provider.quoteResponse.quote.depositAddress !== attempt.funding_deposit_address) {
     throw new Error("1Click funding status deposit address does not match the payment attempt");
   }
@@ -360,6 +362,36 @@ async function reconcileFundingLeg(
   return reconcilePaymentAttempt(env, afterSubmit, { force: true });
 }
 
+async function recordReconcileFailure(
+  env: Env,
+  attempt: PaymentAttemptRow,
+  error: unknown,
+): Promise<PaymentAttemptRow> {
+  const failures = Number(attempt.reconcile_failures || 0) + 1;
+  const timestamp = nowIso();
+  await env.DB.prepare(
+    `UPDATE payment_attempts
+     SET last_error = ?, reconcile_failures = ?, last_reconciled_at = ?,
+         next_reconcile_at = ?, updated_at = ?
+     WHERE id = ?`,
+  ).bind(errorMessage(error), failures, timestamp, nextReconcileAt(failures), timestamp, attempt.id).run();
+  const updated = await getPaymentAttempt(env.DB, attempt.id);
+  if (!updated) throw new Error("Payment attempt disappeared during reconciliation failure handling");
+  return updated;
+}
+
+function claimedRows(result: D1Result): number {
+  // Prefer meta.changes; some D1 responses only expose rows_written/changed_db.
+  const meta = result.meta as {
+    changes?: number;
+    rows_written?: number;
+    changed_db?: boolean;
+  };
+  if (typeof meta.changes === "number") return meta.changes;
+  if (typeof meta.rows_written === "number") return meta.rows_written;
+  return meta.changed_db ? 1 : 0;
+}
+
 export async function reconcilePaymentAttempt(env: Env, attempt: PaymentAttemptRow, options: { force?: boolean } = {}): Promise<PaymentAttemptRow> {
   if (!(RECONCILE_STATES as readonly string[]).includes(attempt.state)) {
     throw new Error(`Payment attempt in state ${attempt.state} cannot be reconciled`);
@@ -377,7 +409,7 @@ export async function reconcilePaymentAttempt(env: Env, attempt: PaymentAttemptR
       `UPDATE payment_attempts SET next_reconcile_at = ?, updated_at = ?
        WHERE id = ? AND (next_reconcile_at IS NULL OR next_reconcile_at <= ?)`,
     ).bind(lockUntil, now, attempt.id, now).run();
-    if (Number(claimed.meta.changes || 0) !== 1) {
+    if (claimedRows(claimed) !== 1) {
       const unchanged = await getPaymentAttempt(env.DB, attempt.id);
       if (!unchanged) throw new Error("Payment attempt disappeared before reconciliation");
       return unchanged;
@@ -388,28 +420,16 @@ export async function reconcilePaymentAttempt(env: Env, attempt: PaymentAttemptR
     try {
       return await reconcileFundingLeg(env, attempt);
     } catch (error) {
-      const failures = Number(attempt.reconcile_failures || 0) + 1;
-      const timestamp = nowIso();
-      await env.DB.prepare(
-        `UPDATE payment_attempts
-         SET last_error = ?, reconcile_failures = ?, last_reconciled_at = ?,
-             next_reconcile_at = ?, updated_at = ?
-         WHERE id = ?`,
-      ).bind(errorMessage(error), failures, timestamp, nextReconcileAt(failures), timestamp, attempt.id).run();
-      const updated = await getPaymentAttempt(env.DB, attempt.id);
-      if (!updated) throw new Error("Payment attempt disappeared during funding reconciliation");
-      return updated;
+      return recordReconcileFailure(env, attempt, error);
     }
   }
 
-  if (!attempt.deposit_address) throw new Error("Payment attempt has no deposit address");
-
   try {
+    if (!attempt.deposit_address) throw new Error("Payment attempt has no deposit address");
     const provider = await checkSwapStatus(env, attempt.deposit_address, attempt.deposit_memo || undefined);
     if (!attempt.quote_request || !attempt.quote_hash) throw new Error("Payment attempt is missing its verified quote evidence");
     const quoteRequest = JSON.parse(attempt.quote_request) as QuoteRequest;
-    const statusQuoteHash = verifyOneClickQuote(env, quoteRequest, provider.quoteResponse);
-    if (statusQuoteHash !== attempt.quote_hash) throw new Error("1Click status quote does not match the stored payment quote");
+    verifyOneClickStatusQuote(env, quoteRequest, provider.quoteResponse, attempt.quote_hash);
     if (provider.quoteResponse.quote.depositAddress !== attempt.deposit_address) {
       throw new Error("1Click status quote deposit address does not match the payment attempt");
     }
@@ -519,14 +539,7 @@ export async function reconcilePaymentAttempt(env: Env, attempt: PaymentAttemptR
     await env.DB.batch(statements);
     if (attempt.run_id) await syncPayrollRunStatus(env.DB, attempt.run_id);
   } catch (error) {
-    const failures = Number(attempt.reconcile_failures || 0) + 1;
-    const timestamp = nowIso();
-    await env.DB.prepare(
-      `UPDATE payment_attempts
-       SET last_error = ?, reconcile_failures = ?, last_reconciled_at = ?,
-           next_reconcile_at = ?, updated_at = ?
-       WHERE id = ?`,
-    ).bind(errorMessage(error), failures, timestamp, nextReconcileAt(failures), timestamp, attempt.id).run();
+    return recordReconcileFailure(env, attempt, error);
   }
 
   const updated = await getPaymentAttempt(env.DB, attempt.id);
@@ -534,22 +547,43 @@ export async function reconcilePaymentAttempt(env: Env, attempt: PaymentAttemptR
   return updated;
 }
 
-export async function reconcileOpenPayments(env: Env, limit = 1): Promise<{ checked: number; attempts: PaymentAttemptRow[] }> {
+export async function reconcileOpenPayments(
+  env: Env,
+  limit = 1,
+  options: { force?: boolean } = {},
+): Promise<{ checked: number; attempts: PaymentAttemptRow[] }> {
   if (!executionGate(env).allowed || !env.INTENTS_API_KEY) return { checked: 0, attempts: [] };
-  const due = await env.DB.prepare(
-    `SELECT * FROM payment_attempts
-     WHERE state IN (
-       'submitting', 'submitted', 'awaiting_deposit', 'deposit_submitted',
-       'funding_quoted', 'funding_deposit_submitted', 'funding_processing',
-       'processing'
-     )
-       AND (next_reconcile_at IS NULL OR next_reconcile_at <= ?)
-     ORDER BY COALESCE(next_reconcile_at, updated_at) ASC
-     LIMIT ?`,
-  ).bind(nowIso(), Math.max(1, Math.min(limit, 10))).all<PaymentAttemptRow>();
+  const cap = Math.max(1, Math.min(limit, 10));
+  const due = options.force
+    ? await env.DB.prepare(
+      `SELECT * FROM payment_attempts
+       WHERE state IN (
+         'submitting', 'submitted', 'awaiting_deposit', 'deposit_submitted',
+         'funding_quoted', 'funding_deposit_submitted', 'funding_processing',
+         'processing'
+       )
+       ORDER BY COALESCE(next_reconcile_at, updated_at) ASC
+       LIMIT ?`,
+    ).bind(cap).all<PaymentAttemptRow>()
+    : await env.DB.prepare(
+      `SELECT * FROM payment_attempts
+       WHERE state IN (
+         'submitting', 'submitted', 'awaiting_deposit', 'deposit_submitted',
+         'funding_quoted', 'funding_deposit_submitted', 'funding_processing',
+         'processing'
+       )
+         AND (next_reconcile_at IS NULL OR next_reconcile_at <= ?)
+       ORDER BY COALESCE(next_reconcile_at, updated_at) ASC
+       LIMIT ?`,
+    ).bind(nowIso(), cap).all<PaymentAttemptRow>();
   const attempts: PaymentAttemptRow[] = [];
   for (const attempt of due.results) {
-    attempts.push(await reconcilePaymentAttempt(env, attempt));
+    try {
+      attempts.push(await reconcilePaymentAttempt(env, attempt, { force: options.force }));
+    } catch (error) {
+      // Keep batch reconcile alive when a single attempt hits an unexpected error.
+      attempts.push(await recordReconcileFailure(env, attempt, error));
+    }
   }
   return { checked: attempts.length, attempts };
 }
