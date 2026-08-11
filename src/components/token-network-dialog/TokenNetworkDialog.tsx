@@ -15,7 +15,6 @@ import {
   type StableSymbol,
 } from "@/stores/intents-tokens";
 import { useTokenBalancesStore } from "@/stores/token-balances";
-import { useWallet } from "@/wallet";
 
 export interface TokenNetworkSelection {
   token: IntentsToken;
@@ -31,6 +30,11 @@ interface TokenNetworkDialogProps {
   selectedAssetId?: string | null;
   /** Fetch & show wallet balances; sort chains by balance desc. Origin pay only. */
   showBalances?: boolean;
+  /**
+   * Bound payment wallet address used for balance reads (account wallet_address).
+   * Do not pass a browser-session-only wagmi address.
+   */
+  balanceOwner?: string | null;
   onSelect: (selection: TokenNetworkSelection) => void;
 }
 
@@ -55,10 +59,10 @@ export function TokenNetworkDialog({
   initialSymbol = "USDC",
   selectedAssetId,
   showBalances = false,
+  balanceOwner = null,
   onSelect,
 }: TokenNetworkDialogProps) {
-  const wallet = useWallet("evm");
-  const owner = wallet.account?.address ?? null;
+  const owner = showBalances ? (balanceOwner ?? null) : null;
   const ensureFresh = useIntentsTokensStore((s) => s.ensureFresh);
   const tokens = useIntentsTokensStore((s) => s.tokens);
   const loading = useIntentsTokensStore((s) => s.loading);

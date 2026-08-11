@@ -17,11 +17,13 @@ import { useEvmWalletInfo } from "@/hooks/use-evm-wallet-info";
 import { useEmployeesQuery } from "@/hooks/use-pay-api";
 import { useTokenBalance } from "@/hooks/use-token-balances";
 import useToast from "@/hooks/use-toast";
-import { api, type QuickPayMode } from "@/lib/api";
+import { api, ApiError, type QuickPayMode } from "@/lib/api";
+import { isValidEthereumAddress } from "@/lib/erc191";
 import { formatAddress, formatNumber, formatTokenMinor } from "@/lib/format";
 import { chainLogoUrl } from "@/lib/logo";
 import { formatQuoteErrorMessage } from "@/lib/quote-error";
 import { cn } from "@/lib/utils";
+import { useAuthStore } from "@/stores/auth";
 import { useIntentsTokensStore, type IntentsToken } from "@/stores/intents-tokens";
 import { enqueueQuickPayCommit } from "@/stores/quick-pay-commit-queue";
 import { useQuickPayPrefsStore } from "@/stores/quick-pay-prefs";
@@ -74,6 +76,9 @@ export function QuickPayPanel({
   const walletInfo = useEvmWalletInfo();
   const queryClient = useQueryClient();
   const toast = useToast();
+  const user = useAuthStore((s) => s.user);
+  const setUser = useAuthStore((s) => s.setUser);
+  const boundAddress = user?.wallet_address || null;
   const { data: employees = [] } = useEmployeesQuery();
   const ensureFresh = useIntentsTokensStore((s) => s.ensureFresh);
   const findByChainAndSymbol = useIntentsTokensStore((s) => s.findByChainAndSymbol);
@@ -95,9 +100,78 @@ export function QuickPayPanel({
   const [originDialogOpen, setOriginDialogOpen] = useState(false);
   const [phase, setPhase] = useState<"idle" | "quoting" | "signing" | "sending" | "done" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
+  const [pendingBind, setPendingBind] = useState(false);
+  const [bindingWallet, setBindingWallet] = useState(false);
 
   const { sendTransactionAsync } = useSendTransaction();
   const { switchChainAsync } = useSwitchChain();
+
+  const bindConnectedWallet = async (address: string) => {
+    if (!isValidEthereumAddress(address)) {
+      throw new Error("Connected wallet is not a valid EVM address");
+    }
+    setBindingWallet(true);
+    try {
+      const result = await api.bindPaymentWallet(address);
+      const current = useAuthStore.getState().user;
+      if (current) {
+        setUser({
+          ...current,
+          wallet_address: result.wallet_address,
+          wallet_verified: false,
+        });
+      }
+      return result.wallet_address;
+    } finally {
+      setBindingWallet(false);
+    }
+  };
+
+  const connectAndBindWallet = () => {
+    setError(null);
+    if (wallet.isConnected && wallet.account?.address) {
+      void bindConnectedWallet(wallet.account.address).catch((cause) => {
+        const msg = cause instanceof ApiError
+          ? cause.message
+          : cause instanceof Error
+            ? cause.message
+            : "Unable to bind wallet";
+        toast.fail({ title: msg });
+        setError(msg);
+      });
+      return;
+    }
+    setPendingBind(true);
+    wallet.connect();
+  };
+
+  useEffect(() => {
+    if (!pendingBind) return;
+    const address = wallet.account?.address;
+    if (!wallet.isConnected || !address) return;
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        await bindConnectedWallet(address);
+      } catch (cause) {
+        if (cancelled) return;
+        const msg = cause instanceof ApiError
+          ? cause.message
+          : cause instanceof Error
+            ? cause.message
+            : "Unable to bind wallet";
+        toast.fail({ title: msg });
+        setError(msg);
+      } finally {
+        if (!cancelled) setPendingBind(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [pendingBind, wallet.isConnected, wallet.account?.address]);
 
   useEffect(() => {
     void ensureFresh();
@@ -238,18 +312,19 @@ export function QuickPayPanel({
     })
     : "—";
 
-  const ownerAddress = wallet.account?.address ?? null;
+  // Balances track the account-bound payment wallet, not browser session alone.
+  const ownerAddress = boundAddress;
   const fetchOneBalance = useTokenBalancesStore((s) => s.fetchOne);
   const originBalance = useTokenBalance(ownerAddress, originToken?.assetId);
 
   useEffect(() => {
-    if (!wallet.isConnected || !ownerAddress || !originToken?.contractAddress) return;
+    if (!ownerAddress || !originToken?.contractAddress) return;
     void fetchOneBalance(ownerAddress, originToken);
     const id = window.setInterval(() => {
       void fetchOneBalance(ownerAddress, originToken);
     }, 20_000);
     return () => window.clearInterval(id);
-  }, [wallet.isConnected, ownerAddress, originToken, fetchOneBalance]);
+  }, [ownerAddress, originToken, fetchOneBalance]);
 
   const settleMutation = useMutation({
     mutationFn: async () => {
@@ -259,14 +334,27 @@ export function QuickPayPanel({
       if (!employee && (!adhocAddress || !destToken)) {
         throw new Error("Missing payment inputs");
       }
+      if (!useAuthStore.getState().user?.wallet_address) {
+        if (wallet.isConnected && wallet.account?.address) {
+          await bindConnectedWallet(wallet.account.address);
+        } else {
+          setPendingBind(true);
+          wallet.connect();
+          throw new Error("Connect your payment wallet first");
+        }
+      }
       if (!wallet.isConnected || !wallet.account?.address) {
         wallet.connect();
+        throw new Error("Connect your payment wallet first");
+      }
+      const paymentWallet = useAuthStore.getState().user?.wallet_address;
+      if (!paymentWallet) {
         throw new Error("Connect your payment wallet first");
       }
       if (!originToken.contractAddress) throw new Error("Origin token has no contract address");
       if (!quote.amountIn) throw new Error("Quote missing deposit details");
 
-      const balance = await fetchOneBalance(wallet.account.address, originToken);
+      const balance = await fetchOneBalance(paymentWallet, originToken);
       if (!balance || balance.status !== "success" || balance.raw == null) {
         toast.fail({ title: "Could not read wallet balance" });
         throw new BalanceGateError("Could not read wallet balance");
@@ -662,24 +750,25 @@ export function QuickPayPanel({
         </>
       )}
 
-      {/* You Pay */}
+      {/* You Pay — show bound account wallet (DB), not browser session alone */}
       <div className="mb-1 flex items-center justify-between">
         <p className="font-montserrat text-[14px] font-medium text-[#606060]">You Pay</p>
         <div className="flex items-center gap-1.5">
-          {wallet.isConnected && walletInfo.icon ? (
+          {boundAddress && wallet.isConnected && walletInfo.icon ? (
             <img src={walletInfo.icon} alt="" className="size-3 rounded-[2px] object-cover" />
           ) : null}
-          {wallet.isConnected && wallet.account?.address ? (
+          {boundAddress ? (
             <p className="font-montserrat text-[12px] text-[#606060]">
-              {formatAddress(wallet.account.address)}
+              {formatAddress(boundAddress)}
             </p>
           ) : (
             <button
               type="button"
-              onClick={() => wallet.connect()}
-              className="font-montserrat text-[12px] text-black underline-offset-2 hover:underline"
+              onClick={connectAndBindWallet}
+              disabled={bindingWallet || pendingBind}
+              className="font-montserrat text-[12px] text-black underline-offset-2 hover:underline disabled:opacity-50"
             >
-              Connect wallet
+              {bindingWallet || pendingBind ? "Connecting…" : "Connect wallet"}
             </button>
           )}
         </div>
@@ -836,11 +925,12 @@ export function QuickPayPanel({
         initialSymbol={(originToken?.symbol || "USDT") as "USDC" | "USDT"}
         selectedAssetId={originToken?.assetId}
         showBalances
+        balanceOwner={boundAddress}
         onSelect={({ token }) => {
           setOriginToken(token);
           setSavedOriginAssetId(token.assetId);
-          if (wallet.account?.address) {
-            void fetchOneBalance(wallet.account.address, token);
+          if (boundAddress) {
+            void fetchOneBalance(boundAddress, token);
           }
         }}
       />
