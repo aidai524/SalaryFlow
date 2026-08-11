@@ -18,17 +18,19 @@ Twenty codes were inserted by `api/migrations/0020_register_invite_codes.sql`.
 Run in the Cloudflare D1 SQL console (production or local). Codes use `DECASH-` + random hex.
 
 ```sql
+-- D1 rejects long UNION ALL chains ("too many terms in compound SELECT").
+-- Use a recursive CTE instead. Change the final LIMIT to generate more/fewer codes.
+WITH RECURSIVE seq(n) AS (
+  SELECT 1
+  UNION ALL
+  SELECT n + 1 FROM seq WHERE n < 20
+)
 INSERT INTO register_invite_codes (id, code, created_at)
 SELECT
   lower(hex(randomblob(16))),
   'DECASH-' || substr(upper(hex(randomblob(4))), 1, 4) || '-' || substr(upper(hex(randomblob(4))), 1, 4),
   strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-FROM (
-  SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5
-  UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9 UNION ALL SELECT 10
-  UNION ALL SELECT 11 UNION ALL SELECT 12 UNION ALL SELECT 13 UNION ALL SELECT 14 UNION ALL SELECT 15
-  UNION ALL SELECT 16 UNION ALL SELECT 17 UNION ALL SELECT 18 UNION ALL SELECT 19 UNION ALL SELECT 20
-);
+FROM seq;
 ```
 
 List unused codes:
