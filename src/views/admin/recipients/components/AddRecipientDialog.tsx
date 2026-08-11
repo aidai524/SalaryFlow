@@ -135,7 +135,7 @@ function fromEmployee(
   const cadence =
     emp.employee_type === "employee"
       ? teamCadence
-      : ((emp.payment_cadence as ContractorPaymentCadence) || teamCadence);
+      : ((emp.payment_cadence as ContractorPaymentCadence) || "on_demand");
   return {
     name: emp.name || "",
     email: emp.email || "",
@@ -146,7 +146,9 @@ function fromEmployee(
     payment_date_key:
       emp.employee_type === "employee"
         ? teamPaymentDate
-        : ((emp.payment_date_key as TeamPaymentDateKey) || defaultPaymentDateForSchedule(teamCadence)),
+        : cadence === "on_demand"
+          ? teamPaymentDate
+          : ((emp.payment_date_key as TeamPaymentDateKey) || defaultPaymentDateForSchedule(cadence)),
     token: emp.token || "USDC",
     network: emp.network || "Base",
     endpoint: emp.endpoint || "",
@@ -258,15 +260,38 @@ export function AddRecipientDialog({
 
   const isEmployee = form.employee_type === "employee";
   const scheduleLocked = isEmployee;
-  const showPaymentDate = !isEmployee && form.payment_cadence !== "on_demand";
+
+  const scheduleOptions = useMemo(
+    () => (isEmployee
+      ? CONTRACTOR_SCHEDULE_OPTIONS.filter((o) => o.value !== "on_demand")
+      : CONTRACTOR_SCHEDULE_OPTIONS),
+    [isEmployee],
+  );
+
+  // Keep Select value always in the option list (avoids blank Radix trigger).
+  const displayCadence: ContractorPaymentCadence = (() => {
+    if (isEmployee) {
+      return teamCadence === "weekly" ? "weekly" : "monthly";
+    }
+    if (
+      form.payment_cadence === "monthly"
+      || form.payment_cadence === "weekly"
+      || form.payment_cadence === "on_demand"
+    ) {
+      return form.payment_cadence;
+    }
+    return "on_demand";
+  })();
+
+  const showPaymentDate = !isEmployee
+    && (displayCadence === "monthly" || displayCadence === "weekly");
 
   const dateOptions = useMemo(() => {
     if (isEmployee) return paymentDateOptionsForSchedule(teamCadence);
-    if (form.payment_cadence === "on_demand") return [];
-    return paymentDateOptionsForSchedule(form.payment_cadence);
-  }, [isEmployee, teamCadence, form.payment_cadence]);
+    if (displayCadence === "on_demand") return [];
+    return paymentDateOptionsForSchedule(displayCadence);
+  }, [isEmployee, teamCadence, displayCadence]);
 
-  const displayCadence = isEmployee ? teamCadence : form.payment_cadence;
   const displayDate = isEmployee ? teamPaymentDate : form.payment_date_key;
 
   const busy =
@@ -280,11 +305,21 @@ export function AddRecipientDialog({
   };
 
   const onTypeChange = (type: EmployeeType) => {
+    if (type === "employee") {
+      setForm((prev) => ({
+        ...prev,
+        employee_type: type,
+        payment_cadence: teamCadence === "weekly" ? "weekly" : "monthly",
+        payment_date_key: teamPaymentDate,
+      }));
+      return;
+    }
+    // Non-employee: always default Schedule to On Demand and hide Payment Date.
     setForm((prev) => ({
       ...prev,
       employee_type: type,
-      payment_cadence: type === "employee" ? teamCadence : prev.payment_cadence,
-      payment_date_key: type === "employee" ? teamPaymentDate : prev.payment_date_key,
+      payment_cadence: "on_demand",
+      payment_date_key: teamPaymentDate,
     }));
   };
 
@@ -294,7 +329,7 @@ export function AddRecipientDialog({
       payment_cadence: cadence,
       payment_date_key:
         cadence === "on_demand"
-          ? prev.payment_date_key
+          ? teamPaymentDate
           : defaultPaymentDateForSchedule(cadence),
     }));
   };
@@ -349,11 +384,27 @@ export function AddRecipientDialog({
       toast.fail({ title: "Name is required" });
       return;
     }
-    if (!form.amount.trim() || Number(form.amount) <= 0) {
-      toast.fail({ title: "Enter a valid compensation amount" });
+
+    const emailRaw = form.email.trim();
+    if (isEmployee) {
+      if (!emailRaw) {
+        toast.fail({ title: "Email is required" });
+        return;
+      }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailRaw)) {
+        toast.fail({ title: "Enter a valid email address" });
+        return;
+      }
+      if (!form.amount.trim() || Number(form.amount) <= 0) {
+        toast.fail({ title: "Enter a valid compensation amount" });
+        return;
+      }
+    } else if (emailRaw && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailRaw)) {
+      toast.fail({ title: "Enter a valid email address" });
       return;
     }
-    if (form.employee_type !== "employee") {
+
+    if (!isEmployee) {
       const wallet = form.endpoint.trim();
       if (!wallet) {
         toast.fail({ title: "Wallet address is required" });
@@ -370,23 +421,23 @@ export function AddRecipientDialog({
 
     const body = {
       name: form.name.trim(),
-      email: form.email.trim() || null,
+      email: emailRaw || null,
       employee_type: form.employee_type,
       role_title: form.role_title,
-      amount: form.amount.trim(),
+      amount: form.amount.trim() || "0",
       token: form.token,
       network: form.network,
       endpoint: form.endpoint.trim(),
       avatar_url: form.avatar_url || null,
-      ...(form.employee_type !== "employee"
+      ...(isEmployee
         ? {
-            payment_cadence: form.payment_cadence,
-            payment_date_key:
-              form.payment_cadence === "on_demand" ? null : form.payment_date_key,
-          }
-        : {
             payment_cadence: undefined,
             payment_date_key: null,
+          }
+        : {
+            payment_cadence: form.payment_cadence || "on_demand",
+            payment_date_key:
+              form.payment_cadence === "on_demand" ? null : form.payment_date_key,
           }),
     };
 
@@ -544,19 +595,23 @@ export function AddRecipientDialog({
               </>
             )}
 
-            <Field label="Email" className={isSelf ? "sm:col-span-2" : undefined}>
+            <Field
+              label={!isSelf && isEmployee ? "Email (Required)" : "Email"}
+              className={isSelf ? "sm:col-span-2" : undefined}
+            >
               <input
                 type="email"
                 value={form.email}
                 onChange={(e) => setField("email", e.target.value)}
                 className={fieldInputClass}
                 placeholder="name@company.com"
+                required={!isSelf && isEmployee}
               />
             </Field>
 
             {!isSelf && (
               <>
-                <Field label="Compensation (Required)">
+                <Field label={isEmployee ? "Compensation (Required)" : "Compensation"}>
                   <div className="relative">
                     <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 font-montserrat text-[14px] text-[#909090]">
                       $
@@ -567,12 +622,13 @@ export function AddRecipientDialog({
                       className={cn(fieldInputClass, "pl-7")}
                       placeholder="5,000"
                       inputMode="decimal"
-                      required
+                      required={isEmployee}
                     />
                   </div>
                 </Field>
                 <Field label="Schedule">
                   <Select
+                    key={`schedule-${form.employee_type}-${displayCadence}`}
                     value={displayCadence}
                     onValueChange={(v) => onScheduleChange(v as ContractorPaymentCadence)}
                     disabled={scheduleLocked}
@@ -581,13 +637,10 @@ export function AddRecipientDialog({
                       icon={SELECT_ICON}
                       className={cn(selectTriggerClass, scheduleLocked && "opacity-60")}
                     >
-                      <SelectValue />
+                      <SelectValue placeholder="On Demand" />
                     </SelectTrigger>
                     <SelectContent>
-                      {(isEmployee
-                        ? CONTRACTOR_SCHEDULE_OPTIONS.filter((o) => o.value !== "on_demand")
-                        : CONTRACTOR_SCHEDULE_OPTIONS
-                      ).map((opt) => (
+                      {scheduleOptions.map((opt) => (
                         <SelectItem key={opt.value} value={opt.value}>
                           {opt.label}
                         </SelectItem>
@@ -598,6 +651,7 @@ export function AddRecipientDialog({
                 {(isEmployee || showPaymentDate) && (
                   <Field label="Payment Date">
                     <Select
+                      key={`paydate-${form.employee_type}-${displayCadence}-${displayDate}`}
                       value={displayDate}
                       onValueChange={(v) => setField("payment_date_key", v as TeamPaymentDateKey)}
                       disabled={scheduleLocked}

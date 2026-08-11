@@ -182,20 +182,20 @@ Employee `status`: `pending` \| `ready` \| `update_required` — set by payout v
   | Field | Type | Required | Notes |
   |---|---|---|---|
   | `name` | string | yes | |
-  | `email` | string | yes | unique per org |
-  | `employee_type` | `employee` \| `contractor` | no | default `employee` |
+  | `email` | string | employee yes; else no | unique per org when set; non-employee may be null |
+  | `employee_type` | `employee` \| `contractor` \| `others` | no | default `employee` |
   | `role_title` | enum | no | `Developer` \| `Product` \| `Growth` \| `Finance` \| `Operations` |
   | `location` | string | no | |
   | `token` | string | no | default USDC |
   | `network` | string | no | default Base |
-  | `endpoint` | string | no | EVM address or empty |
-  | `amount` | string | no | decimal → `amount_minor`; default 0 |
-  | `payment_cadence` | string | contractor | `monthly` \| `weekly` \| `on_demand` |
-  | `payment_date_key` | string | if monthly/weekly | same keys as Create Team |
+  | `endpoint` | string | non-employee yes | EVM address; optional for employee |
+  | `amount` | string | employee yes (>0); else no | decimal → `amount_minor`; non-employee default 0 |
+  | `payment_cadence` | string | no | non-employee: `monthly` \| `weekly` \| `on_demand` (default `on_demand` if omitted) |
+  | `payment_date_key` | string | if monthly/weekly | same keys as Create Team; null for `on_demand` |
 
 - **Response** — `201` `{ employee }` · `status=pending`
 - **Errors** — 400 validation; 409 duplicate email
-- **Rules** — Employees ignore personal cadence columns (stored null). Audit `employee.created`.
+- **Rules** — Employees ignore personal cadence columns (stored null). Non-employee email/schedule/amount are optional. Audit `employee.created`.
 
 ---
 
@@ -207,7 +207,7 @@ Employee `status`: `pending` \| `ready` \| `update_required` — set by payout v
 - **Request** — any of create fields above — **not** `status`
 - **Response** — `{ employee }`
 - **Errors** — 400 if `status` sent / invalid fields; 409 duplicate email
-- **Rules** — Changing token/network/endpoint **to a different value** → `status=update_required`, clears `payout_verified_at`. Unchanged payout fields do not reset verification. Switching to employee clears personal cadence.
+- **Rules** — Changing token/network/endpoint **to a different value** → `status=update_required`, clears `payout_verified_at`. Unchanged payout fields do not reset verification. Switching to employee clears personal cadence and requires email + amount > 0. Non-employee may clear email (`null` / `""`).
 - **Gotchas** — Admin cannot force `ready`; employee must re-verify via `/api/records/me/payout/*`. Endpoint compare is case-insensitive.
 
 ---

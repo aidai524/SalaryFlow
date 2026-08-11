@@ -830,31 +830,54 @@ orgRoutes.post("/employees", requireRole("admin"), async (c) => {
   const user = c.get("user") as AuthUser;
   const body = await c.req.json().catch(() => null);
   const name = String(body?.name || "").trim();
-  const email = String(body?.email || "").trim().toLowerCase();
+  const emailRaw = body?.email === undefined || body?.email === null
+    ? ""
+    : String(body.email).trim().toLowerCase();
   if (!name) return c.json({ error: "Name is required" }, 400);
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return c.json({ error: "A valid email is required" }, 400);
 
   const employeeType = body?.employee_type !== undefined || body?.employeeType !== undefined
     ? normalizeEmployeeType(body?.employee_type ?? body?.employeeType)
     : "employee";
   if (!employeeType) return c.json({ error: "Type must be employee, contractor, or others" }, 400);
 
+  const isEmployee = employeeType === "employee";
+  if (isEmployee) {
+    if (!emailRaw || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailRaw)) {
+      return c.json({ error: "A valid email is required" }, 400);
+    }
+  } else if (emailRaw && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailRaw)) {
+    return c.json({ error: "Enter a valid email address" }, 400);
+  }
+  const email = emailRaw || null;
+
   const roleTitle = normalizeRoleTitle(body?.role_title ?? body?.roleTitle);
   if (roleTitle === null) return c.json({ error: "Choose a valid role" }, 400);
 
   let paymentCadence: string | null = null;
   let paymentDateKey: string | null = null;
-  if (employeeType !== "employee") {
-    const parsed = parseContractorScheduleInput(body || {});
-    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
-    paymentCadence = parsed.cadence;
-    paymentDateKey = parsed.dateKey;
+  if (!isEmployee) {
+    const hasScheduleInput =
+      body?.payment_cadence !== undefined
+      || body?.paymentCadence !== undefined
+      || body?.payment_date_key !== undefined
+      || body?.paymentDate !== undefined;
+    if (!hasScheduleInput) {
+      paymentCadence = "on_demand";
+      paymentDateKey = null;
+    } else {
+      const parsed = parseContractorScheduleInput(body || {});
+      if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+      paymentCadence = parsed.cadence;
+      paymentDateKey = parsed.dateKey;
+    }
   }
 
-  const existing = await c.env.DB.prepare(
-    "SELECT id FROM employees WHERE org_id = ? AND email = ?",
-  ).bind(user.org_id, email).first();
-  if (existing) return c.json({ error: "An employee with this email already exists" }, 409);
+  if (email) {
+    const existing = await c.env.DB.prepare(
+      "SELECT id FROM employees WHERE org_id = ? AND email = ?",
+    ).bind(user.org_id, email).first();
+    if (existing) return c.json({ error: "An employee with this email already exists" }, 409);
+  }
   const id = uuid();
   const token = normalizePayoutToken(body?.token ?? "USDC");
   const network = normalizePayoutNetwork(body?.network ?? "Base");
@@ -862,15 +885,26 @@ orgRoutes.post("/employees", requireRole("admin"), async (c) => {
   const endpointInput = String(body?.endpoint || "").trim();
   const endpoint = endpointInput ? normalizePayoutAddress(endpointInput) : "";
   if (endpoint === null) return c.json({ error: "A valid EVM payout address is required" }, 400);
-  if (employeeType !== "employee" && !endpoint) {
+  if (!isEmployee && !endpoint) {
     return c.json({ error: "A wallet address is required for non-employee recipients" }, 400);
   }
   const avatarUrl = body?.avatar_url !== undefined || body?.avatarUrl !== undefined
     ? normalizePresetAvatarUrl(body?.avatar_url ?? body?.avatarUrl)
     : "";
   if (avatarUrl === null) return c.json({ error: "Choose a valid preset avatar" }, 400);
-  const amountMinor = body?.amount === undefined ? 0 : parseTokenAmount(body.amount, { allowZero: true });
-  if (amountMinor === null) return c.json({ error: "Amount must have at most 6 decimal places" }, 400);
+  const amountMinor = body?.amount === undefined || body?.amount === null || String(body.amount).trim() === ""
+    ? 0
+    : parseTokenAmount(body.amount, { allowZero: !isEmployee });
+  if (amountMinor === null) {
+    return c.json({
+      error: isEmployee
+        ? "Enter a valid compensation amount greater than zero"
+        : "Amount must have at most 6 decimal places",
+    }, 400);
+  }
+  if (isEmployee && amountMinor <= 0) {
+    return c.json({ error: "Enter a valid compensation amount greater than zero" }, 400);
+  }
   await c.env.DB.prepare(
     `INSERT INTO employees (
        id, org_id, email, name, role_title, location, employee_type, token, network,
@@ -914,13 +948,31 @@ orgRoutes.patch("/employees/:id", requireRole("admin"), async (c) => {
   if (body?.status !== undefined) {
     return c.json({ error: "Payout readiness is managed by wallet signature verification" }, 400);
   }
+  let nextType = (existing.employee_type as string) || "employee";
+  if (body?.employee_type !== undefined || body?.employeeType !== undefined) {
+    const employeeType = normalizeEmployeeType(body?.employee_type ?? body?.employeeType);
+    if (!employeeType) return c.json({ error: "Type must be employee, contractor, or others" }, 400);
+    fields.push("employee_type = ?");
+    values.push(employeeType);
+    nextType = employeeType;
+  }
+
   if (body?.email !== undefined) {
-    const email = String(body.email).trim().toLowerCase();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return c.json({ error: "A valid email is required" }, 400);
-    const dup = await c.env.DB.prepare(
-      "SELECT id FROM employees WHERE org_id = ? AND email = ? AND id != ?",
-    ).bind(user.org_id, email, id).first();
-    if (dup) return c.json({ error: "An employee with this email already exists" }, 409);
+    const emailRaw = body.email === null ? "" : String(body.email).trim().toLowerCase();
+    if (nextType === "employee") {
+      if (!emailRaw || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailRaw)) {
+        return c.json({ error: "A valid email is required" }, 400);
+      }
+    } else if (emailRaw && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailRaw)) {
+      return c.json({ error: "Enter a valid email address" }, 400);
+    }
+    const email = emailRaw || null;
+    if (email) {
+      const dup = await c.env.DB.prepare(
+        "SELECT id FROM employees WHERE org_id = ? AND email = ? AND id != ?",
+      ).bind(user.org_id, email, id).first();
+      if (dup) return c.json({ error: "An employee with this email already exists" }, 409);
+    }
     fields.push("email = ?");
     values.push(email);
   }
@@ -937,15 +989,6 @@ orgRoutes.patch("/employees/:id", requireRole("admin"), async (c) => {
     if (roleTitle === null) return c.json({ error: "Choose a valid role" }, 400);
     fields.push("role_title = ?");
     values.push(roleTitle);
-  }
-
-  let nextType = (existing.employee_type as string) || "employee";
-  if (body?.employee_type !== undefined || body?.employeeType !== undefined) {
-    const employeeType = normalizeEmployeeType(body?.employee_type ?? body?.employeeType);
-    if (!employeeType) return c.json({ error: "Type must be employee, contractor, or others" }, 400);
-    fields.push("employee_type = ?");
-    values.push(employeeType);
-    nextType = employeeType;
   }
 
   const scheduleTouched =
@@ -1027,10 +1070,41 @@ orgRoutes.patch("/employees/:id", requireRole("admin"), async (c) => {
     fields.push("status = 'update_required'", "payout_verified_at = NULL");
   }
   if (body?.amount !== undefined) {
-    const amountMinor = parseTokenAmount(body.amount, { allowZero: true });
-    if (amountMinor === null) return c.json({ error: "Amount must have at most 6 decimal places" }, 400);
+    const amountMinor = body.amount === null || String(body.amount).trim() === ""
+      ? 0
+      : parseTokenAmount(body.amount, { allowZero: nextType !== "employee" });
+    if (amountMinor === null) {
+      return c.json({
+        error: nextType === "employee"
+          ? "Enter a valid compensation amount greater than zero"
+          : "Amount must have at most 6 decimal places",
+      }, 400);
+    }
+    if (nextType === "employee" && amountMinor <= 0) {
+      return c.json({ error: "Enter a valid compensation amount greater than zero" }, 400);
+    }
     fields.push("amount_minor = ?");
     values.push(amountMinor);
+  }
+
+  // Switching to employee without sending amount: reject if stored amount is zero.
+  if (
+    (body?.employee_type !== undefined || body?.employeeType !== undefined)
+    && nextType === "employee"
+    && body?.amount === undefined
+    && Number(existing.amount_minor || 0) <= 0
+  ) {
+    return c.json({ error: "Enter a valid compensation amount greater than zero" }, 400);
+  }
+  if (
+    (body?.employee_type !== undefined || body?.employeeType !== undefined)
+    && nextType === "employee"
+    && body?.email === undefined
+  ) {
+    const existingEmail = String(existing.email || "").trim();
+    if (!existingEmail) {
+      return c.json({ error: "A valid email is required" }, 400);
+    }
   }
   if (fields.length === 0) return c.json({ error: "Nothing to update" }, 400);
   values.push(id);
