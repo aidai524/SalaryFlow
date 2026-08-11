@@ -4,7 +4,6 @@ import { api, type PendingPaymentRow } from "@/lib/api";
 
 const PENDING_QUERY_KEY = ["pending-payments"] as const;
 const ACTIVE_POLL_MS = 8_000;
-const IDLE_POLL_MS = 30_000;
 
 /** States the reconcile API will accept (wallet signature not involved yet → skip). */
 const RECONCILABLE_STATES = new Set<PendingPaymentRow["state"]>([
@@ -88,8 +87,11 @@ export function usePendingPaymentsQuery() {
       const refreshed = await api.listPendingPayments();
       return refreshed.payments;
     },
-    refetchInterval: (q) => ((q.state.data?.length ?? 0) > 0 ? ACTIVE_POLL_MS : IDLE_POLL_MS),
+    // Poll only while the dock has rows; stop when empty to avoid idle traffic.
+    // Empty → first item is seeded by commit-success refetch (not this interval).
+    refetchInterval: (q) => ((q.state.data?.length ?? 0) > 0 ? ACTIVE_POLL_MS : false),
     staleTime: ACTIVE_POLL_MS,
+    refetchOnWindowFocus: true,
   });
 
   const payments = query.data ?? [];

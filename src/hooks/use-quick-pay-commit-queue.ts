@@ -12,7 +12,9 @@ export function useQuickPayCommitQueue() {
   useEffect(() => {
     processAllPendingQuickPayCommits();
     return onQuickPayCommitSuccess(() => {
-      void queryClient.invalidateQueries({ queryKey: ["pending-payments"] });
+      // Refetch (not just invalidate) so an empty dock seeds the first row and
+      // refetchInterval can start 8s polling immediately after commit lands.
+      void queryClient.refetchQueries({ queryKey: ["pending-payments"] });
       void queryClient.invalidateQueries({ queryKey: ["pay-overview"] });
       void queryClient.invalidateQueries({ queryKey: ["org-overview"] });
       void queryClient.invalidateQueries({ queryKey: ["org-payments"] });
