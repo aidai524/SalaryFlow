@@ -1,60 +1,62 @@
-import { ArrowRight, CheckCircle2, FileText, Info, ShieldCheck } from "lucide-react";
-import { CARD_CLASS, STEPS } from "../config";
-
-const STEP_ICONS = [FileText, ShieldCheck, CheckCircle2] as const;
-
 export function StepsSection() {
   return (
-    <section>
-      <h2 className="font-montserrat text-[22px] font-bold text-black sm:text-[26px]">
-        {STEPS.TITLE}
+    <section id="how-confidential-payments-work-on-decash" className="scroll-mt-6">
+      <h2 className="font-montserrat text-[26px] font-semibold leading-tight text-black">
+        How Confidential Payments Work on DeCash
       </h2>
 
       <div className="mt-5 grid gap-4 md:grid-cols-3">
-        {STEPS.ITEMS.map((step, index) => {
-          const Icon = STEP_ICONS[index] ?? FileText;
-          const highlighted = index === 1;
-          return (
-            <div
-              key={step.NUM}
-              className={`relative flex flex-col p-5 sm:p-6 ${CARD_CLASS} ${
-                highlighted ? "ring-1 ring-[#d0f348]" : ""
-              }`}
-            >
-              <div className="mb-4 flex items-center gap-3">
-                <span className="inline-flex size-8 items-center justify-center rounded-full bg-[#d0f348] font-montserrat text-[12px] font-bold text-black">
-                  {step.NUM}
-                </span>
-                <span className="inline-flex size-8 items-center justify-center rounded-full bg-[#f0f5d0]">
-                  <Icon className="size-4 text-[#5a6e10]" strokeWidth={1.75} />
-                </span>
-              </div>
-              <h3 className="font-montserrat text-[15px] font-semibold text-black">
-                {step.TITLE}
-              </h3>
-              <p className="mt-2 font-montserrat text-[13px] leading-relaxed text-[#606060]">
-                {step.BODY_1}
-              </p>
-              <p className="mt-2 font-montserrat text-[13px] leading-relaxed text-[#606060]">
-                {step.BODY_2}
-              </p>
-              {/* <ArrowRight
-                className="mt-4 ml-auto size-4 text-[#909090]"
-                strokeWidth={1.75}
-                aria-hidden
-              /> */}
-            </div>
-          );
-        })}
+        <div className="rounded-[20px] border border-white bg-[#fdfdfd] p-5 shadow-[0px_0px_20px_0px_rgba(0,0,0,0.06)] sm:p-6">
+          <h3 className="font-montserrat text-[16px] font-semibold text-black">
+            You Define the Payment
+          </h3>
+          <div className="mt-4 space-y-3 font-montserrat text-[14px] leading-normal text-black">
+            <p>Choose the recipient, amount, and what they should receive.</p>
+            <p>
+              Your payment source and the recipient&apos;s destination can use
+              different supported networks and assets.
+            </p>
+          </div>
+        </div>
+
+        <div className="rounded-[20px] border border-white bg-[#fdfdfd] p-5 shadow-[0px_0px_20px_0px_rgba(0,0,0,0.06)] sm:p-6">
+          <h3 className="font-montserrat text-[16px] font-semibold text-black">
+            The Intent Executes Confidentially
+          </h3>
+          <div className="mt-4 space-y-3 font-montserrat text-[14px] leading-normal text-black">
+            <p>
+              DECASH uses{" "}
+              <span className="font-semibold">NEAR Confidential Intents</span>, where
+              execution happens inside a dedicated NEAR private shard.
+            </p>
+            <p>
+              The private shard is connected to NEAR mainnet through a TEE-based
+              bridge.
+            </p>
+          </div>
+        </div>
+
+        <div className="rounded-[20px] border border-white bg-[#fdfdfd] p-5 shadow-[0px_0px_20px_0px_rgba(0,0,0,0.06)] sm:p-6">
+          <h3 className="font-montserrat text-[16px] font-semibold text-black">
+            The Recipient Gets Paid
+          </h3>
+          <div className="mt-4 space-y-3 font-montserrat text-[14px] leading-normal text-black">
+            <p>
+              The recipient receives the requested asset on their destination network.
+            </p>
+            <p>
+              The payment does not create the same direct public sender ↔ recipient
+              relationship as a standard wallet-to-wallet transfer.
+            </p>
+          </div>
+        </div>
       </div>
 
-      <div className="mt-4 flex gap-3 rounded-[16px] border border-[#f0e0a0] bg-[#fff8e1] px-4 py-3.5 sm:px-5">
-        <Info className="mt-0.5 size-4 shrink-0 text-[#a67c00]" strokeWidth={2} />
-        <p className="font-montserrat text-[13px] leading-relaxed text-[#606060]">
-          <span className="font-semibold text-black">Note: </span>
-          {STEPS.NOTE}
-        </p>
-      </div>
+      <p className="mt-5 font-montserrat text-[14px] leading-normal text-black">
+        *Source and destination networks may still have their own public on-chain
+        activity. DECASH protects the direct payment relationship, not the entire
+        blockchain.
+      </p>
     </section>
   );
 }

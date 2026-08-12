@@ -1,80 +1,121 @@
-import { Building2, User } from "lucide-react";
-import { CARD_CLASS, PROBLEM, SECTION_CARD_CLASS } from "../config";
-
 export function ProblemSection() {
   return (
-    <section>
-      <div className="grid gap-6 lg:grid-cols-2 lg:items-start lg:gap-10">
-        <div>
-          <h2 className="font-montserrat text-[22px] font-bold text-black sm:text-[26px]">
-            {PROBLEM.TITLE}
-          </h2>
-          <p className="mt-3 font-montserrat text-[14px] leading-relaxed text-[#606060]">
-            {PROBLEM.BODY_1}
-          </p>
-          <p className="mt-3 font-montserrat text-[14px] leading-relaxed text-[#606060]">
-            {PROBLEM.BODY_2}
-          </p>
+    <section id="the-problem-with-normal-on-chain-payments" className="scroll-mt-6">
+      <h2 className="font-montserrat text-[26px] font-semibold leading-tight text-black">
+        The Problem With Normal On-Chain Payments
+      </h2>
+      <div className="mt-5 space-y-4 font-montserrat text-[16px] leading-normal text-black">
+        <p>
+          A normal stablecoin transfer creates a permanent public relationship between
+          two wallets.
+        </p>
+        <p>
+          Anyone inspecting the blockchain can see the sending address and receiving
+          address and use public activity to analyze the relationship between them.
+        </p>
+      </div>
 
-          <div className="mt-5 space-y-3">
-            <div className={`flex gap-3 p-4 ${SECTION_CARD_CLASS}`}>
-              <span className="inline-flex size-9 shrink-0 items-center justify-center rounded-full bg-[#d0f348]">
-                <Building2 className="size-4 text-black" strokeWidth={1.75} />
-              </span>
-              <div>
-                <p className="font-montserrat text-[14px] font-semibold text-black">
-                  {PROBLEM.BUSINESS.TITLE}
-                </p>
-                <p className="mt-1 font-montserrat text-[13px] leading-relaxed text-[#606060]">
-                  {PROBLEM.BUSINESS.BODY}
-                </p>
-              </div>
+      <div className="mt-6 grid gap-4 lg:grid-cols-2 lg:gap-5">
+        <div className="flex flex-col gap-4">
+          <div className="flex-1 rounded-[20px] border border-white bg-[#fdfdfd] p-5 shadow-[0px_0px_20px_0px_rgba(0,0,0,0.06)] sm:p-6">
+            <div className="flex items-center gap-3">
+              <img
+                src="/howitwork/for-businesses.png"
+                alt=""
+                className="h-[18px] w-[19px] object-contain"
+              />
+              <h3 className="font-montserrat text-[16px] font-semibold text-black">
+                For businesses
+              </h3>
             </div>
-            <div className={`flex gap-3 p-4 ${SECTION_CARD_CLASS}`}>
-              <span className="inline-flex size-9 shrink-0 items-center justify-center rounded-full bg-[#d0f348]">
-                <User className="size-4 text-black" strokeWidth={1.75} />
-              </span>
-              <div>
-                <p className="font-montserrat text-[14px] font-semibold text-black">
-                  {PROBLEM.INDIVIDUAL.TITLE}
-                </p>
-                <p className="mt-1 font-montserrat text-[13px] leading-relaxed text-[#606060]">
-                  {PROBLEM.INDIVIDUAL.BODY}
-                </p>
-              </div>
+            <p className="mt-3 font-montserrat text-[14px] leading-normal text-black">
+              This can expose salary relationships, treasury activity, and vendor
+              relationships.
+            </p>
+          </div>
+
+          <div className="flex-1 rounded-[20px] border border-white bg-[#fdfdfd] p-5 shadow-[0px_0px_20px_0px_rgba(0,0,0,0.06)] sm:p-6">
+            <div className="flex items-center gap-3">
+              <img
+                src="/howitwork/for-individuals.png"
+                alt=""
+                className="h-5 w-[19px] object-contain"
+              />
+              <h3 className="font-montserrat text-[16px] font-semibold text-black">
+                For individuals
+              </h3>
             </div>
+            <p className="mt-3 font-montserrat text-[14px] leading-normal text-black">
+              This can expose which wallet paid whom and make it easier to inspect
+              related wallet activity.
+            </p>
           </div>
         </div>
 
-        <div className={`p-5 sm:p-6 ${CARD_CLASS}`}>
-          <p className="mb-5 font-montserrat text-[14px] font-semibold text-black">
-            {PROBLEM.STANDARD.TITLE}
-          </p>
-          <div className="flex flex-col items-center gap-2">
-            <div className="w-full max-w-[240px] rounded-[12px] border border-black/10 bg-[#f6f6f6] px-4 py-3 text-center">
-              <p className="font-montserrat text-[13px] font-semibold text-black">
-                {PROBLEM.STANDARD.FROM}
-              </p>
-            </div>
-            <div className="flex flex-col items-center gap-1 py-1">
-              <div className="h-8 w-px bg-[#e85a5a]" aria-hidden />
-              <span className="rounded-full bg-[#fde8e8] px-2.5 py-0.5 font-montserrat text-[11px] font-medium text-[#c0392b]">
-                {PROBLEM.STANDARD.MIDDLE}
+        <div className="rounded-[20px] border border-white bg-[#fdfdfd] p-5 shadow-[0px_0px_20px_0px_rgba(0,0,0,0.06)] sm:p-6">
+          <h3 className="font-montserrat text-[16px] font-semibold text-black">
+            Standard payment
+          </h3>
+          <div className="mt-6 flex flex-col items-center">
+            <div className="inline-flex items-center gap-2 rounded-[12px] border border-[#d0f348] bg-[rgba(208,243,72,0.2)] px-3.5 py-2.5">
+              <img
+                src="/howitwork/standard-payment-your-wallet.png"
+                alt=""
+                className="h-4 w-[15px] object-contain"
+              />
+              <span className="font-montserrat text-[14px] font-medium text-black">
+                Your Wallet
               </span>
-              <div className="h-8 w-px bg-[#e85a5a]" aria-hidden />
-              <div
-                className="size-0 border-x-[5px] border-t-[7px] border-x-transparent border-t-[#e85a5a]"
+            </div>
+
+            <div className="relative my-1 flex h-[60px] w-full max-w-[300px] items-center justify-center">
+              <img
+                src="/howitwork/standard-payment-arrow-to-down.png"
+                alt=""
+                className="h-[52px] w-[15px] object-contain"
                 aria-hidden
               />
+              <span
+                className="absolute left-1/2 top-1/2 z-20 size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#d0f348]"
+                aria-hidden
+              />
+              <div className="absolute left-[calc(50%+10px)] top-1/2 z-10 flex h-[28px] w-[154px] -translate-y-1/2 items-center justify-center">
+                <img
+                  src="/howitwork/public-transaction-bg.png"
+                  alt=""
+                  className="absolute inset-0 size-full object-fill"
+                  aria-hidden
+                />
+                <span className="relative z-10 pl-3 font-montserrat text-[14px] font-medium text-black">
+                  Public transaction
+                </span>
+              </div>
             </div>
-            <div className="w-full max-w-[240px] rounded-[12px] border border-black/10 bg-[#f6f6f6] px-4 py-3 text-center">
-              <p className="font-montserrat text-[13px] font-semibold text-black">
-                {PROBLEM.STANDARD.TO}
+
+            <div className="inline-flex items-center gap-2 rounded-[12px] border border-[#d0f348] bg-[rgba(208,243,72,0.2)] px-3.5 py-2.5">
+              <img
+                src="/howitwork/standard-payment-recipient-wallet.png"
+                alt=""
+                className="h-[15px] w-[18px] object-contain"
+              />
+              <span className="font-montserrat text-[14px] font-medium text-black">
+                Recipient Wallet
+              </span>
+            </div>
+
+            <div className="mt-5 text-center font-montserrat text-[14px] font-medium leading-normal text-[#9fa7ba]">
+              <p className="inline-flex items-center gap-1.5">
+                <span>Sender</span>
+                <img
+                  src="/howitwork/standard-payment-arrow-to-right.png"
+                  alt=""
+                  className="h-[15px] w-[16px] object-contain"
+                  aria-hidden
+                />
+                <span>recipient directly</span>
               </p>
+              <p>linked on-chain</p>
             </div>
-            <p className="mt-4 text-center font-montserrat text-[12px] font-medium text-[#c0392b]">
-              {PROBLEM.STANDARD.NOTE}
-            </p>
           </div>
         </div>
       </div>

@@ -1,28 +1,52 @@
-import { Check, X } from "lucide-react";
-import { CARD_CLASS, MEANING } from "../config";
+import { IconCheck } from "@/components/icons/check";
+import { IconClose } from "@/components/icons/close";
+
+const PROTECT_ITEMS = [
+  "Direct sender ↔ recipient linkage",
+  "Payment relationships",
+  "Internal execution details",
+  "Payroll / contractor / vendor relationships",
+] as const;
+
+const NOT_ITEMS = [
+  "Anonymous identity",
+  "Every blockchain transaction disappears",
+  "Public destination wallets become private wallets",
+  "Activity can never be analyzed or correlated",
+] as const;
 
 export function MeaningSection() {
   return (
-    <section>
-      <h2 className="font-montserrat text-[22px] font-bold text-black sm:text-[26px]">
-        {MEANING.TITLE}
+    <section id="what-confidential-does-and-doesnt-mean" className="scroll-mt-6">
+      <h2 className="font-montserrat text-[26px] font-semibold leading-tight text-black">
+        What Confidential Does — and Doesn&apos;t — Mean
       </h2>
+      <div className="mt-5 space-y-4 font-montserrat text-[16px] leading-normal text-black">
+        <p>
+          A normal stablecoin transfer creates a permanent public relationship between
+          two wallets.
+        </p>
+        <p>
+          Anyone inspecting the blockchain can see the sending address and receiving
+          address and use public activity to analyze the relationship between them.
+        </p>
+      </div>
 
-      <div className="mt-5 grid gap-4 md:grid-cols-2">
-        <div className={`p-5 sm:p-6 ${CARD_CLASS}`}>
+      <div className="mt-6 grid gap-4 md:grid-cols-2">
+        <div className="rounded-[20px] border border-white bg-[#fdfdfd] p-5 shadow-[0px_0px_20px_0px_rgba(0,0,0,0.06)] sm:p-6">
           <div className="mb-4 flex items-center gap-2">
-            <span className="inline-flex size-8 items-center justify-center rounded-full bg-[#d0f348]">
-              <Check className="size-4 text-black" strokeWidth={2.5} />
+            <span className="inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-[#c8e458]">
+              <IconCheck className="size-[9px] text-white" />
             </span>
-            <h3 className="font-montserrat text-[14px] font-semibold text-black">
-              {MEANING.PROTECT.TITLE}
+            <h3 className="font-montserrat text-[16px] font-semibold text-black">
+              Confidential Payments Help Protect
             </h3>
           </div>
-          <ul className="space-y-2.5">
-            {MEANING.PROTECT.ITEMS.map((item) => (
-              <li key={item} className="flex gap-2.5">
-                <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-[#84a20f]" />
-                <span className="font-montserrat text-[13px] leading-relaxed text-[#606060]">
+          <ul className="space-y-2">
+            {PROTECT_ITEMS.map((item) => (
+              <li key={item} className="flex gap-3 items-center not-first:mb-2">
+                <span className="size-[7px] shrink-0 rounded-full bg-[#84a20f]" />
+                <span className="font-montserrat text-[14px] text-black leading-[100%]">
                   {item}
                 </span>
               </li>
@@ -30,20 +54,20 @@ export function MeaningSection() {
           </ul>
         </div>
 
-        <div className={`p-5 sm:p-6 ${CARD_CLASS}`}>
+        <div className="rounded-[20px] border border-white bg-[#fdfdfd] p-5 shadow-[0px_0px_20px_0px_rgba(0,0,0,0.06)] sm:p-6">
           <div className="mb-4 flex items-center gap-2">
-            <span className="inline-flex size-8 items-center justify-center rounded-full bg-[#fde8e8]">
-              <X className="size-4 text-[#c0392b]" strokeWidth={2.5} />
+            <span className="inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-[#ff6b6b]">
+              <IconClose className="size-[10px] text-white" />
             </span>
-            <h3 className="font-montserrat text-[14px] font-semibold text-black">
-              {MEANING.NOT.TITLE}
+            <h3 className="font-montserrat text-[16px] font-semibold text-black">
+              Confidential Does Not Mean
             </h3>
           </div>
-          <ul className="space-y-2.5">
-            {MEANING.NOT.ITEMS.map((item) => (
-              <li key={item} className="flex gap-2.5">
-                <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-[#e85a5a]" />
-                <span className="font-montserrat text-[13px] leading-relaxed text-[#606060]">
+          <ul className="space-y-2">
+            {NOT_ITEMS.map((item) => (
+              <li key={item} className="flex gap-3 items-center not-first:mb-2">
+                <span className="size-[7px] shrink-0 rounded-full bg-[#e85a5a]" />
+                <span className="font-montserrat text-[14px] leading-[100%] text-black">
                   {item}
                 </span>
               </li>
@@ -52,8 +76,9 @@ export function MeaningSection() {
         </div>
       </div>
 
-      <p className="mt-6 text-center font-montserrat text-[12px] leading-relaxed text-[#909090]">
-        {MEANING.DISCLAIMER}
+      <p className="mt-5 font-montserrat text-[14px] leading-normal text-black">
+        *DeCash is designed to reduce direct public payment linkage, not to promise
+        anonymity.
       </p>
     </section>
   );

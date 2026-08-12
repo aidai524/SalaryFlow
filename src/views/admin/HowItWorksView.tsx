@@ -1,16 +1,38 @@
-import { ArrowLeft } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { ControlSection } from "./how-it-works/components/ControlSection";
 import { HeroSection } from "./how-it-works/components/HeroSection";
 import { MeaningSection } from "./how-it-works/components/MeaningSection";
 import { ProblemSection } from "./how-it-works/components/ProblemSection";
 import { StepsSection } from "./how-it-works/components/StepsSection";
+import { TableOfContents } from "./how-it-works/components/TableOfContents";
 import { UseCasesSection } from "./how-it-works/components/UseCasesSection";
 import { WhyIntentsSection } from "./how-it-works/components/WhyIntentsSection";
-import { BACK_FALLBACK_HREF, BACK_LABEL } from "./how-it-works/config";
+import { useHowItWorksToc } from "./how-it-works/useHowItWorksToc";
+
+function BackButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex items-center gap-2 font-montserrat text-[16px] font-medium text-black transition-opacity hover:opacity-70"
+    >
+      <span
+        className="inline-flex size-7 shrink-0 items-center justify-center rounded-full border border-black/10 bg-white"
+        aria-hidden
+      >
+        <img
+          src="/icons/to-down.svg"
+          alt=""
+          className="h-3 w-3 rotate-90 brightness-0"
+        />
+      </span>
+      How it works
+    </button>
+  );
+}
 
 export function HowItWorksView() {
   const navigate = useNavigate();
+  const { activeId, navigateTo } = useHowItWorksToc();
 
   const goBack = () => {
     const idx = (window.history.state as { idx?: number } | null)?.idx;
@@ -18,29 +40,45 @@ export function HowItWorksView() {
       navigate(-1);
       return;
     }
-    navigate(BACK_FALLBACK_HREF);
+    navigate("/login");
   };
 
   return (
     <div className="min-h-svh bg-[#f6f6f6] text-black">
-      <div className="mx-auto w-full max-w-[1512px] px-4 pb-12 pt-4 sm:px-6 md:px-10 md:pt-5 lg:px-[50px]">
-        <button
-          type="button"
-          onClick={goBack}
-          className="mb-5 inline-flex items-center gap-1.5 font-montserrat text-[13px] font-medium text-[#606060] transition-colors hover:text-black"
-        >
-          <ArrowLeft className="size-3.5" strokeWidth={2} />
-          {BACK_LABEL}
-        </button>
+      <div className="mx-auto w-full max-w-[1512px] px-2.5 pb-12 pt-2.5 sm:px-4 md:px-6 lg:px-2.5">
+        <picture>
+          <source media="(min-width: 768px)" srcSet="/howitwork/banner.png" />
+          <img
+            src="/howitwork/banner-mobile.png"
+            alt="DECASH Confidential Payments."
+            className="h-auto w-full rounded-[20px] object-cover"
+          />
+        </picture>
 
-        <div className="flex flex-col gap-12 sm:gap-14">
-          <HeroSection />
-          <ProblemSection />
-          <StepsSection />
-          <WhyIntentsSection />
-          <UseCasesSection />
-          <ControlSection />
-          <MeaningSection />
+        <div className="mt-6 flex gap-8 lg:mt-8 lg:gap-10 xl:gap-12">
+          <aside className="hidden w-[276px] shrink-0 lg:block">
+            <div className="sticky top-6">
+              <div className="mb-4">
+                <BackButton onClick={goBack} />
+              </div>
+              <TableOfContents activeId={activeId} onNavigate={navigateTo} />
+            </div>
+          </aside>
+
+          <div className="min-w-0 flex-1">
+            <div className="mb-5 lg:hidden">
+              <BackButton onClick={goBack} />
+            </div>
+
+            <div className="flex flex-col gap-12 sm:gap-14">
+              <HeroSection />
+              <ProblemSection />
+              <StepsSection />
+              <WhyIntentsSection />
+              <UseCasesSection />
+              <MeaningSection />
+            </div>
+          </div>
         </div>
       </div>
     </div>
