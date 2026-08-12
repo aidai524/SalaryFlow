@@ -2,6 +2,7 @@
 
 import { Hono } from "hono";
 import { verifyMessage, type Address, type Hex } from "viem";
+import { explorerUrlForTx } from "../explorer";
 import { requireRole, type AppEnv } from "../middleware";
 import {
   type TeamPaymentDateKey,
@@ -36,17 +37,6 @@ type EmpRow = {
   payment_date_key: string | null;
   avatar_url: string | null;
 };
-
-function explorerUrlForTx(network: string, txHash: string): string | null {
-  const n = network.toLowerCase();
-  const hash = txHash.startsWith("0x") ? txHash : `0x${txHash}`;
-  if (n.includes("arbitrum")) return `https://arbiscan.io/tx/${hash}`;
-  if (n.includes("base")) return `https://basescan.org/tx/${hash}`;
-  if (n.includes("polygon")) return `https://polygonscan.com/tx/${hash}`;
-  if (n.includes("optimism")) return `https://optimistic.etherscan.io/tx/${hash}`;
-  if (n.includes("ethereum") || n === "eth" || n === "mainnet") return `https://etherscan.io/tx/${hash}`;
-  return `https://basescan.org/tx/${hash}`;
-}
 
 async function loadEnrichedPayout(db: D1Database, userId: string, orgId: string) {
   const emp = await db.prepare(
@@ -178,8 +168,11 @@ recordRoutes.get("/me", requireRole("employee"), async (c) => {
       status: r.status,
       memo: r.memo,
       txHash: r.tx_hash,
-      explorerUrl: r.tx_explorer_url
-        || (r.tx_hash && r.network ? explorerUrlForTx(r.network, r.tx_hash) : null),
+      explorerUrl: (r.tx_hash && r.network
+        ? explorerUrlForTx(r.network, r.tx_hash)
+        : null)
+        || r.tx_explorer_url
+        || null,
     })),
   });
 });

@@ -1,6 +1,7 @@
 // Organization info + employee directory (admin)
 
 import { Hono } from "hono";
+import { explorerUrlForTx, networkHintFromOriginAssetId } from "../explorer";
 import { requireRole, type AppEnv } from "../middleware";
 import { parseTokenAmount } from "../money";
 import {
@@ -593,12 +594,13 @@ orgRoutes.get("/payments", requireRole("admin"), async (c) => {
         adminTxHash,
         adminExplorerUrl: adminTxHash && originNetworkHint
           ? explorerUrlForTx(originNetworkHint, adminTxHash)
-          : adminTxHash
-            ? explorerUrlForTx(r.network, adminTxHash)
-            : null,
+          : null,
         receiveTxHash,
-        receiveExplorerUrl: r.destination_tx_explorer_url
-          || (receiveTxHash && r.network ? explorerUrlForTx(r.network, receiveTxHash) : null),
+        receiveExplorerUrl: (receiveTxHash && r.network
+          ? explorerUrlForTx(r.network, receiveTxHash)
+          : null)
+          || r.destination_tx_explorer_url
+          || null,
       };
     })
     .filter((r) => {
@@ -828,35 +830,15 @@ orgRoutes.get("/employees/:id/payments", requireRole("admin"), async (c) => {
       status: r.status,
       memo: r.memo,
       txHash: r.tx_hash,
-      explorerUrl: r.tx_explorer_url
-        || (r.tx_hash && r.network ? explorerUrlForTx(r.network, r.tx_hash) : null),
+      explorerUrl: (r.tx_hash && r.network
+        ? explorerUrlForTx(r.network, r.tx_hash)
+        : null)
+        || r.tx_explorer_url
+        || null,
     })),
     nextCursor,
   });
 });
-
-function explorerUrlForTx(network: string, txHash: string): string | null {
-  const n = network.toLowerCase();
-  const hash = txHash.startsWith("0x") ? txHash : `0x${txHash}`;
-  if (n.includes("arbitrum")) return `https://arbiscan.io/tx/${hash}`;
-  if (n.includes("base")) return `https://basescan.org/tx/${hash}`;
-  if (n.includes("polygon")) return `https://polygonscan.com/tx/${hash}`;
-  if (n.includes("optimism")) return `https://optimistic.etherscan.io/tx/${hash}`;
-  if (n.includes("ethereum") || n === "eth" || n === "mainnet") return `https://etherscan.io/tx/${hash}`;
-  return `https://basescan.org/tx/${hash}`;
-}
-
-/** Infer a display/network hint from a 1Click origin asset id (e.g. nep141:eth-0x….omft.near). */
-function networkHintFromOriginAssetId(originAssetId: string | null | undefined): string | null {
-  if (!originAssetId) return null;
-  const id = originAssetId.toLowerCase();
-  if (id.includes("arbitrum") || /(^|[^a-z])arb([^a-z]|$)/.test(id)) return "arbitrum";
-  if (id.includes("base")) return "base";
-  if (id.includes("polygon") || id.includes("matic")) return "polygon";
-  if (id.includes("optimism") || id.includes("-op-") || id.includes(":op-")) return "optimism";
-  if (id.includes("ethereum") || /(^|[^a-z])eth([^a-z]|$)/.test(id)) return "ethereum";
-  return null;
-}
 
 orgRoutes.post("/employees", requireRole("admin"), async (c) => {
   const user = c.get("user") as AuthUser;
