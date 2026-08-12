@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { AUTH_BG } from "./config";
+import { AUTH_BRAND, AUTH_BRAND_BG, AUTH_PANEL_BG } from "./config";
 
 export function AuthShell({
   children,
@@ -9,43 +9,59 @@ export function AuthShell({
   cardClassName?: string;
 }) {
   return (
-    <main
-      className="relative flex min-h-svh items-start justify-center overflow-hidden px-4 pb-10 pt-16 sm:items-center sm:px-6 sm:pt-10"
-      style={{ backgroundColor: AUTH_BG }}
-    >
-      <img
-        src="/teams/dollar-mark.svg"
-        alt=""
-        aria-hidden
-        className="pointer-events-none absolute top-[7%] left-[-18%] h-auto w-[min(48vw,480px)] select-none opacity-100 max-sm:opacity-40"
-      />
-      <img
-        src="/teams/dollar-mark.svg"
-        alt=""
-        aria-hidden
-        className="pointer-events-none absolute top-[7%] right-[-18%] h-auto w-[min(48vw,480px)] scale-x-[-1] select-none opacity-100 max-sm:opacity-40"
-      />
-
-      <div className="relative z-10 mx-auto flex w-full max-w-[400px] flex-col items-center">
+    <main className="flex min-h-svh flex-col md:flex-row">
+      {/* Brand panel */}
+      <aside
+        className="relative flex w-full shrink-0 flex-col overflow-hidden px-6 py-8 md:w-[min(740px,45%)] md:min-h-svh md:px-12 md:py-14 lg:px-16"
+        style={{ backgroundColor: AUTH_BRAND_BG }}
+      >
         <img
-          src="/logo.svg"
-          alt="DECash"
-          className="h-auto w-[176px]"
-          width={176}
-          height={52}
+          src="/auth/brand-mark-vector.svg"
+          alt=""
+          aria-hidden
+          className="pointer-events-none absolute top-[12%] left-[-45%] h-auto w-[min(120%,760px)] max-w-none select-none md:left-[-52%] md:top-[10%]"
         />
 
-        <p className="mt-4 font-rubik-one text-lg uppercase leading-none text-black">
-          Confidential stablecoin payments.
-        </p>
-        <p className="mt-2 max-w-[394px] text-center font-montserrat text-[12px] font-normal leading-[1.5] text-black">
-          Send across chains without creating a direct public link between sender and recipient.
-        </p>
+        <div className="relative z-10 flex flex-col">
+          <img
+            src="/logo.svg"
+            alt="DECash"
+            className="h-auto w-[188px]"
+            width={188}
+            height={46}
+          />
 
-        <div className={`relative mt-10 w-full sm:mt-16 ${cardClassName ?? ""}`}>
+          <h1 className="mt-10 max-w-[558px] font-montserrat text-[32px] font-semibold capitalize leading-tight text-black md:mt-16 md:text-[46px]">
+            {AUTH_BRAND.headline}
+          </h1>
+          <p className="mt-4 max-w-[558px] font-montserrat text-[16px] font-normal leading-[1.5] text-black md:mt-5 md:text-[20px]">
+            {AUTH_BRAND.subhead}
+          </p>
+
+          <ul className="mt-8 hidden flex-col gap-8 md:mt-12 md:flex">
+            {AUTH_BRAND.features.map((feature) => (
+              <li key={feature.title} className="max-w-[480px]">
+                <p className="font-montserrat text-[20px] font-semibold capitalize text-black">
+                  {feature.title}
+                </p>
+                <p className="mt-2.5 font-montserrat text-[14px] font-normal leading-[1.5] text-black">
+                  {feature.body}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </aside>
+
+      {/* Form panel */}
+      <section
+        className="relative flex flex-1 items-start justify-center px-4 py-10 sm:px-6 md:items-center md:py-12"
+        style={{ backgroundColor: AUTH_PANEL_BG }}
+      >
+        <div className={`relative z-10 w-full max-w-[420px] ${cardClassName ?? ""}`}>
           {children}
         </div>
-      </div>
+      </section>
     </main>
   );
 }

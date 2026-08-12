@@ -32,7 +32,7 @@ export function LoginView() {
   return (
     <AuthShell>
       <form onSubmit={submit} className={AUTH_CARD_CLASS}>
-        <h1 className="text-center font-montserrat text-base font-semibold text-black">
+        <h1 className="mb-2 text-center font-montserrat text-base font-semibold text-black">
           Sign in
         </h1>
 

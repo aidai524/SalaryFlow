@@ -37,7 +37,7 @@ export function AuthField({
   autoComplete?: string;
 }) {
   return (
-    <div className="mt-5 first:mt-0">
+    <div className="mt-6 first:mt-0">
       <label htmlFor={id} className={AUTH_LABEL_CLASS}>
         {label}
       </label>

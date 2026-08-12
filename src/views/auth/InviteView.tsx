@@ -86,7 +86,7 @@ export function InviteView() {
     return (
       <AuthShell>
         <div className={AUTH_CARD_CLASS}>
-          <h1 className="text-center font-montserrat text-base font-semibold text-black">
+          <h1 className="mb-2 text-center font-montserrat text-base font-semibold text-black">
             Accept invitation
           </h1>
           <AuthField
@@ -135,7 +135,7 @@ export function InviteView() {
     return (
       <AuthShell>
         <div className={AUTH_CARD_CLASS}>
-          <h1 className="text-center font-montserrat text-base font-semibold text-black">
+          <h1 className="mb-2 text-center font-montserrat text-base font-semibold text-black">
             Invitation unavailable
           </h1>
           <AuthError message={formError || "Invalid invitation"} />
