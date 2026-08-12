@@ -208,12 +208,16 @@ paymentRoutes.post("/items/:itemId/quote", requireRole("admin"), async (c) => {
     return c.json({ error: `Amount cannot be represented with ${assets.destination.decimals} destination decimals`, code: "AMOUNT_PRECISION_UNSUPPORTED" }, 422);
   }
 
-  // CONFIDENTIAL_INTENTS refund/signer ids must be the Intents account id
-  // (EVM → lowercased address), matching prophet/ui confidential withdraw quotes.
+  // Signer for confidential payout must be the Intents account id (EVM → lowercased).
+  // Payout refunds go to the admin EOA on the origin chain (same as funding / Quick Pay).
   let intentsAccountId: string;
   try {
     intentsAccountId = toIntentsUserId(user.wallet_address);
   } catch {
+    return c.json({ error: "Payment wallet is not a valid EVM address", code: "PAYMENT_WALLET_INVALID" }, 422);
+  }
+  const refundTo = normalizePayoutAddress(user.wallet_address);
+  if (!refundTo) {
     return c.json({ error: "Payment wallet is not a valid EVM address", code: "PAYMENT_WALLET_INVALID" }, 422);
   }
 
@@ -228,8 +232,8 @@ paymentRoutes.post("/items/:itemId/quote", requireRole("admin"), async (c) => {
     amount: providerAmount,
     recipient: String(item.payout_endpoint),
     recipientType: "DESTINATION_CHAIN",
-    refundTo: intentsAccountId,
-    refundType: "CONFIDENTIAL_INTENTS",
+    refundTo,
+    refundType: "ORIGIN_CHAIN",
     confidentiality: "advanced",
     deadline: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
     slippageTolerance: INTENTS_QUOTE_DEFAULTS.slippageTolerance,
@@ -700,8 +704,8 @@ async function handleQuickPayQuote(
           amount: providerAmount,
           recipient,
           recipientType: "DESTINATION_CHAIN",
-          refundTo: intentsAccountId,
-          refundType: "CONFIDENTIAL_INTENTS",
+          refundTo,
+          refundType: "ORIGIN_CHAIN",
           confidentiality: "advanced",
           deadline: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
           slippageTolerance: INTENTS_QUOTE_DEFAULTS.slippageTolerance,
@@ -814,8 +818,8 @@ async function handleQuickPayQuote(
       amount: providerAmount,
       recipient,
       recipientType: "DESTINATION_CHAIN",
-      refundTo: intentsAccountId,
-      refundType: "CONFIDENTIAL_INTENTS",
+      refundTo,
+      refundType: "ORIGIN_CHAIN",
       confidentiality: "advanced",
       deadline: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
       slippageTolerance: INTENTS_QUOTE_DEFAULTS.slippageTolerance,

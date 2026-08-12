@@ -60,7 +60,7 @@ export function PaymentHistoryTable({
             <th className="px-3 py-4 font-montserrat text-[14px] font-medium text-[#606060]">Token</th>
             <th className="px-3 py-4 font-montserrat text-[14px] font-medium text-[#606060]">Memo</th>
             <th className="px-3 py-4 font-montserrat text-[14px] font-medium text-[#606060]">Payment Date</th>
-            <th className="px-3 py-4 font-montserrat text-[14px] font-medium text-[#606060]">Admin Tx</th>
+            <th className="px-3 py-4 font-montserrat text-[14px] font-medium text-[#606060]">Payment Tx</th>
             <th className="px-3 py-4 font-montserrat text-[14px] font-medium text-[#606060]">Receive Tx</th>
             <th className="px-5 py-4 font-montserrat text-[14px] font-medium text-[#606060]">Status</th>
           </tr>
