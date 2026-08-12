@@ -12,6 +12,36 @@ import type { OrgPaymentRow } from "@/lib/api";
 import { HISTORY_STATUS, TYPE_LABEL, mapPaymentStatus } from "../config";
 import clsx from "clsx";
 
+function TxLink({
+  href,
+  hash,
+}: {
+  href: string | null | undefined;
+  hash: string | null | undefined;
+}) {
+  if (!hash) {
+    return <span className="font-montserrat text-[14px] text-[#909090]">—</span>;
+  }
+  if (!href) {
+    return (
+      <span className="font-montserrat text-[14px] text-[#3f8afb]" title={hash}>
+        Tx
+      </span>
+    );
+  }
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      title={hash}
+      className="font-montserrat text-[14px] text-[#3f8afb] underline underline-offset-2 hover:opacity-80"
+    >
+      Tx
+    </a>
+  );
+}
+
 export function PaymentHistoryTable({
   payments,
   isLoading,
@@ -21,7 +51,7 @@ export function PaymentHistoryTable({
 }) {
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[980px] border-collapse">
+      <table className="w-full min-w-[1120px] border-collapse">
         <thead>
           <tr className="border-b border-[#ebebeb] text-left">
             <th className="px-5 py-4 font-montserrat text-[14px] font-medium text-[#606060]">Name</th>
@@ -30,19 +60,21 @@ export function PaymentHistoryTable({
             <th className="px-3 py-4 font-montserrat text-[14px] font-medium text-[#606060]">Token</th>
             <th className="px-3 py-4 font-montserrat text-[14px] font-medium text-[#606060]">Memo</th>
             <th className="px-3 py-4 font-montserrat text-[14px] font-medium text-[#606060]">Payment Date</th>
+            <th className="px-3 py-4 font-montserrat text-[14px] font-medium text-[#606060]">Admin Tx</th>
+            <th className="px-3 py-4 font-montserrat text-[14px] font-medium text-[#606060]">Receive Tx</th>
             <th className="px-5 py-4 font-montserrat text-[14px] font-medium text-[#606060]">Status</th>
           </tr>
         </thead>
         <tbody>
           {isLoading ? (
             <tr>
-              <td colSpan={7} className="px-5 py-10 font-montserrat text-[14px] text-[#909090]">
+              <td colSpan={9} className="px-5 py-10 font-montserrat text-[14px] text-[#909090]">
                 Loading…
               </td>
             </tr>
           ) : !payments || payments.length === 0 ? (
             <tr>
-              <td colSpan={7} className="px-5 py-10 font-montserrat text-[14px] text-[#909090]">
+              <td colSpan={9} className="px-5 py-10 font-montserrat text-[14px] text-[#909090]">
                 No payments in this period
               </td>
             </tr>
@@ -106,6 +138,12 @@ export function PaymentHistoryTable({
                   </td>
                   <td className="px-3 py-3.5 font-montserrat text-[14px] text-black">
                     {formatDateTime(row.paid_at)}
+                  </td>
+                  <td className="px-3 py-3.5">
+                    <TxLink href={row.adminExplorerUrl} hash={row.adminTxHash} />
+                  </td>
+                  <td className="px-3 py-3.5">
+                    <TxLink href={row.receiveExplorerUrl} hash={row.receiveTxHash} />
                   </td>
                   <td className="px-5 py-3.5">
                     <span className={`inline-flex items-center gap-1.5 font-space-grotesk text-[12px] ${status.className}`}>

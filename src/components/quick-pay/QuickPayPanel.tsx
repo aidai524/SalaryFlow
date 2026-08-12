@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { isAddress, type Address, type Hex } from "viem";
 import { useSendTransaction, useSwitchChain } from "wagmi";
 import { AddRecipientPillButton } from "@/components/AddRecipientPillButton";
@@ -45,6 +45,15 @@ function parseCompensationInput(raw: string): string | null {
   if (!/^(0|[1-9]\d*)(\.\d{0,6})?$/.test(cleaned)) return null;
   if (Number(cleaned) <= 0) return null;
   return cleaned;
+}
+
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const id = window.setTimeout(() => setDebounced(value), delayMs);
+    return () => window.clearTimeout(id);
+  }, [value, delayMs]);
+  return debounced;
 }
 
 export interface QuickPayPanelProps {
@@ -258,6 +267,7 @@ export function QuickPayPanel({
   }, [originToken, tokensReady, savedOriginAssetId, findByAssetId, findByChainAndSymbol]);
 
   const amountForQuote = parseCompensationInput(compensation);
+  const debouncedAmountForQuote = useDebouncedValue(amountForQuote, 900);
 
   // Dry preview is for Est. Cost only — do not include memo in the queryKey / body.
   // Memo is attached on the live quote at settle time.
@@ -269,15 +279,15 @@ export function QuickPayPanel({
       adhocAddress,
       originToken?.assetId,
       destToken?.assetId,
-      amountForQuote,
+      debouncedAmountForQuote,
     ],
     queryFn: async () => {
-      if (!originToken || !amountForQuote) throw new Error("Missing quote inputs");
+      if (!originToken || !debouncedAmountForQuote) throw new Error("Missing quote inputs");
       if (employee?.id && employee.endpoint) {
         return api.quoteQuickPayDry({
           employeeId: employee.id,
           originAsset: originToken.assetId,
-          amount: amountForQuote,
+          amount: debouncedAmountForQuote,
           destinationToken: destToken?.symbol || employee.token,
           destinationNetwork: destToken?.chain.chainName || employee.network,
           mode: paymentMode,
@@ -287,7 +297,7 @@ export function QuickPayPanel({
         return api.quoteQuickPayDry({
           destinationAddress: adhocAddress,
           originAsset: originToken.assetId,
-          amount: amountForQuote,
+          amount: debouncedAmountForQuote,
           destinationToken: destToken.symbol as "USDC" | "USDT",
           destinationNetwork: destToken.chain.chainName,
           mode: paymentMode,
@@ -295,7 +305,8 @@ export function QuickPayPanel({
       }
       throw new Error("Missing quote inputs");
     },
-    enabled: !!originToken && !!amountForQuote && canQuoteDestination,
+    enabled: !!originToken && !!debouncedAmountForQuote && canQuoteDestination,
+    placeholderData: keepPreviousData,
     refetchInterval: 60_000,
     retry: 1,
   });

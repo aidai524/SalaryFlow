@@ -9,6 +9,7 @@ import { encodeErc191Signature } from "../erc191";
 import {
   generateIntent,
   getSupportedTokens,
+  INTENTS_QUOTE_DEFAULTS,
   requestQuote,
   submitDepositTx,
   submitIntent,
@@ -231,7 +232,7 @@ paymentRoutes.post("/items/:itemId/quote", requireRole("admin"), async (c) => {
     refundType: "CONFIDENTIAL_INTENTS",
     confidentiality: "advanced",
     deadline: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
-    slippageTolerance: 100,
+    slippageTolerance: INTENTS_QUOTE_DEFAULTS.slippageTolerance,
   };
   const inserted = await c.env.DB.prepare(
     `INSERT OR IGNORE INTO payment_attempts
@@ -703,7 +704,7 @@ async function handleQuickPayQuote(
           refundType: "CONFIDENTIAL_INTENTS",
           confidentiality: "advanced",
           deadline: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-          slippageTolerance: 100,
+          slippageTolerance: INTENTS_QUOTE_DEFAULTS.slippageTolerance,
         };
         const payoutQuote = await requestQuote(c.env, payoutRequest);
         if (!/^\d+$/.test(String(payoutQuote.quote.amountIn || "")) || BigInt(payoutQuote.quote.amountIn) <= 0n) {
@@ -723,7 +724,7 @@ async function handleQuickPayQuote(
           refundType: "ORIGIN_CHAIN",
           confidentiality: "advanced",
           deadline: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
-          slippageTolerance: 100,
+          slippageTolerance: INTENTS_QUOTE_DEFAULTS.slippageTolerance,
         };
         const fundingQuote = await requestQuote(c.env, fundingRequest);
         return c.json({
@@ -756,7 +757,7 @@ async function handleQuickPayQuote(
         refundType: "ORIGIN_CHAIN",
         confidentiality,
         deadline: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
-        slippageTolerance: 100,
+        slippageTolerance: INTENTS_QUOTE_DEFAULTS.slippageTolerance,
       };
       const quote = await requestQuote(c.env, quoteRequest);
       return c.json({
@@ -817,7 +818,7 @@ async function handleQuickPayQuote(
       refundType: "CONFIDENTIAL_INTENTS",
       confidentiality: "advanced",
       deadline: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-      slippageTolerance: 100,
+      slippageTolerance: INTENTS_QUOTE_DEFAULTS.slippageTolerance,
     };
 
     try {
@@ -864,7 +865,7 @@ async function handleQuickPayQuote(
         refundType: "ORIGIN_CHAIN",
         confidentiality: "advanced",
         deadline: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
-        slippageTolerance: 100,
+        slippageTolerance: INTENTS_QUOTE_DEFAULTS.slippageTolerance,
       };
       const fundingQuote = await requestQuote(c.env, fundingRequest);
       const fundingHash = verifyOneClickQuote(c.env, fundingRequest, fundingQuote);
@@ -961,7 +962,7 @@ async function handleQuickPayQuote(
     refundType: "ORIGIN_CHAIN",
     confidentiality,
     deadline: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
-    slippageTolerance: 100,
+    slippageTolerance: INTENTS_QUOTE_DEFAULTS.slippageTolerance,
   };
 
   try {

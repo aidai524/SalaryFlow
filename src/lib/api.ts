@@ -227,6 +227,12 @@ export interface OrgPaymentRow {
   paid_at: string;
   period_key: string;
   memo: string | null;
+  /** Admin origin-chain deposit / funding tx. */
+  adminTxHash: string | null;
+  adminExplorerUrl: string | null;
+  /** Employee destination / receive settlement tx. */
+  receiveTxHash: string | null;
+  receiveExplorerUrl: string | null;
 }
 
 export type QuickPayQuoteTarget = {

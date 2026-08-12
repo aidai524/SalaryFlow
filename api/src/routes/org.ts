@@ -541,9 +541,12 @@ orgRoutes.get("/payments", requireRole("admin"), async (c) => {
   const rows = await c.env.DB.prepare(
     `SELECT ep.id, ep.employee_id, ep.amount_minor, ep.token, ep.network, ep.status,
             ep.paid_at, ep.created_at, ep.period_key, ep.memo, ep.recipient_name,
-            e.name, e.role_title, e.employee_type
+            e.name, e.role_title, e.employee_type,
+            pa.deposit_tx_hash, pa.funding_tx_hash, pa.origin_asset_id,
+            pa.destination_tx_hash, pa.destination_tx_explorer_url
      FROM employee_payments ep
      LEFT JOIN employees e ON e.id = ep.employee_id AND e.org_id = ep.org_id
+     LEFT JOIN payment_attempts pa ON pa.employee_payment_id = ep.id AND pa.state = 'confirmed'
      WHERE ep.org_id = ? AND ep.period_key = ?
      ORDER BY COALESCE(ep.paid_at, ep.created_at) DESC, ep.id DESC`,
   ).bind(user.org_id, selected.periodKey).all<{
@@ -561,11 +564,19 @@ orgRoutes.get("/payments", requireRole("admin"), async (c) => {
     name: string | null;
     role_title: string | null;
     employee_type: string | null;
+    deposit_tx_hash: string | null;
+    funding_tx_hash: string | null;
+    origin_asset_id: string | null;
+    destination_tx_hash: string | null;
+    destination_tx_explorer_url: string | null;
   }>();
 
   const payments = rows.results
     .map((r) => {
       const name = r.name || r.recipient_name || "Recipient";
+      const adminTxHash = r.deposit_tx_hash || r.funding_tx_hash || null;
+      const receiveTxHash = r.destination_tx_hash || null;
+      const originNetworkHint = networkHintFromOriginAssetId(r.origin_asset_id);
       return {
         id: r.id,
         employeeId: r.employee_id,
@@ -579,6 +590,15 @@ orgRoutes.get("/payments", requireRole("admin"), async (c) => {
         paid_at: r.paid_at || r.created_at,
         period_key: r.period_key,
         memo: r.memo,
+        adminTxHash,
+        adminExplorerUrl: adminTxHash && originNetworkHint
+          ? explorerUrlForTx(originNetworkHint, adminTxHash)
+          : adminTxHash
+            ? explorerUrlForTx(r.network, adminTxHash)
+            : null,
+        receiveTxHash,
+        receiveExplorerUrl: r.destination_tx_explorer_url
+          || (receiveTxHash && r.network ? explorerUrlForTx(r.network, receiveTxHash) : null),
       };
     })
     .filter((r) => {
@@ -824,6 +844,18 @@ function explorerUrlForTx(network: string, txHash: string): string | null {
   if (n.includes("optimism")) return `https://optimistic.etherscan.io/tx/${hash}`;
   if (n.includes("ethereum") || n === "eth" || n === "mainnet") return `https://etherscan.io/tx/${hash}`;
   return `https://basescan.org/tx/${hash}`;
+}
+
+/** Infer a display/network hint from a 1Click origin asset id (e.g. nep141:eth-0x….omft.near). */
+function networkHintFromOriginAssetId(originAssetId: string | null | undefined): string | null {
+  if (!originAssetId) return null;
+  const id = originAssetId.toLowerCase();
+  if (id.includes("arbitrum") || /(^|[^a-z])arb([^a-z]|$)/.test(id)) return "arbitrum";
+  if (id.includes("base")) return "base";
+  if (id.includes("polygon") || id.includes("matic")) return "polygon";
+  if (id.includes("optimism") || id.includes("-op-") || id.includes(":op-")) return "optimism";
+  if (id.includes("ethereum") || /(^|[^a-z])eth([^a-z]|$)/.test(id)) return "ethereum";
+  return null;
 }
 
 orgRoutes.post("/employees", requireRole("admin"), async (c) => {

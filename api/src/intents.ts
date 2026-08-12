@@ -38,6 +38,12 @@ async function post<T>(env: Env, path: string, body: unknown, opts: { usePartner
   return parseResponse<T>(res, path);
 }
 
+/** 1Click quote defaults. slippageTolerance is basis points (100 = 1%). */
+export const INTENTS_QUOTE_DEFAULTS = {
+  referral: "stableflow",
+  slippageTolerance: 5,
+} as const;
+
 export interface QuoteRequest {
   dry: boolean;
   swapType: "EXACT_INPUT" | "EXACT_OUTPUT";
@@ -74,7 +80,10 @@ export interface QuoteResponse {
 }
 
 export function requestQuote(env: Env, req: QuoteRequest): Promise<QuoteResponse> {
-  return post<QuoteResponse>(env, "/v0/quote", req);
+  return post<QuoteResponse>(env, "/v0/quote", {
+    ...req,
+    referral: INTENTS_QUOTE_DEFAULTS.referral,
+  });
 }
 
 function sameJsonValue(left: unknown, right: unknown): boolean {
