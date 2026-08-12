@@ -13,7 +13,6 @@ import type { TeamPaymentDateKey, TeamPaymentSchedule } from "@/lib/api";
 import { formatCurrencyFromMinor, formatDate } from "@/lib/format";
 import { useAuthStore } from "@/stores/auth";
 import { useIntentsTokensStore } from "@/stores/intents-tokens";
-import { useQuickPayPrefsStore } from "@/stores/quick-pay-prefs";
 import { DEFAULT_MONTHLY_PAYMENT_DATE, DEFAULT_PAYMENT_SCHEDULE } from "./create-team/config";
 import { AddRecipientDialog } from "./recipients/components/AddRecipientDialog";
 
@@ -47,7 +46,6 @@ export function PayView() {
     orgContextQuery.data?.org.payment_date_key || DEFAULT_MONTHLY_PAYMENT_DATE;
   const [addOpen, setAddOpen] = useState(false);
   const [addEndpoint, setAddEndpoint] = useState<string | null>(null);
-  const paymentMode = useQuickPayPrefsStore((s) => s.paymentMode);
 
   useEffect(() => {
     void ensureFresh();
@@ -81,7 +79,7 @@ export function PayView() {
         </button> */}
       </div>
 
-      <ConfidentialPaymentsBanner visible={paymentMode === "private"} />
+      <ConfidentialPaymentsBanner visible />
 
       {/* Stats strip */}
       <div className="mb-5 overflow-hidden rounded-[20px] border border-white bg-[#fdfdfd] shadow-[0px_0px_20px_0px_rgba(0,0,0,0.06)]">
