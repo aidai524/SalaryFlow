@@ -512,7 +512,7 @@ paymentRoutes.post("/attempts/:attemptId/reconcile", requireRole("admin"), async
 // after the wallet returns a deposit tx hash.
 // ---------------------------------------------------------------------------
 
-const PRIVATE_FUNDING_BUFFER_BPS = 10; // 0.1% buffer so confidential balance covers leg B amountIn
+const PRIVATE_FUNDING_BUFFER_BPS = 1; // 0.01% buffer so confidential balance covers leg B amountIn
 
 function applyFundingBuffer(amountIn: string): string {
   const value = BigInt(amountIn);

@@ -47,6 +47,9 @@ function parseCompensationInput(raw: string): string | null {
   return cleaned;
 }
 
+/** Pause after intent sign so wallet UIs (e.g. OKX) can tear down before eth_sendTransaction. */
+const PRIVATE_POST_SIGN_DELAY_MS = 250;
+
 function useDebouncedValue<T>(value: T, delayMs: number): T {
   const [debounced, setDebounced] = useState(value);
   useEffect(() => {
@@ -420,15 +423,20 @@ export function QuickPayPanel({
         }
 
         setPhase("signing");
-        const signed = await wallet.signMessage({ message: intentPayload });
-
-        setPhase("sending");
-        if (fundingDeadline && Date.parse(String(fundingDeadline)) <= Date.now()) {
-          throw new Error("Funding quote expired; get a fresh quote and try again");
-        }
         if (chainId && wallet.account.chainId !== chainId) {
           await switchChainAsync({ chainId });
         }
+        const signed = await wallet.signMessage({ message: intentPayload });
+
+        if (fundingDeadline && Date.parse(String(fundingDeadline)) <= Date.now()) {
+          throw new Error("Funding quote expired; get a fresh quote and try again");
+        }
+        await new Promise((r) => setTimeout(r, PRIVATE_POST_SIGN_DELAY_MS));
+        if (fundingDeadline && Date.parse(String(fundingDeadline)) <= Date.now()) {
+          throw new Error("Funding quote expired; get a fresh quote and try again");
+        }
+
+        setPhase("sending");
         const data = encodeErc20Transfer(fundingAddress as Address, BigInt(amountIn));
         const hash = await sendTransactionAsync({
           to: originToken.contractAddress as Address,
