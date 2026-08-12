@@ -1,4 +1,5 @@
 import { AnimatePresence, motion } from "motion/react";
+import { Link } from "react-router-dom";
 import { IconLock } from "@/components/icons/lock";
 
 export function ConfidentialPaymentsBanner({ visible }: { visible: boolean }) {
@@ -26,13 +27,12 @@ export function ConfidentialPaymentsBanner({ visible }: { visible: boolean }) {
               </p>
             </div>
           </div>
-          <a
-            href=""
-            onClick={(e) => e.preventDefault()}
+          <Link
+            to="/howitworks"
             className="shrink-0 self-end font-montserrat text-[12px] font-medium text-[#606060] underline underline-offset-2 sm:self-auto"
           >
             Learn more
-          </a>
+          </Link>
         </motion.div>
       ) : null}
     </AnimatePresence>

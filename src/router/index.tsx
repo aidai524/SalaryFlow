@@ -1,6 +1,7 @@
 import { createBrowserRouter, Navigate } from "react-router-dom";
 import { AppLayout } from "@/layouts/AppLayout";
 import { CreateTeamView } from "@/views/admin/CreateTeamView";
+import { HowItWorksView } from "@/views/admin/HowItWorksView";
 import { OverviewView } from "@/views/admin/OverviewView";
 import { PayView } from "@/views/admin/PayView";
 import { PaymentHistoryView } from "@/views/admin/PaymentHistoryView";
@@ -57,6 +58,7 @@ export const router = createBrowserRouter([
               { path: "/overview", element: <OverviewView /> },
               { path: "/teams/create", element: <CreateTeamView /> },
               { path: "/payments", element: <PaymentHistoryView /> },
+              { path: "/howitworks", element: <HowItWorksView /> },
             ],
           },
           {
