@@ -3,8 +3,15 @@ import { Link, useNavigate } from "react-router-dom";
 import { useRegisterMutation, useRegistrationConfigQuery } from "@/hooks/use-auth-api";
 import { adminHomePath, useAuthStore } from "@/stores/auth";
 import { AuthShell } from "./AuthShell";
-import { AuthError, AuthField, authErrorMessage, AUTH_BUTTON_CLASS, AUTH_CARD_CLASS } from "./auth-shared";
-import { AUTH_LINK_CLASS } from "./config";
+import {
+  AuthBetaBanner,
+  AuthError,
+  AuthField,
+  authErrorMessage,
+  AUTH_BUTTON_CLASS,
+  AUTH_CARD_CLASS,
+} from "./auth-shared";
+import { AUTH_LINK_ACCENT_CLASS, AUTH_LINK_CLASS } from "./config";
 
 export function RegisterView() {
   const navigate = useNavigate();
@@ -41,9 +48,9 @@ export function RegisterView() {
   };
 
   return (
-    <AuthShell>
+    <AuthShell panelTop={<AuthBetaBanner />}>
       <form onSubmit={submit} className={AUTH_CARD_CLASS}>
-        <h1 className="mb-2 text-center font-montserrat text-base font-semibold text-black">
+        <h1 className="text-center font-montserrat text-xl font-semibold text-black">
           Create account
         </h1>
 
@@ -102,9 +109,12 @@ export function RegisterView() {
           {registerMutation.isPending ? "Please wait…" : "Create account"}
         </button>
 
-        <Link to="/login" className={`block ${AUTH_LINK_CLASS}`}>
-          Already have an account? Sign in
-        </Link>
+        <p className={`block ${AUTH_LINK_CLASS}`}>
+          Already have an account?{" "}
+          <Link to="/login" className={AUTH_LINK_ACCENT_CLASS}>
+            Sign in
+          </Link>
+        </p>
       </form>
     </AuthShell>
   );

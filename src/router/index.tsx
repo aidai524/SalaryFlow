@@ -45,8 +45,18 @@ export const router = createBrowserRouter([
     element: <InviteView />,
   },
   {
+    path: "/howitworks",
+    element: <HowItWorksView />,
+  },
+  {
     element: <RequireAuth />,
     children: [
+      {
+        element: <RequireAdmin />,
+        children: [
+          { path: "/teams/create", element: <CreateTeamView /> },
+        ],
+      },
       {
         element: <AppLayout />,
         children: [
@@ -56,9 +66,7 @@ export const router = createBrowserRouter([
               { path: "/pay", element: <PayView /> },
               { path: "/recipients", element: <RecipientsView /> },
               { path: "/overview", element: <OverviewView /> },
-              { path: "/teams/create", element: <CreateTeamView /> },
               { path: "/payments", element: <PaymentHistoryView /> },
-              { path: "/howitworks", element: <HowItWorksView /> },
             ],
           },
           {

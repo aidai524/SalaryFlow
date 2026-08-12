@@ -207,7 +207,7 @@
   }
 
   .splash-mark {
-    @apply grid size-11 place-items-center rounded-xl bg-primary font-heading text-sm font-semibold text-primary-foreground;
+    @apply h-7 w-auto;
   }
 }
 

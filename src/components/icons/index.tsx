@@ -14,3 +14,5 @@ export * from "./money";
 export * from "./database";
 export * from "./wallet";
 export * from "./meno";
+export * from "./shield";
+export * from "./node";

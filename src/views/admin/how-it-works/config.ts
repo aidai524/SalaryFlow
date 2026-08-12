@@ -5,7 +5,8 @@ export const SECTION_CARD_CLASS =
   "rounded-[16px] border border-black/5 bg-white shadow-[0px_0px_16px_0px_rgba(0,0,0,0.04)]";
 
 export const BACK_LABEL = "Back";
-export const BACK_HREF = "/pay";
+/** Fallback when there is no in-app history to return to. */
+export const BACK_FALLBACK_HREF = "/login";
 
 export const HERO = {
   TITLE: "How Confidential Payments Work",

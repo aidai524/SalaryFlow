@@ -4,6 +4,7 @@ import { useAcceptInviteMutation, useResolveInviteQuery } from "@/hooks/use-auth
 import { useAuthStore } from "@/stores/auth";
 import { AuthShell } from "./AuthShell";
 import {
+  AuthBetaBanner,
   AuthError,
   AuthField,
   authErrorMessage,
@@ -11,7 +12,7 @@ import {
   AUTH_BUTTON_CLASS,
   AUTH_CARD_CLASS,
 } from "./auth-shared";
-import { AUTH_LINK_CLASS } from "./config";
+import { AUTH_LINK_ACCENT_CLASS, AUTH_LINK_CLASS } from "./config";
 
 export function InviteView() {
   const navigate = useNavigate();
@@ -84,9 +85,9 @@ export function InviteView() {
   // Paste-link mode (no token)
   if (!activeToken) {
     return (
-      <AuthShell>
+      <AuthShell panelTop={<AuthBetaBanner />}>
         <div className={AUTH_CARD_CLASS}>
-          <h1 className="mb-2 text-center font-montserrat text-base font-semibold text-black">
+          <h1 className="text-center font-montserrat text-xl font-semibold text-black">
             Accept invitation
           </h1>
           <AuthField
@@ -106,9 +107,12 @@ export function InviteView() {
           >
             Continue
           </button>
-          <Link to="/login" className={`block ${AUTH_LINK_CLASS}`}>
-            Already have an account? Sign in
-          </Link>
+          <p className={`block ${AUTH_LINK_CLASS}`}>
+            Already have an account?{" "}
+            <Link to="/login" className={AUTH_LINK_ACCENT_CLASS}>
+              Sign in
+            </Link>
+          </p>
         </div>
       </AuthShell>
     );
@@ -120,7 +124,7 @@ export function InviteView() {
 
   if (resolving || (invite && !invite.accountExists && !acceptMutation.error)) {
     return (
-      <AuthShell>
+      <AuthShell panelTop={<AuthBetaBanner />}>
         <div className={`${AUTH_CARD_CLASS} items-center py-10`}>
           <span className="size-5 animate-spin rounded-full border-2 border-black border-r-transparent" />
           <p className="mt-4 font-montserrat text-sm text-[#606060]">
@@ -133,13 +137,13 @@ export function InviteView() {
 
   if (!invite || formError) {
     return (
-      <AuthShell>
+      <AuthShell panelTop={<AuthBetaBanner />}>
         <div className={AUTH_CARD_CLASS}>
-          <h1 className="mb-2 text-center font-montserrat text-base font-semibold text-black">
+          <h1 className="text-center font-montserrat text-xl font-semibold text-black">
             Invitation unavailable
           </h1>
           <AuthError message={formError || "Invalid invitation"} />
-          <Link to="/login" className={`block ${AUTH_LINK_CLASS}`}>
+          <Link to="/login" className={`block ${AUTH_LINK_CLASS} ${AUTH_LINK_ACCENT_CLASS}`}>
             Back to sign in
           </Link>
         </div>
@@ -149,9 +153,9 @@ export function InviteView() {
 
   if (invite.accountExists) {
     return (
-      <AuthShell>
+      <AuthShell panelTop={<AuthBetaBanner />}>
         <div className={AUTH_CARD_CLASS}>
-          <h1 className="text-center font-montserrat text-lg font-semibold text-black">
+          <h1 className="text-center font-montserrat text-xl font-semibold text-black">
             Welcome!
           </h1>
           <p className="mt-4 text-center font-montserrat text-sm font-medium text-[#606060]">

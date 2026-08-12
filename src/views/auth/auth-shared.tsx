@@ -1,10 +1,28 @@
 import { ApiError } from "@/lib/api";
+import { IconAlert } from "@/components/icons";
 import {
+  AUTH_BRAND,
   AUTH_BUTTON_CLASS,
   AUTH_CARD_CLASS,
   AUTH_INPUT_CLASS,
   AUTH_LABEL_CLASS,
 } from "./config";
+
+export function AuthBetaBanner() {
+  return (
+    <div className="inline-flex h-8 items-center gap-2 rounded-full bg-[rgba(63,138,251,0.2)] px-3">
+      <span
+        className="grid size-3.5 shrink-0 place-items-center rounded-full bg-[#3f8afb] text-white"
+        aria-hidden
+      >
+        <IconAlert className="h-[7px] w-[2px]" />
+      </span>
+      <span className="font-montserrat text-sm font-medium text-[#3f8afb]">
+        {AUTH_BRAND.betaLabel}
+      </span>
+    </div>
+  );
+}
 
 export function AuthError({ message }: { message: string }) {
   if (!message) return null;
@@ -37,7 +55,7 @@ export function AuthField({
   autoComplete?: string;
 }) {
   return (
-    <div className="mt-6 first:mt-0">
+    <div className="mt-5">
       <label htmlFor={id} className={AUTH_LABEL_CLASS}>
         {label}
       </label>
