@@ -29,6 +29,13 @@ import { useQuickPayPrefsStore } from "@/stores/quick-pay-prefs";
 import { useTokenBalancesStore } from "@/stores/token-balances";
 import { useWallet } from "@/wallet";
 import { encodeErc20Transfer } from "@/wallet/evm/transfer";
+import { QUICK_PAY_TOAST } from "./config";
+import {
+  isDryQuoteStale,
+  liveQuoteSettleErrorMessage,
+  sameEthereumAddress,
+  validateLiveQuoteForSettle,
+} from "./utils";
 
 /** Thrown when balance check already showed a toast; skip inline error UI. */
 class BalanceGateError extends Error {
@@ -307,7 +314,13 @@ export function QuickPayPanel({
   });
 
   const quote = dryQuoteQuery.data?.quote;
-  const quoting = dryQuoteQuery.isFetching;
+  const dryQuoteStale = isDryQuoteStale({
+    amountForQuote,
+    debouncedAmountForQuote,
+    isPlaceholderData: dryQuoteQuery.isPlaceholderData,
+    isPending: dryQuoteQuery.isPending,
+    isFetching: dryQuoteQuery.isFetching,
+  });
   const quoteError = dryQuoteQuery.isError
     ? formatQuoteErrorMessage(dryQuoteQuery.error, originToken?.decimals ?? 6)
     : null;
@@ -357,18 +370,11 @@ export function QuickPayPanel({
       if (!paymentWallet) {
         throw new Error("Connect your payment wallet first");
       }
+      if (!sameEthereumAddress(paymentWallet, wallet.account.address)) {
+        toast.fail({ title: QUICK_PAY_TOAST.SWITCH_BOUND_WALLET });
+        throw new BalanceGateError("Wallet mismatch");
+      }
       if (!originToken.contractAddress) throw new Error("Origin token has no contract address");
-      if (!quote.amountIn) throw new Error("Quote missing deposit details");
-
-      const balance = await fetchOneBalance(paymentWallet, originToken);
-      if (!balance || balance.status !== "success" || balance.raw == null) {
-        toast.fail({ title: "Could not read wallet balance" });
-        throw new BalanceGateError("Could not read wallet balance");
-      }
-      if (balance.raw < BigInt(quote.amountIn)) {
-        toast.fail({ title: "Insufficient balance" });
-        throw new BalanceGateError("Insufficient balance");
-      }
 
       setPhase("quoting");
       const memoValue = memo.trim() || null;
@@ -396,24 +402,30 @@ export function QuickPayPanel({
           mode: PAYMENT_MODE,
           memo: memoValue,
         });
-      if (!live.context) throw new Error("Live quote missing commit context");
+      const settled = validateLiveQuoteForSettle(live);
+      if (!settled.ok) {
+        throw new Error(liveQuoteSettleErrorMessage(settled.reason));
+      }
 
       const chainId = networkToChainId(originToken.chain.chainName) ?? originToken.chain.chainId;
       const amountLabel = `${amountForQuote} ${destSymbol}`;
       const recipientLabel = employee?.name || formatAddress(adhocAddress || destinationAddress);
 
-      const depositAddress = live.quote.depositAddress;
-      const amountIn = live.quote.amountIn;
-      if (!depositAddress || !amountIn) throw new Error("Quote missing deposit details");
-      if (live.quote.deadline && Date.parse(String(live.quote.deadline)) <= Date.now()) {
-        throw new Error("Quote expired; get a fresh quote and try again");
+      const balance = await fetchOneBalance(paymentWallet, originToken);
+      if (!balance || balance.status !== "success" || balance.raw == null) {
+        toast.fail({ title: QUICK_PAY_TOAST.COULD_NOT_READ_BALANCE });
+        throw new BalanceGateError("Could not read wallet balance");
+      }
+      if (balance.raw < settled.amountIn) {
+        toast.fail({ title: QUICK_PAY_TOAST.INSUFFICIENT_BALANCE });
+        throw new BalanceGateError("Insufficient balance");
       }
 
       setPhase("sending");
       if (chainId && wallet.account.chainId !== chainId) {
         await switchChainAsync({ chainId });
       }
-      const data = encodeErc20Transfer(depositAddress as Address, BigInt(amountIn));
+      const data = encodeErc20Transfer(settled.depositAddress as Address, settled.amountIn);
       const hash = await sendTransactionAsync({
         to: originToken.contractAddress as Address,
         data: data as Hex,
@@ -421,7 +433,7 @@ export function QuickPayPanel({
         chainId: chainId || undefined,
       });
       enqueueQuickPayCommit({
-        context: live.context,
+        context: settled.context,
         txHash: hash,
         employeeName: recipientLabel,
         amountLabel,
@@ -785,7 +797,7 @@ export function QuickPayPanel({
           || !amountForQuote
           || busy
           || !canQuoteDestination
-          || quoting
+          || dryQuoteStale
           || !!quoteError
           || !quote
         }
@@ -794,7 +806,7 @@ export function QuickPayPanel({
         }}
         className="inline-flex h-14 w-full items-center justify-center gap-2 rounded-[12px] bg-black font-montserrat text-[16px] font-medium text-white shadow-[0px_0px_6px_0px_rgba(0,0,0,0.06)] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
       >
-        {busy || quoting ? (
+        {busy || dryQuoteStale ? (
           <span className="size-4 animate-spin rounded-full border-2 border-white border-r-transparent" />
         ) : null}
         {busy
