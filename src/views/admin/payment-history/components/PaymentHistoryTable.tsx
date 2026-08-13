@@ -106,7 +106,7 @@ export function PaymentHistoryTable({
                     {TYPE_LABEL[row.employee_type] || row.employee_type}
                   </td>
                   <td className="px-3 py-3.5 font-montserrat text-[14px] text-black">
-                    {formatTokenMinor(row.amount_minor, { maximumFractionDigits: 0 })}
+                    {formatTokenMinor(row.amount_minor, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </td>
                   <td className="px-3 py-3.5">
                     <div className="flex items-center gap-2">

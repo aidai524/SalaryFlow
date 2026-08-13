@@ -17,7 +17,7 @@ type BarItem = OrgOverview["volume"]["bars"][number];
 function formatAxisTick(minor: number): string {
   const value = Number(minor) / 1_000_000;
   if (value >= 1000) return `$${formatNumber(value / 1000, { maximumFractionDigits: 0 })}K`;
-  return `$${formatNumber(value, { maximumFractionDigits: 0 })}`;
+  return `$${formatNumber(value, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 function formatBarAmount(minor: number): string {

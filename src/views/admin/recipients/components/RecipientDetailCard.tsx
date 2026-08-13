@@ -319,7 +319,7 @@ export function RecipientDetailCard({
                     {statusMeta.label}
                   </span>
                   <span className="shrink-0">
-                    {formatTokenMinor(p.amount_minor, { maximumFractionDigits: 0 })} {p.token}
+                    {formatTokenMinor(p.amount_minor, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {p.token}
                   </span>
                   {p.explorerUrl || p.txHash ? (
                     <a

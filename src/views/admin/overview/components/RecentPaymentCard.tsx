@@ -68,7 +68,7 @@ export function RecentPaymentCard({
                         className="size-4 rounded-full object-cover"
                       />
                       <span className="font-montserrat text-[13px] text-black">
-                        {formatTokenMinor(row.amount_minor, { maximumFractionDigits: 0 })} {row.token} ·{" "}
+                        {formatTokenMinor(row.amount_minor, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {row.token} ·{" "}
                         {row.network}
                       </span>
                       {row.status === "processing" ? (

@@ -1,16 +1,52 @@
 /** English-locale number / currency / date helpers (Intl). */
 
-const numberFmt = new Intl.NumberFormat("en-US", {
+export type AmountRoundingMode =
+  | "ceil"
+  | "floor"
+  | "expand"
+  | "trunc"
+  | "halfCeil"
+  | "halfFloor"
+  | "halfExpand"
+  | "halfTrunc"
+  | "halfEven";
+
+export type AmountFormatOptions = {
+  minimumFractionDigits?: number;
+  maximumFractionDigits?: number;
+  roundingMode?: AmountRoundingMode;
+};
+
+const DEFAULT_ROUNDING_MODE: AmountRoundingMode = "trunc";
+
+/** Current TS lib.dom NumberFormatOptions does not include roundingMode. */
+function intlNumberOptions(options: {
+  style?: "decimal" | "currency";
+  currency?: string;
+  minimumFractionDigits: number;
+  maximumFractionDigits: number;
+  roundingMode: AmountRoundingMode;
+}): Intl.NumberFormatOptions {
+  return options as Intl.NumberFormatOptions;
+}
+
+function roundingModeOf(options?: AmountFormatOptions): AmountRoundingMode {
+  return options?.roundingMode ?? DEFAULT_ROUNDING_MODE;
+}
+
+const numberFmt = new Intl.NumberFormat("en-US", intlNumberOptions({
   minimumFractionDigits: 0,
   maximumFractionDigits: 6,
-});
+  roundingMode: DEFAULT_ROUNDING_MODE,
+}));
 
-const currencyFmt = new Intl.NumberFormat("en-US", {
+const currencyFmt = new Intl.NumberFormat("en-US", intlNumberOptions({
   style: "currency",
   currency: "USD",
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
-});
+  roundingMode: DEFAULT_ROUNDING_MODE,
+}));
 
 const dateFmt = new Intl.DateTimeFormat("en-US", {
   month: "short",
@@ -21,23 +57,36 @@ const dateFmt = new Intl.DateTimeFormat("en-US", {
 /** Format a decimal number with en-US grouping (e.g. 5,000.23). */
 export function formatNumber(
   value: number | string,
-  options?: { minimumFractionDigits?: number; maximumFractionDigits?: number },
+  options?: AmountFormatOptions,
 ): string {
   const n = typeof value === "string" ? Number(value) : value;
   if (!Number.isFinite(n)) return "0";
   if (options) {
-    return new Intl.NumberFormat("en-US", {
+    return new Intl.NumberFormat("en-US", intlNumberOptions({
       minimumFractionDigits: options.minimumFractionDigits ?? 0,
       maximumFractionDigits: options.maximumFractionDigits ?? 6,
-    }).format(n);
+      roundingMode: roundingModeOf(options),
+    })).format(n);
   }
   return numberFmt.format(n);
 }
 
 /** Format USD currency (e.g. $65,880.00). */
-export function formatCurrency(value: number | string): string {
+export function formatCurrency(
+  value: number | string,
+  options?: AmountFormatOptions,
+): string {
   const n = typeof value === "string" ? Number(value) : value;
   if (!Number.isFinite(n)) return "$0.00";
+  if (options) {
+    return new Intl.NumberFormat("en-US", intlNumberOptions({
+      style: "currency",
+      currency: "USD",
+      minimumFractionDigits: options.minimumFractionDigits ?? 2,
+      maximumFractionDigits: options.maximumFractionDigits ?? 2,
+      roundingMode: roundingModeOf(options),
+    })).format(n);
+  }
   return currencyFmt.format(n);
 }
 
@@ -47,18 +96,22 @@ export function formatCurrency(value: number | string): string {
  */
 export function formatTokenMinor(
   amountMinor: number,
-  options?: { minimumFractionDigits?: number; maximumFractionDigits?: number },
+  options?: AmountFormatOptions,
 ): string {
   const decimal = Number(amountMinor) / 1_000_000;
   return formatNumber(decimal, {
     minimumFractionDigits: options?.minimumFractionDigits ?? 0,
     maximumFractionDigits: options?.maximumFractionDigits ?? 6,
+    roundingMode: roundingModeOf(options),
   });
 }
 
 /** Format USD from token minor units (1e6). */
-export function formatCurrencyFromMinor(amountMinor: number): string {
-  return formatCurrency(Number(amountMinor) / 1_000_000);
+export function formatCurrencyFromMinor(
+  amountMinor: number,
+  options?: AmountFormatOptions,
+): string {
+  return formatCurrency(Number(amountMinor) / 1_000_000, options);
 }
 
 /** Format a Date / ISO / YYYY-MM-DD as "Sep 1, 2026". */

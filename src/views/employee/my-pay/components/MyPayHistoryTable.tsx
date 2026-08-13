@@ -60,7 +60,7 @@ export function MyPayHistoryTable({
                   )}
                 >
                   <td className="px-6 py-4 font-montserrat text-[14px] text-black">
-                    {formatTokenMinor(row.amount_minor, { maximumFractionDigits: 0 })}
+                    {formatTokenMinor(row.amount_minor, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </td>
                   <td className="px-6 py-4">
                     <span className="inline-flex items-center gap-1.5 font-montserrat text-[14px] text-black">
