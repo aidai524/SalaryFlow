@@ -30,7 +30,7 @@ export function OverviewStats({
           subtitle={stats ? `${stats.awaitingCount} Payments` : null}
         />
         <StatCell
-          label="Expired Date"
+          label="Next Payment Day"
           value={stats ? paydayDisplay || "—" : isLoading ? "…" : "—"}
           subtitle={stats ? daysLabel : null}
         />
