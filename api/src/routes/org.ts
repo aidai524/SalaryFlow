@@ -328,7 +328,6 @@ orgRoutes.get("/overview", requireRole("admin"), async (c) => {
 
   const paidIdsSelected = new Set<string>();
   let paidMinor = 0;
-  let paidCount = 0;
   for (const row of paidRows.results) {
     if (row.period_key !== selected.periodKey || row.status !== "paid") continue;
     if (!row.employee_id) continue;
@@ -336,7 +335,6 @@ orgRoutes.get("/overview", requireRole("admin"), async (c) => {
     if (!emp) continue;
     paidIdsSelected.add(emp.id);
     paidMinor += Number(row.amount_minor || 0);
-    paidCount += 1;
   }
 
   let awaitingMinor = 0;
@@ -348,6 +346,7 @@ orgRoutes.get("/overview", requireRole("admin"), async (c) => {
   }
 
   const recipientsCount = fullTime.length;
+  const paidCount = paidIdsSelected.size;
   const progress = Math.round((paidCount / (recipientsCount || 1)) * 100);
   const daysLeft = daysUntilPayday(selected.payday, now);
 
