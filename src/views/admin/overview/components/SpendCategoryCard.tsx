@@ -1,6 +1,13 @@
-import { Cell, Pie, PieChart, ResponsiveContainer } from "recharts";
+import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 import type { OrgOverview } from "@/lib/api";
 import { CARD_CLASS, CATEGORY_COLORS } from "../config";
+
+type CategorySlice = {
+  name: string;
+  value: number;
+  pct: number;
+  type: "employee" | "contractor" | "others";
+};
 
 export function SpendCategoryCard({
   category,
@@ -45,6 +52,26 @@ export function SpendCategoryCard({
                     <Cell key={entry.type} fill={CATEGORY_COLORS[entry.type]} />
                   ))}
                 </Pie>
+                <Tooltip
+                  content={({ active, payload }) => {
+                    if (!active || !payload?.length) return null;
+                    const item = payload[0].payload as CategorySlice;
+                    return (
+                      <div className="rounded-[10px] border border-black/10 bg-white px-3 py-2 shadow-sm">
+                        <div className="mb-1 flex items-center gap-1.5">
+                          <span
+                            className="size-2 rounded-[2px]"
+                            style={{ backgroundColor: CATEGORY_COLORS[item.type] }}
+                          />
+                          <p className="font-montserrat text-[12px] text-[#606060]">{item.name}</p>
+                        </div>
+                        <p className="font-montserrat text-[13px] font-medium text-black">
+                          {item.value} · {item.pct}%
+                        </p>
+                      </div>
+                    );
+                  }}
+                />
               </PieChart>
             </ResponsiveContainer>
           </div>

@@ -72,7 +72,7 @@ export function RecentPaymentCard({
                         {row.network}
                       </span>
                       {row.status === "processing" ? (
-                        <IconLoading className="size-3.5 text-[#4b7cff]" />
+                        <IconLoading className="size-3.5 animate-spin text-[#4b7cff]" />
                       ) : (
                         <span className="inline-flex size-4 items-center justify-center rounded-full bg-[#0ed000]/15 text-[#0ed000]">
                           <IconCheck className="size-2" />
