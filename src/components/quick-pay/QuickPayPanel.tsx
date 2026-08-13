@@ -108,7 +108,6 @@ export function QuickPayPanel({
   const [destDialogOpen, setDestDialogOpen] = useState(false);
   const [originDialogOpen, setOriginDialogOpen] = useState(false);
   const [phase, setPhase] = useState<"idle" | "quoting" | "sending" | "done" | "error">("idle");
-  const [error, setError] = useState<string | null>(null);
   const [pendingBind, setPendingBind] = useState(false);
   const [bindingWallet, setBindingWallet] = useState(false);
 
@@ -137,7 +136,6 @@ export function QuickPayPanel({
   };
 
   const connectAndBindWallet = () => {
-    setError(null);
     if (wallet.isConnected && wallet.account?.address) {
       void bindConnectedWallet(wallet.account.address).catch((cause) => {
         const msg = cause instanceof ApiError
@@ -146,7 +144,6 @@ export function QuickPayPanel({
             ? cause.message
             : "Unable to bind wallet";
         toast.fail({ title: msg });
-        setError(msg);
       });
       return;
     }
@@ -171,7 +168,6 @@ export function QuickPayPanel({
             ? cause.message
             : "Unable to bind wallet";
         toast.fail({ title: msg });
-        setError(msg);
       } finally {
         if (!cancelled) setPendingBind(false);
       }
@@ -237,7 +233,6 @@ export function QuickPayPanel({
     setEmployeeId(null);
     setAdhocAddress(pastedAddress);
     setPhase("idle");
-    setError(null);
   }, [pastedAddress, recipientSearch, employees, recipientLocked]);
 
   const destinationAddress = employee?.endpoint || adhocAddress;
@@ -376,7 +371,6 @@ export function QuickPayPanel({
       }
 
       setPhase("quoting");
-      setError(null);
       const memoValue = memo.trim() || null;
       const destSymbol = destToken?.symbol || employee?.token || "USDC";
       const destNetwork = destToken?.chain.chainName || employee?.network || "";
@@ -452,7 +446,9 @@ export function QuickPayPanel({
         return;
       }
       setPhase("error");
-      setError(formatQuoteErrorMessage(err, originToken?.decimals ?? 6));
+      toast.fail({
+        title: formatQuoteErrorMessage(err, originToken?.decimals ?? 6),
+      });
     },
   });
 
@@ -537,7 +533,6 @@ export function QuickPayPanel({
                       setEmployeeId(emp.id);
                       setAdhocAddress(null);
                       setPhase("idle");
-                      setError(null);
                     }}
                     className={cn(
                       "inline-flex h-10 items-center gap-2 rounded-[26px] border px-2.5 pr-3 font-montserrat text-[14px] font-medium transition-colors",
@@ -795,7 +790,6 @@ export function QuickPayPanel({
           || !quote
         }
         onClick={() => {
-          setError(null);
           settleMutation.mutate();
         }}
         className="inline-flex h-14 w-full items-center justify-center gap-2 rounded-[12px] bg-black font-montserrat text-[16px] font-medium text-white shadow-[0px_0px_6px_0px_rgba(0,0,0,0.06)] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
@@ -812,13 +806,8 @@ export function QuickPayPanel({
           : "Review & Sign"}
       </button>
 
-      {error ? (
-        <p className="mt-3 font-montserrat text-[13px] text-red-600">{error}</p>
-      ) : quoteError && !busy && phase !== "done" ? (
+      {quoteError && !busy && phase !== "done" ? (
         <p className="mt-3 font-montserrat text-[13px] text-red-600">{quoteError}</p>
-      ) : null}
-      {phase === "done" ? (
-        <p className="mt-3 font-montserrat text-[13px] text-[#0ed000]">Payment submitted. Track progress in Pending Payments.</p>
       ) : null}
 
       <TokenNetworkDialog
