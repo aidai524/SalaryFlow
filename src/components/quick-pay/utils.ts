@@ -7,6 +7,7 @@ export function isDryQuoteStale(input: {
   isPending: boolean;
   isFetching: boolean;
 }): boolean {
+  if (!input.amountForQuote) return false;
   const awaitingFirstFetch = input.isPending && input.isFetching;
   return (
     input.amountForQuote !== input.debouncedAmountForQuote

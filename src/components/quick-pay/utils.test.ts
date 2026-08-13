@@ -47,6 +47,26 @@ describe("isDryQuoteStale", () => {
     })).toBe(false);
   });
 
+  it("is not stale after amount is cleared while debounce still holds the old value", () => {
+    expect(isDryQuoteStale({
+      amountForQuote: null,
+      debouncedAmountForQuote: "1000",
+      isPlaceholderData: false,
+      isPending: false,
+      isFetching: false,
+    })).toBe(false);
+  });
+
+  it("is not stale after reset while placeholder data remains", () => {
+    expect(isDryQuoteStale({
+      amountForQuote: null,
+      debouncedAmountForQuote: null,
+      isPlaceholderData: true,
+      isPending: true,
+      isFetching: false,
+    })).toBe(false);
+  });
+
   it("is not stale on a background refetch of the current key", () => {
     expect(isDryQuoteStale({
       amountForQuote: "0.2",

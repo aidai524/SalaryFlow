@@ -313,7 +313,9 @@ export function QuickPayPanel({
     retry: 1,
   });
 
-  const quote = dryQuoteQuery.data?.quote;
+  const quote = amountForQuote && canQuoteDestination
+    ? dryQuoteQuery.data?.quote
+    : undefined;
   const dryQuoteStale = isDryQuoteStale({
     amountForQuote,
     debouncedAmountForQuote,
@@ -344,6 +346,20 @@ export function QuickPayPanel({
     }, 20_000);
     return () => window.clearInterval(id);
   }, [ownerAddress, originToken, fetchOneBalance]);
+
+  const resetForm = () => {
+    if (!recipientLocked) {
+      setEmployeeId(null);
+      setAdhocAddress(null);
+      setRecipientSearch("");
+    }
+    if (!recipientLocked && !destinationTokenLocked) {
+      setDestToken(null);
+    }
+    setCompensation("");
+    setMemo("");
+    queryClient.removeQueries({ queryKey: ["quick-pay-dry-quote"] });
+  };
 
   const settleMutation = useMutation({
     mutationFn: async () => {
@@ -440,16 +456,16 @@ export function QuickPayPanel({
       });
       return { mode: PAYMENT_MODE };
     },
-    onSuccess: async () => {
+    onSuccess: () => {
       setPhase("done");
-      setMemo("");
       toast.success({ title: "Payment submitted" });
-      await queryClient.invalidateQueries({ queryKey: ["pending-payments"] });
-      await queryClient.invalidateQueries({ queryKey: ["pay-overview"] });
-      await queryClient.invalidateQueries({ queryKey: ["org-overview"] });
-      await queryClient.invalidateQueries({ queryKey: ["org-payments"] });
-      await queryClient.invalidateQueries({ queryKey: ["employees"] });
-      // Release the button so the admin can start another payment.
+      resetForm();
+      // Fire-and-forget: awaiting these keeps isPending true and the button spinning.
+      void queryClient.invalidateQueries({ queryKey: ["pending-payments"] });
+      void queryClient.invalidateQueries({ queryKey: ["pay-overview"] });
+      void queryClient.invalidateQueries({ queryKey: ["org-overview"] });
+      void queryClient.invalidateQueries({ queryKey: ["org-payments"] });
+      void queryClient.invalidateQueries({ queryKey: ["employees"] });
       setTimeout(() => setPhase("idle"), 1500);
     },
     onError: (err) => {
@@ -478,7 +494,9 @@ export function QuickPayPanel({
     : null;
 
   // isPending covers balance gate + live settle so the button locks immediately on click.
-  const busy = settleMutation.isPending;
+  // phase "done" means the tx is already submitted — don't keep spinning while lists refetch.
+  const busy = settleMutation.isPending && phase !== "done";
+  const showButtonSpinner = busy || (!!amountForQuote && canQuoteDestination && dryQuoteStale);
 
   return (
     <section
@@ -806,7 +824,7 @@ export function QuickPayPanel({
         }}
         className="inline-flex h-14 w-full items-center justify-center gap-2 rounded-[12px] bg-black font-montserrat text-[16px] font-medium text-white shadow-[0px_0px_6px_0px_rgba(0,0,0,0.06)] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
       >
-        {busy || dryQuoteStale ? (
+        {showButtonSpinner ? (
           <span className="size-4 animate-spin rounded-full border-2 border-white border-r-transparent" />
         ) : null}
         {busy
