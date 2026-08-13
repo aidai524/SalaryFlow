@@ -25,7 +25,7 @@ function BackButton({ onClick }: { onClick: () => void }) {
           className="h-3 w-3 rotate-90 brightness-0"
         />
       </span>
-      How it works
+      Back
     </button>
   );
 }
