@@ -20,7 +20,7 @@ Shared type: `AuthUser` in [`src/lib/api.ts`](../../src/lib/api.ts) and [`api/sr
 { id, email, name, role: "admin"|"employee", org_id, wallet_address, wallet_verified, must_change_password }
 ```
 
-Callers: [`src/auth/AuthPages.tsx`](../../src/auth/AuthPages.tsx) (legacy), [`src/stores/auth.ts`](../../src/stores/auth.ts) (`me` / logout).
+Callers: [`src/views/auth/`](../../src/views/auth/), [`src/hooks/use-auth-api.ts`](../../src/hooks/use-auth-api.ts), [`src/stores/auth.ts`](../../src/stores/auth.ts) (`me` / logout).
 
 ---
 
@@ -65,7 +65,7 @@ Callers: [`src/auth/AuthPages.tsx`](../../src/auth/AuthPages.tsx) (legacy), [`sr
 
 - **Auth** — public
 - **Source** — `api/src/routes/auth.ts`
-- **Client** — `api.login` · callers: legacy Login
+- **Client** — `api.login` · callers: `LoginView`
 - **Request** — `{ email, password }`
 - **Response** — `200` `{ user: AuthUser }` + `Set-Cookie`
 - **Errors**
@@ -107,7 +107,7 @@ Callers: [`src/auth/AuthPages.tsx`](../../src/auth/AuthPages.tsx) (legacy), [`sr
 
 - **Auth** — JWT
 - **Source** — `api/src/routes/auth.ts`
-- **Client** — `api.updateMe` · callers: legacy Settings
+- **Client** — `api.updateMe` · no current UI caller
 - **Request** — `{ name?: string }` (empty/omitted name → no DB update)
 - **Response** — `{ user: AuthUser | null }`
 - **Errors** — `401` if `loadUser` returns null

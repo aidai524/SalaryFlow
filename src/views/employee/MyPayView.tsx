@@ -6,7 +6,7 @@ import { AddRecipientDialog } from "@/views/admin/recipients/components/AddRecip
 import { MyPayHistoryTable } from "./my-pay/components/MyPayHistoryTable";
 import { MyPayProfileCard } from "./my-pay/components/MyPayProfileCard";
 import { MyPayStats } from "./my-pay/components/MyPayStats";
-import { firstName } from "./my-pay/utils";
+import { employeeFromMyPayout, firstName } from "./my-pay/utils";
 
 export function MyPayView() {
   const user = useAuthStore((state) => state.user);
@@ -64,27 +64,7 @@ export function MyPayView() {
           onOpenChange={setEditOpen}
           mode="edit"
           variant="self"
-          employee={{
-            id: payout.id,
-            user_id: user?.id ?? null,
-            email: payout.email,
-            name: payout.name,
-            role_title: payout.role_title || "",
-            location: "",
-            employee_type: payout.employee_type,
-            token: payout.token,
-            network: payout.network,
-            amount_minor: payout.amount_minor,
-            endpoint: payout.endpoint,
-            status: payout.status,
-            payout_verified_at: payout.payout_verified_at,
-            last_paid_at: payout.last_paid_at,
-            created_at: payout.created_at,
-            payment_cadence: payout.payment_cadence,
-            payment_date_key: payout.payment_date_key,
-            nextPayday: payout.nextPayday,
-            nextPaydayDisplay: payout.nextPaydayDisplay,
-          }}
+          employee={employeeFromMyPayout(payout, user?.id ?? null)}
           teamCadence="monthly"
           teamPaymentDate="every_1st"
         />

@@ -4,6 +4,7 @@ import { isAddress, type Address, type Hex } from "viem";
 import { useSendTransaction, useSwitchChain } from "wagmi";
 import { AddRecipientPillButton } from "@/components/AddRecipientPillButton";
 import { IdentityAvatar } from "@/components/IdentityAvatar";
+import { IconLock } from "@/components/icons/lock";
 import { SearchInput } from "@/components/search-input/SearchInput";
 import { TokenNetworkDialog } from "@/components/token-network-dialog/TokenNetworkDialog";
 import {
@@ -16,7 +17,7 @@ import { useEvmWalletInfo } from "@/hooks/use-evm-wallet-info";
 import { useEmployeesQuery } from "@/hooks/use-pay-api";
 import { useTokenBalance } from "@/hooks/use-token-balances";
 import useToast from "@/hooks/use-toast";
-import { api, ApiError } from "@/lib/api";
+import { api, ApiError, type QuickPayMode } from "@/lib/api";
 import { isValidEthereumAddress } from "@/lib/erc191";
 import { formatAddress, formatNumber, formatTokenMinor } from "@/lib/format";
 import { chainLogoUrl } from "@/lib/logo";
@@ -29,7 +30,7 @@ import { useQuickPayPrefsStore } from "@/stores/quick-pay-prefs";
 import { useTokenBalancesStore } from "@/stores/token-balances";
 import { useWallet } from "@/wallet";
 import { encodeErc20Transfer } from "@/wallet/evm/transfer";
-import { QUICK_PAY_TOAST } from "./config";
+import { PRIVATE_BY_DEFAULT_LABEL, PRIVATE_POST_SIGN_DELAY_MS, QUICK_PAY_TOAST } from "./config";
 import {
   isDryQuoteStale,
   liveQuoteSettleErrorMessage,
@@ -53,8 +54,14 @@ function parseCompensationInput(raw: string): string | null {
   return cleaned;
 }
 
-/** Quick Pay is forced to standard (private mode UI is hidden). */
-const PAYMENT_MODE = "standard" as const;
+/**
+ * Quick Pay currently runs standard only. Private | Standard toggle UI is hidden
+ * (removed in e8a2b2d4e1acbe74424db708a13e1eea5a3c5b99).
+ *
+ * KEEP the private settle branch below and backend `mode: "private"` support.
+ * To re-enable: set this to `"private"` and restore the mode toggle.
+ */
+const PAYMENT_MODE: QuickPayMode = "standard";
 
 function useDebouncedValue<T>(value: T, delayMs: number): T {
   const [debounced, setDebounced] = useState(value);
@@ -114,7 +121,7 @@ export function QuickPayPanel({
   const [originToken, setOriginToken] = useState<IntentsToken | null>(null);
   const [destDialogOpen, setDestDialogOpen] = useState(false);
   const [originDialogOpen, setOriginDialogOpen] = useState(false);
-  const [phase, setPhase] = useState<"idle" | "quoting" | "sending" | "done" | "error">("idle");
+  const [phase, setPhase] = useState<"idle" | "quoting" | "signing" | "sending" | "done" | "error">("idle");
   const [pendingBind, setPendingBind] = useState(false);
   const [bindingWallet, setBindingWallet] = useState(false);
 
@@ -418,14 +425,73 @@ export function QuickPayPanel({
           mode: PAYMENT_MODE,
           memo: memoValue,
         });
+      const chainId = networkToChainId(originToken.chain.chainName) ?? originToken.chain.chainId;
+      const amountLabel = `${amountForQuote} ${destSymbol}`;
+      const recipientLabel = employee?.name || formatAddress(adhocAddress || destinationAddress);
+
+      // KEEP: private settle (intent sign + fund confidential deposit). Hidden since
+      // e8a2b2d4e1acbe74424db708a13e1eea5a3c5b99 — do not delete. Re-enable via PAYMENT_MODE.
+      if (PAYMENT_MODE === "private") {
+        if (typeof live.context !== "string" || !live.context) {
+          throw new Error("Live quote missing commit context");
+        }
+        const intentPayload = live.intent?.payload;
+        if (!intentPayload) throw new Error("Private quote missing intent payload");
+        const fundingAddress = live.funding?.depositAddress || live.quote.depositAddress;
+        const amountInRaw = live.funding?.amountIn || live.quote.amountIn;
+        const fundingDeadline = live.funding?.deadline || live.quote.deadline;
+        if (!fundingAddress || !amountInRaw) throw new Error("Funding quote missing deposit details");
+        if (fundingDeadline && Date.parse(String(fundingDeadline)) <= Date.now()) {
+          throw new Error("Funding quote expired; get a fresh quote and try again");
+        }
+        const amountIn = BigInt(amountInRaw);
+
+        const privateBalance = await fetchOneBalance(paymentWallet, originToken);
+        if (!privateBalance || privateBalance.status !== "success" || privateBalance.raw == null) {
+          toast.fail({ title: QUICK_PAY_TOAST.COULD_NOT_READ_BALANCE });
+          throw new BalanceGateError("Could not read wallet balance");
+        }
+        if (privateBalance.raw < amountIn) {
+          toast.fail({ title: QUICK_PAY_TOAST.INSUFFICIENT_BALANCE });
+          throw new BalanceGateError("Insufficient balance");
+        }
+
+        setPhase("signing");
+        if (chainId && wallet.account.chainId !== chainId) {
+          await switchChainAsync({ chainId });
+        }
+        const signed = await wallet.signMessage({ message: intentPayload });
+
+        if (fundingDeadline && Date.parse(String(fundingDeadline)) <= Date.now()) {
+          throw new Error("Funding quote expired; get a fresh quote and try again");
+        }
+        await new Promise((r) => setTimeout(r, PRIVATE_POST_SIGN_DELAY_MS));
+        if (fundingDeadline && Date.parse(String(fundingDeadline)) <= Date.now()) {
+          throw new Error("Funding quote expired; get a fresh quote and try again");
+        }
+
+        setPhase("sending");
+        const privateData = encodeErc20Transfer(fundingAddress as Address, amountIn);
+        const privateHash = await sendTransactionAsync({
+          to: originToken.contractAddress as Address,
+          data: privateData as Hex,
+          value: 0n,
+          chainId: chainId || undefined,
+        });
+        enqueueQuickPayCommit({
+          context: live.context,
+          txHash: privateHash,
+          signature: signed.signature,
+          employeeName: recipientLabel,
+          amountLabel,
+        });
+        return { mode: "private" as const };
+      }
+
       const settled = validateLiveQuoteForSettle(live);
       if (!settled.ok) {
         throw new Error(liveQuoteSettleErrorMessage(settled.reason));
       }
-
-      const chainId = networkToChainId(originToken.chain.chainName) ?? originToken.chain.chainId;
-      const amountLabel = `${amountForQuote} ${destSymbol}`;
-      const recipientLabel = employee?.name || formatAddress(adhocAddress || destinationAddress);
 
       const balance = await fetchOneBalance(paymentWallet, originToken);
       if (!balance || balance.status !== "success" || balance.raw == null) {
@@ -768,6 +834,10 @@ export function QuickPayPanel({
               ? `${amountInDisplay} ${originToken.symbol}`
               : "—"}
           </span>
+          <span className="inline-flex h-[26px] items-center gap-1.5 rounded-[13px] border border-[#d0f348] bg-[rgba(208,243,72,0.2)] px-2.5 font-montserrat text-[12px] font-medium text-[#84a20f]">
+            <IconLock className="size-3" />
+            {PRIVATE_BY_DEFAULT_LABEL}
+          </span>
         </div>
         <div className="flex items-center gap-3 font-space-grotesk text-[12px] text-[#444c59]">
           {feeUsd != null ? (
@@ -830,9 +900,11 @@ export function QuickPayPanel({
         {busy
           ? phase === "quoting"
             ? "Getting quote…"
-            : phase === "sending"
-              ? "Confirm in wallet…"
-              : "Review & Sign"
+            : phase === "signing"
+              ? "Sign intent…"
+              : phase === "sending"
+                ? "Confirm in wallet…"
+                : "Review & Sign"
           : "Review & Sign"}
       </button>
 

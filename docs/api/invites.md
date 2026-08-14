@@ -15,7 +15,7 @@ Parent index: [`docs/api.md`](../api.md) · Source: [`api/src/routes/invites.ts`
 
 Types: `Invitation`, `InviteMailResult` in [`src/lib/api.ts`](../../src/lib/api.ts).
 
-Callers: legacy [`src/pages/admin/TeamPayouts.tsx`](../../src/pages/admin/TeamPayouts.tsx), [`src/auth/AuthPages.tsx`](../../src/auth/AuthPages.tsx) InvitePage.
+Callers: [`InviteDialog`](../../src/views/admin/recipients/components/InviteDialog.tsx), [`InviteView`](../../src/views/auth/InviteView.tsx), [`src/hooks/use-recipients-api.ts`](../../src/hooks/use-recipients-api.ts), [`src/hooks/use-auth-api.ts`](../../src/hooks/use-auth-api.ts).
 
 **Rules (org model)** — One account per organization. Cannot invite someone who already belongs to another org.
 

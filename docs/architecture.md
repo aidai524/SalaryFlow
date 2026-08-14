@@ -14,29 +14,24 @@ This document describes the UI architecture after the DECash refactor foundation
 - Favicon: `/favicon.ico`
 - `package.json` name: `decash`
 - RainbowKit / wagmi `appName`: `DECash`
-- Legacy runtime keys (e.g. `salaryflow:theme:v1`) stay unchanged for compatibility
 
 ## Directory map
 
 ```text
 src/
 ├── App.tsx                 # Auth bootstrap + RouterProvider
-├── main.tsx                # Providers (theme, query, wallet)
+├── main.tsx                # Providers (query, wallet, tooltip)
 ├── router/                 # Route table + auth/role guards
 ├── layouts/AppLayout.tsx   # Header + content shell
 ├── components/layout/      # AppHeader and related chrome
-├── views/                  # Route-level pages (new UI)
+├── views/                  # Route-level pages
 │   ├── auth/
 │   ├── admin/
 │   └── employee/
 ├── stores/                 # Zustand client/UI stores
 ├── wallet/                 # Multi-chain wallet abstraction
-├── pages/                  # Legacy screens (reference only, not mounted)
-└── components/             # Shared UI + legacy business components
+└── components/             # Shared UI
 ```
-
-Legacy `src/pages/*` and `src/components/Shell.tsx` remain as business-logic reference
-during page-by-page migration. Do not wire them back into the router unless explicitly asked.
 
 ## Routing
 
@@ -63,26 +58,23 @@ Guards:
 - Admin without team payment prefs (`paymentConfigured === false`) → `/teams/create`; configured → `/pay`
 - `/` and post-login/register: admin → `adminHomePath(paymentConfigured)`, employee → `/my-pay`
 
-Design-preview bypass remains in `main.tsx` (`/design-preview` or `?preview=decash`).
-
 ### Create Team onboarding
 
 - Route: `/teams/create` · view: `src/views/admin/CreateTeamView.tsx` + `create-team/*`
 - Org already exists from register (`orgName` required). This page only configures **team payment preferences**.
 - API: `PATCH /api/org/team` (`api.updateTeam`) — writes `organizations.payment_*` fields. Does **not** call `createRun` / create payroll runs.
-- UI: lime background `#c8e458`, dollar watermarks (`/decash/dollar-mark.svg`), centered `/logo.svg`, Rubik One slogan, Montserrat form; selects use `/icons/to-down.svg`.
-- Header variant `onboarding`: wallet chip + account menu only (no primary nav / header logo).
+- UI: `AuthShell` lime brand panel + form card; selects use `/icons/to-down.svg`.
 
 ### Auth views
 
 Login / register / invite UI lives under `src/views/auth/` (Figma lime shell aligned with Create Team).
 
-- Shared layout: `src/views/auth/AuthShell.tsx` + `config.ts` (`#C8E458`, dollar watermarks, logo, slogan)
+- Shared layout: `src/views/auth/AuthShell.tsx` + `config.ts` (`#C8E458`, logo, slogan)
 - Shared helpers: `src/views/auth/auth-shared.tsx`
 - Invite with token: auto `POST /invites/accept` (server default password) → Welcome + Connect Wallet (payout verify) → `/my-pay` + `ChangePasswordDialog` when `must_change_password`
 - `/invite/:token?` is **not** wrapped in `RedirectIfAuthed` so the session can stay on the Welcome card after accept
 - API hooks: `src/hooks/use-auth-api.ts` — login/register/accept/resolve/`useChangePasswordMutation`
-- Legacy reference: `src/auth/AuthPages.tsx` (not mounted)
+
 ## Org / team model (phase 1)
 
 - **Phase 1:** one organization per admin (`users.org_id`). Auth store keeps `orgId`, `orgName`, `paymentConfigured` for the current workspace.
@@ -93,7 +85,7 @@ Login / register / invite UI lives under `src/views/auth/` (Figma lime shell ali
 
 Authenticated pages use `AppLayout`:
 
-1. `AppHeader` (logo + primary nav + wallet chip + menu button) — or onboarding variant
+1. `AppHeader` (logo + primary nav + wallet chip + menu button)
 2. `<Outlet />` content area
 
 Header specs (Figma `59:11715`):
@@ -138,7 +130,6 @@ Rules:
 1. Do **not** hand-roll `fetch` + `useState` loading/error for API reads/writes in new views.
 2. Put session identity + lightweight workspace context in `src/stores/auth.ts`.
 3. Prefer query keys that include org/user scope when data is tenant-specific.
-4. Migrate legacy `src/lib/useData.ts` usage as each page is rebuilt.
 
 ### Zustand stores
 
@@ -204,14 +195,16 @@ Team switcher control next to the greeting is **disabled** until multi-team land
 - List/search/filter/pagination via `GET /api/org/employees`; history via `GET /api/org/employees/:id/payments`
 - Migration `0013_recipient_fields.sql`: contractor `payment_cadence` / `payment_date_key`, invitation `role_title`
 
-### Avatar upload (not implemented)
+### Avatar (preset paths)
 
-No R2 binding or upload API today (`api/wrangler.toml` is D1-only; `employees` has no `avatar_url`). Recommended follow-up:
+`employees.avatar_url` stores a public preset path (`/avatars/avatar-1.png` … `avatar-10.png`). Admin recipient edit (`PATCH /api/org/employees/:id`) and employee Edit Profile (`PATCH /api/records/me/profile`) write the same column; list/detail/`GET /records/me/payout` all read it. No R2 upload yet (`api/wrangler.toml` is D1-only).
+
+Recommended follow-up for custom photos:
 
 1. Create a Cloudflare **R2** bucket and bind it on the Worker (e.g. `AVATARS`).
-2. Add `avatar_url` on `employees` + `POST /api/org/employees/:id/avatar` (admin, MIME jpeg/png/webp, size cap) writing `org/{orgId}/employees/{id}`.
+2. Add `POST /api/org/employees/:id/avatar` (admin, MIME jpeg/png/webp, size cap) writing `org/{orgId}/employees/{id}`.
 3. Prefer Worker-proxied upload over raw D1 blobs or Pages static writes.
-4. UI already uses `IdentityAvatar` (optional `src`) and a camera placeholder (“coming soon”).
+4. UI already uses `IdentityAvatar` (`src` = preset path or future uploaded URL).
 
 ## Wallet architecture
 
@@ -237,8 +230,7 @@ Primary wallet use cases:
 
 1. **Admin Quick Pay (private)** — ERC-191 pre-sign of confidential payout intent, then ERC-20 transfer to the funding deposit address (ORIGIN_CHAIN → CONFIDENTIAL_INTENTS); commit API persists only after tx hash
 2. **Admin Quick Pay (standard)** — ERC-20 transfer on the chosen origin chain to the 1Click deposit address (ORIGIN_CHAIN foreign-to-foreign + confidentiality); commit API persists only after tx hash
-3. **Admin payment signing** — legacy payroll-run path still uses ERC-191 intent signatures
-4. **Employee wallet verification** — prove ownership of a payout address
+3. **Employee wallet verification** — prove ownership of a payout address
 
 UI and payment flows should call:
 

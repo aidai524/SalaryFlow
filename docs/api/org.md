@@ -22,7 +22,7 @@ Parent index: [`docs/api.md`](../api.md) · Source: [`api/src/routes/org.ts`](..
 
 Types: `OrgInfo`, `OrgContext`, `TeamPaymentSchedule`, `TeamPaymentDateKey`, `Employee` in [`src/lib/api.ts`](../../src/lib/api.ts). Helpers: [`api/src/org-payment.ts`](../../api/src/org-payment.ts).
 
-Callers: auth store (`orgContext`, `listEmployees`); legacy TeamPayouts / Settings / Overview. **`updateEmployee` / `deleteEmployee` have no current callers.**
+Callers: [`src/stores/auth.ts`](../../src/stores/auth.ts) (`orgContext`); [`CreateTeamView`](../../src/views/admin/CreateTeamView.tsx); Recipients / Pay / Overview / Payment History views via `src/hooks/use-*-api.ts`.
 
 Employee `status`: `pending` \| `ready` \| `update_required` — set by payout verification, **not** by admin PATCH `status`.
 

@@ -29,7 +29,7 @@ Parent index: [`docs/api.md`](../api.md) · Source: [`api/src/routes/records.ts`
 
 Do not use admin wallet APIs for employee payout UI, or vice versa.
 
-Callers: AppHeader wallet dialogs; legacy employee pages; Overview/Records admin pages.
+Callers: AppHeader wallet dialogs; [`MyPayView`](../../src/views/employee/MyPayView.tsx); [`src/hooks/use-employee-api.ts`](../../src/hooks/use-employee-api.ts).
 
 Challenges expire in **10 minutes**. Signature format: `0x` + 130 hex.
 
@@ -61,7 +61,7 @@ Challenges expire in **10 minutes**. Signature format: `0x` + 130 hex.
 - **Auth** — employee
 - **Client** — `api.myPayout`
 - **Response** — `{ payout: MyPayout | null }` with profile + schedule + totals:
-  - Profile: `id, name, email, role_title, employee_type, token, network, amount_minor, endpoint, status, payout_verified_at, last_paid_at, created_at`
+  - Profile: `id, name, email, role_title, employee_type, token, network, amount_minor, endpoint, status, payout_verified_at, last_paid_at, created_at, avatar_url`
   - Schedule: `payment_cadence, payment_date_key, nextPayday, nextPaydayDisplay` (employees inherit team schedule)
   - Aggregate: `totalReceivedMinor` (sum of paid `employee_payments`)
 
@@ -71,10 +71,10 @@ Challenges expire in **10 minutes**. Signature format: `0x` + 130 hex.
 
 - **Auth** — employee
 - **Client** — `api.updateMyProfile`
-- **Request** — partial `{ name?, email?, token?, network?, endpoint? }`
+- **Request** — partial `{ name?, email?, token?, network?, endpoint?, avatar_url? }`
 - **Response** — `{ payout, payoutChanged: boolean }` (`payout` same shape as `GET /me/payout`)
 - **Errors** — 400 validation; 404 no employee; 409 duplicate email
-- **Rules** — Updates `employees`. Syncs `users.name` / `users.email` when those fields change. Changing token/network/endpoint sets `status=update_required` and clears `payout_verified_at` (must challenge+verify again).
+- **Rules** — Updates `employees` (same `avatar_url` column as admin recipient edit). Syncs `users.name` / `users.email` when those fields change. Changing token/network/endpoint sets `status=update_required` and clears `payout_verified_at` (must challenge+verify again). Preset avatars only (`/avatars/avatar-1.png` … `avatar-10.png`; empty string clears).
 
 ---
 

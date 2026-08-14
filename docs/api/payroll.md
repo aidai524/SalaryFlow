@@ -21,7 +21,7 @@ Parent index: [`docs/api.md`](../api.md) · Source: [`api/src/routes/payroll.ts`
 
 Types: `PayrollRun`, `PayrollSchedule`, `PayrunItem`, `PayrollImportRow`, `PayrollCadence` in [`src/lib/api.ts`](../../src/lib/api.ts).
 
-Callers: legacy [`src/pages/admin/Payroll.tsx`](../../src/pages/admin/Payroll.tsx), [`PayrollImportDialog.tsx`](../../src/components/PayrollImportDialog.tsx), [`PayDialog.tsx`](../../src/components/PayDialog.tsx).
+Callers: none on the current router. Client methods remain in [`src/lib/api.ts`](../../src/lib/api.ts); Worker cron still materializes schedules.
 
 **Cron** — Worker scheduled job calls `materializePayrollSchedules` (draft runs only; never pays).
 

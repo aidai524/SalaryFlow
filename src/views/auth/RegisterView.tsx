@@ -59,7 +59,7 @@ export function RegisterView() {
           label="Your name"
           value={name}
           onChange={setName}
-          placeholder="Lina Qiao"
+          placeholder="Name"
           autoFocus
           autoComplete="name"
         />
@@ -68,7 +68,7 @@ export function RegisterView() {
           label="Organization name"
           value={orgName}
           onChange={setOrgName}
-          placeholder="Northstar Labs"
+          placeholder="Organization"
         />
         <AuthField
           id="email"
@@ -94,7 +94,7 @@ export function RegisterView() {
             label="Invite code"
             value={inviteCode}
             onChange={setInviteCode}
-            placeholder="DECASH-XXXX-XXXX"
+            placeholder="XXXXX-XXXX-XXXX"
             autoComplete="off"
           />
         ) : null}

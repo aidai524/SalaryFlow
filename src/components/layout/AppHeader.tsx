@@ -44,7 +44,11 @@ function HeaderWalletChip() {
     : (payoutQuery.data?.payout?.endpoint || user.wallet_address || null);
   const bound = Boolean(displayAddress);
   const label = bound ? formatAddress(displayAddress) : "Connect";
-  const seed = displayAddress || user.email;
+  const payout = payoutQuery.data?.payout;
+  const seed = isAdmin
+    ? (displayAddress || user.email)
+    : (payout?.name || payout?.email || payout?.id || user.name || user.email);
+  const avatarSrc = isAdmin ? undefined : (payout?.avatar_url || null);
 
   return (
     <>
@@ -54,7 +58,7 @@ function HeaderWalletChip() {
         className="inline-flex h-[42px] items-center gap-[7px] rounded-[25px] border border-black/20 bg-white py-1 pr-3.5 pl-1.5 shadow-[0_0_6px_rgba(0,0,0,0.06)]"
         aria-label={bound ? `Wallet ${label}` : "Connect wallet"}
       >
-        <IdentityAvatar seed={seed} size={30} alt="" />
+        <IdentityAvatar seed={seed} src={avatarSrc} size={30} alt="" />
         <span className="hidden font-[family-name:var(--font-space-grotesk)] text-sm text-black sm:inline">
           {label}
         </span>

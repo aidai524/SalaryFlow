@@ -55,18 +55,7 @@ Authenticated screens already render inside `AppLayout` (header + content). Do *
 - Treat generated React/Tailwind as a **reference**, not paste-ready code
 - Download durable assets into `public/` when committing UI (Figma MCP asset URLs expire)
 
-### 3. Mine legacy logic (do not copy UI)
-
-Legacy implementations still live under:
-
-- `src/pages/admin/*`
-- `src/pages/employee/*`
-- `src/auth/AuthPages.tsx`
-- related components in `src/components/*`
-
-Reuse API calls, validation, and payment/signing flows. Rebuild visuals in the new view.
-
-### 4. Implement the view
+### 3. Implement the view
 
 Suggested shape:
 
@@ -85,7 +74,7 @@ Extract reusable pieces into:
 - `src/components/<feature>/...` for multi-page widgets
 - `src/components/ui/...` only for generic primitives
 
-### 5. Wire data correctly
+### 4. Wire data correctly
 
 Before wiring fetches, look up the endpoint in [`docs/api.md`](api.md) (handler path, `api.*` client method, auth role, error codes). Prefer `src/lib/api.ts` — do not invent parallel `fetch` wrappers.
 
@@ -111,7 +100,7 @@ Wallet signing / connect:
 const wallet = useWallet("evm");
 ```
 
-### 6. Responsive acceptance checklist
+### 5. Responsive acceptance checklist
 
 Before marking the page done:
 
@@ -121,7 +110,7 @@ Before marking the page done:
 - [ ] Cards/grids collapse from multi-column desktop to stacked mobile
 - [ ] Typography/spacing follow design tokens / existing Tailwind patterns
 
-### 7. Update docs when behavior changes
+### 6. Update docs when behavior changes
 
 If you add routes, stores, wallet chains, or shared layout rules, update:
 

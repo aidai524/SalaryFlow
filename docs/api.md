@@ -90,9 +90,8 @@ Frontend throws [`ApiError`](../src/lib/api.ts) with `status` + optional `code`.
 | Surface | Uses API? |
 |---|---|
 | [`src/lib/api.ts`](../src/lib/api.ts) | **Only** HTTP client — always wire new views through this |
-| [`src/stores/auth.ts`](../src/stores/auth.ts), AppHeader / wallet dialogs | Live on current router |
-| [`src/pages/**`](../src/pages), [`src/auth/AuthPages.tsx`](../src/auth/AuthPages.tsx), [`src/components/PayDialog.tsx`](../src/components/PayDialog.tsx), [`src/lib/payment.ts`](../src/lib/payment.ts) | Full business callers (legacy; not mounted in router) |
-| [`src/views/**`](../src/views) | Mostly placeholders — **do not assume** they call APIs yet |
+| [`src/stores/auth.ts`](../src/stores/auth.ts), AppHeader / wallet dialogs | Session + wallet on current router |
+| [`src/views/**`](../src/views) + `src/hooks/use-*-api.ts` | Live callers on current router |
 
 No shared types package. Frontend types in `api.ts` are a hand-maintained subset of Worker responses.
 

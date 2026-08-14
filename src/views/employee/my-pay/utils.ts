@@ -1,4 +1,4 @@
-import type { MyPayout } from "@/lib/api";
+import type { Employee, MyPayout } from "@/lib/api";
 import { formatCurrencyFromMinor } from "@/lib/format";
 import {
   formatCompensation,
@@ -17,6 +17,31 @@ export {
   scheduleLabel,
   typeLabel,
 };
+
+export function employeeFromMyPayout(payout: MyPayout, userId: string | null): Employee {
+  return {
+    id: payout.id,
+    user_id: userId,
+    email: payout.email,
+    name: payout.name,
+    role_title: payout.role_title || "",
+    location: "",
+    employee_type: payout.employee_type,
+    token: payout.token,
+    network: payout.network,
+    amount_minor: payout.amount_minor,
+    endpoint: payout.endpoint,
+    status: payout.status,
+    payout_verified_at: payout.payout_verified_at,
+    last_paid_at: payout.last_paid_at,
+    created_at: payout.created_at,
+    payment_cadence: payout.payment_cadence,
+    payment_date_key: payout.payment_date_key,
+    nextPayday: payout.nextPayday,
+    nextPaydayDisplay: payout.nextPaydayDisplay,
+    avatar_url: payout.avatar_url ?? null,
+  };
+}
 
 export function firstName(name: string | null | undefined): string {
   const trimmed = String(name || "").trim();
