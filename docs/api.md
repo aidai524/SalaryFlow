@@ -191,6 +191,9 @@ Details: [`docs/api/payments.md`](api/payments.md).
 | POST | `/api/payments/quick-pay/quote` | admin | [payments](api/payments.md) | `api/src/routes/payments.ts` | `api.quoteQuickPay` / `quoteQuickPayDry` |
 | POST | `/api/payments/employees/:employeeId/quote` | admin | [payments](api/payments.md) | `api/src/routes/payments.ts` | `api.quoteEmployeePayment` / `quoteEmployeePaymentDry` |
 | POST | `/api/payments/quick-pay/commit` | admin | [payments](api/payments.md) | `api/src/routes/payments.ts` | `api.commitQuickPay` |
+| POST | `/api/payments/batch/commit` | admin | [payments](api/payments.md) | `api/src/batch-payout.ts` | `api.commitBatchPayout` |
+| GET | `/api/payments/batches` | admin | [payments](api/payments.md) | `api/src/batch-payout.ts` | `api.listPaymentBatches` |
+| GET | `/api/payments/batches/:id` | admin | [payments](api/payments.md) | `api/src/batch-payout.ts` | `api.getPaymentBatch` |
 | POST | `/api/payments/attempts/:attemptId/intent` | admin | [payments](api/payments.md) | `api/src/routes/payments.ts` | `api.generatePaymentIntent` |
 | POST | `/api/payments/attempts/:attemptId/submit` | admin | [payments](api/payments.md) | `api/src/routes/payments.ts` | `api.submitPaymentAttempt` |
 | POST | `/api/payments/attempts/:attemptId/reconcile` | admin | [payments](api/payments.md) | `api/src/routes/payments.ts` | `api.reconcilePaymentAttempt` |

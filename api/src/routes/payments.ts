@@ -40,6 +40,7 @@ import {
   verifyQuickPayContext,
   type QuickPayContextPayload,
 } from "../quick-pay-context";
+import { commitBatchPayout, getPaymentBatch, listPaymentBatches } from "../batch-payout";
 import { nowIso, uuid, type AuthUser } from "../types";
 
 export const paymentRoutes = new Hono<AppEnv>();
@@ -1352,6 +1353,29 @@ paymentRoutes.post("/quick-pay/commit", requireRole("admin"), async (c) => {
 
   const attempt = await getPaymentAttempt(c.env.DB, ctx.attemptId, user.org_id);
   return c.json({ attempt, reused: false, mode: ctx.mode });
+});
+
+paymentRoutes.post("/batch/commit", requireRole("admin"), async (c) => {
+  const blocked = liveGateResponse(c);
+  if (blocked) return blocked;
+  const user = c.get("user") as AuthUser;
+  const body = await c.req.json().catch(() => null) as Parameters<typeof commitBatchPayout>[2];
+  const result = await commitBatchPayout(c.env, user, body || {});
+  return c.json(result.json, result.status as 200);
+});
+
+paymentRoutes.get("/batches", requireRole("admin"), async (c) => {
+  const user = c.get("user") as AuthUser;
+  const page = Number(c.req.query("page") || "1");
+  const pageSize = Number(c.req.query("pageSize") || "10");
+  return c.json(await listPaymentBatches(c.env, String(user.org_id), page, pageSize));
+});
+
+paymentRoutes.get("/batches/:id", requireRole("admin"), async (c) => {
+  const user = c.get("user") as AuthUser;
+  const detail = await getPaymentBatch(c.env, String(user.org_id), c.req.param("id"));
+  if (!detail) return c.json({ error: "Not found" }, 404);
+  return c.json(detail);
 });
 
 /** In-flight Quick Pay / payroll attempts for the Pending Payments dock. */

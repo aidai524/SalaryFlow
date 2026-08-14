@@ -35,6 +35,8 @@ interface TokenNetworkDialogProps {
    * Do not pass a browser-session-only wagmi address.
    */
   balanceOwner?: string | null;
+  /** Restrict origin chains (1Click blockchain codes). Destination pickers omit this. */
+  allowedBlockchains?: string[] | null;
   onSelect: (selection: TokenNetworkSelection) => void;
 }
 
@@ -60,6 +62,7 @@ export function TokenNetworkDialog({
   selectedAssetId,
   showBalances = false,
   balanceOwner = null,
+  allowedBlockchains = null,
   onSelect,
 }: TokenNetworkDialogProps) {
   const owner = showBalances ? (balanceOwner ?? null) : null;
@@ -76,9 +79,18 @@ export function TokenNetworkDialog({
     }
   }, [open, ensureFresh, initialSymbol]);
 
+  const allowed = useMemo(() => {
+    if (!allowedBlockchains || allowedBlockchains.length === 0) return null;
+    return new Set(allowedBlockchains.map((code) => code.toLowerCase()));
+  }, [allowedBlockchains]);
+
   const chainsForSymbol = useMemo(() => {
-    return tokens.filter((t) => t.symbol === symbol);
-  }, [tokens, symbol]);
+    return tokens.filter((t) => {
+      if (t.symbol !== symbol) return false;
+      if (!allowed) return true;
+      return allowed.has(t.blockchain.toLowerCase());
+    });
+  }, [tokens, symbol, allowed]);
 
   useEnsureTokenBalances({
     owner,

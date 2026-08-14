@@ -152,6 +152,7 @@ Rules:
 
 - Route `/pay` → `src/views/admin/PayView.tsx`
 - Quick Pay module: `src/components/quick-pay/QuickPayPanel.tsx` (capsule recipient select on `/pay`; Pay Now dialog uses `recipientLocked` + `compensationLayout="centered"` + `destinationTokenLocked`)
+- Batch payout: `src/components/batch-payout/` — wizard from the Quick Pay title; origin chains limited to deployed `BatchPayout` contracts (`src/config/batch-payout-chains.ts`). Employee destination chains stay 1Click-dynamic. Commit: `POST /api/payments/batch/commit` writes per-person payment rows (shared admin tx, independent receive txs after reconcile). `/payments` Batches tab lists them.
 - Payment mode toggle (persisted in `src/stores/quick-pay-prefs.ts`):
   - **Private** (default) — live quote returns HMAC `context` + intent + funding deposit (no DB); wallet signs intent then ERC-20 funds Confidential Intents; `POST /payments/quick-pay/commit` persists; cron/dock auto-submits intent after funding lands
   - **Standard** — live quote returns HMAC `context` + deposit address (no DB); ERC-20 transfer then commit

@@ -79,4 +79,28 @@ export function encodeErc20Transfer(to: Address, amount: bigint): Hex {
   });
 }
 
+export function encodeErc20Approve(spender: Address, amount: bigint): Hex {
+  return encodeFunctionData({
+    abi: erc20Abi,
+    functionName: "approve",
+    args: [spender, amount],
+  });
+}
+
+export async function readErc20Allowance(opts: {
+  network: string;
+  tokenAddress: Address;
+  owner: Address;
+  spender: Address;
+}): Promise<bigint> {
+  const client = getPublicClientForNetwork(opts.network);
+  if (!client) throw new Error(`Unsupported network: ${opts.network}`);
+  return client.readContract({
+    address: opts.tokenAddress,
+    abi: erc20Abi,
+    functionName: "allowance",
+    args: [opts.owner, opts.spender],
+  });
+}
+
 export { erc20Abi };

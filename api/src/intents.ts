@@ -7,6 +7,7 @@ import {
   verifyQuoteSignature,
   type OneClickQuoteResponse,
 } from "@defuse-protocol/one-click-sdk-typescript";
+import { fetchWithRetryAfter } from "./throttle";
 import type { Env } from "./types";
 
 function headers(env: Env, opts: { usePartnerKey?: boolean; token?: string; json?: boolean } = {}): Record<string, string> {
@@ -30,7 +31,7 @@ async function parseResponse<T>(res: Response, path: string): Promise<T> {
 }
 
 async function post<T>(env: Env, path: string, body: unknown, opts: { usePartnerKey?: boolean; token?: string } = {}): Promise<T> {
-  const res = await fetch(`${env.INTENTS_API_URL}${path}`, {
+  const res = await fetchWithRetryAfter(`${env.INTENTS_API_URL}${path}`, {
     method: "POST",
     headers: headers(env, opts),
     body: JSON.stringify(body),
@@ -184,7 +185,7 @@ export async function getSupportedTokens(env: Env, options: { force?: boolean } 
     return tokenCache.tokens;
   }
   const path = "/v0/tokens";
-  const res = await fetch(`${env.INTENTS_API_URL}${path}`, {
+  const res = await fetchWithRetryAfter(`${env.INTENTS_API_URL}${path}`, {
     headers: headers(env, { usePartnerKey: false, json: false }),
   });
   const data = await parseResponse<unknown>(res, path);
@@ -254,7 +255,7 @@ export async function checkSwapStatus(env: Env, depositAddress: string, depositM
   const query = new URLSearchParams({ depositAddress });
   if (depositMemo) query.set("depositMemo", depositMemo);
   const path = `/v0/status?${query.toString()}`;
-  const res = await fetch(`${env.INTENTS_API_URL}${path}`, { headers: headers(env, { json: false }) });
+  const res = await fetchWithRetryAfter(`${env.INTENTS_API_URL}${path}`, { headers: headers(env, { json: false }) });
   return parseResponse<SwapStatus>(res, "/v0/status");
 }
 

@@ -12,6 +12,14 @@ _worker.bundle
 .wrangler/
 *.tsbuildinfo
 
+# Foundry (contracts/)
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+contracts/lib/
+contracts/.env
+.gitmodules
+
 # OS / editor
 .DS_Store
 

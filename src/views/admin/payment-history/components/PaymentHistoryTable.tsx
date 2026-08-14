@@ -1,46 +1,13 @@
 import { IdentityAvatar } from "@/components/IdentityAvatar";
 import { IconAlert } from "@/components/icons/alert";
 import { IconCheck } from "@/components/icons/check";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { formatDateTime, formatTokenMinor } from "@/lib/format";
 import { tokenLogoUrl } from "@/lib/logo";
 import type { OrgPaymentRow } from "@/lib/api";
 import { HISTORY_STATUS, TYPE_LABEL, mapPaymentStatus } from "../config";
+import { HistoryMemoCell } from "./HistoryMemoCell";
+import { TxLink } from "./TxLink";
 import clsx from "clsx";
-
-function TxLink({
-  href,
-  hash,
-}: {
-  href: string | null | undefined;
-  hash: string | null | undefined;
-}) {
-  if (!hash) {
-    return <span className="font-montserrat text-[14px] text-[#909090]">—</span>;
-  }
-  if (!href) {
-    return (
-      <span className="font-montserrat text-[14px] text-[#3f8afb]" title={hash}>
-        Tx
-      </span>
-    );
-  }
-  return (
-    <a
-      href={href}
-      target="_blank"
-      rel="noreferrer"
-      title={hash}
-      className="font-montserrat text-[14px] text-[#3f8afb] underline underline-offset-2 hover:opacity-80"
-    >
-      Tx
-    </a>
-  );
-}
 
 export function PaymentHistoryTable({
   payments,
@@ -83,7 +50,6 @@ export function PaymentHistoryTable({
               const statusKey = mapPaymentStatus(row.status);
               const status = HISTORY_STATUS[statusKey];
               const zebra = index % 2 === 1;
-              const memoText = row.memo?.trim() || "";
               return (
                 <tr
                   key={row.id}
@@ -121,20 +87,7 @@ export function PaymentHistoryTable({
                     </div>
                   </td>
                   <td className="max-w-[160px] px-3 py-3.5">
-                    {memoText ? (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <p className="truncate font-montserrat text-[14px] text-black">
-                            {memoText}
-                          </p>
-                        </TooltipTrigger>
-                        <TooltipContent side="top" className="max-w-[280px]">
-                          Memo: {memoText}
-                        </TooltipContent>
-                      </Tooltip>
-                    ) : (
-                      <span className="font-montserrat text-[14px] text-[#909090]">—</span>
-                    )}
+                    <HistoryMemoCell memo={row.memo} />
                   </td>
                   <td className="px-3 py-3.5 font-montserrat text-[14px] text-black">
                     {formatDateTime(row.paid_at)}

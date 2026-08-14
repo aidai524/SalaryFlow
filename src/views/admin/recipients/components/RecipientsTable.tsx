@@ -1,16 +1,14 @@
-import { IdentityAvatar } from "@/components/IdentityAvatar";
-import { IconAlert } from "@/components/icons/alert";
-import { IconCheck } from "@/components/icons/check";
-import type { Employee } from "@/lib/api";
 import { tokenLogoUrl } from "@/lib/logo";
 import { cn } from "@/lib/utils";
+import type { Employee } from "@/lib/api";
+import { isVerified } from "../utils";
 import {
-  formatCompensation,
-  isVerified,
-  roleBadgeAbbrev,
-  scheduleLabel,
-  typeLabel,
-} from "../utils";
+  RecipientCompensationCell,
+  RecipientNameCell,
+  RecipientScheduleCell,
+  RecipientTypeCell,
+  RecipientWalletCell,
+} from "./RecipientCells";
 import { RecipientRowMenu } from "./RecipientRowMenu";
 
 export interface RecipientsTableProps {
@@ -65,37 +63,16 @@ export function RecipientsTable({
                 )}
               >
                 <td className="px-3 py-3.5 first:pl-5">
-                  <div className="flex min-w-0 items-center gap-3">
-                    <IdentityAvatar
-                      seed={emp.name || emp.email || emp.id}
-                      src={emp.avatar_url}
-                      size={36}
-                      alt=""
-                    />
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <span className="truncate font-montserrat text-[14px] font-medium text-black">
-                          {emp.name}
-                        </span>
-                      </div>
-                      <span
-                        className={cn(
-                          "inline-flex items-center rounded-[10px] font-montserrat text-[10px] font-medium leading-[100%]",
-                        )}
-                      >
-                        {roleBadgeAbbrev(emp.role_title)}
-                      </span>
-                    </div>
-                  </div>
+                  <RecipientNameCell employee={emp} />
                 </td>
-                <td className="px-3 py-3.5 font-montserrat text-[13px] text-black">
-                  {typeLabel(emp.employee_type)}
+                <td className="px-3 py-3.5">
+                  <RecipientTypeCell employee={emp} />
                 </td>
-                <td className="px-3 py-3.5 font-montserrat text-[13px] font-medium text-black">
-                  {formatCompensation(emp)}
+                <td className="px-3 py-3.5">
+                  <RecipientCompensationCell employee={emp} />
                 </td>
-                <td className="px-3 py-3.5 font-montserrat text-[13px] text-black">
-                  {scheduleLabel(emp.payment_cadence)}
+                <td className="px-3 py-3.5">
+                  <RecipientScheduleCell employee={emp} />
                 </td>
                 <td className="px-3 py-3.5">
                   <div className="flex items-center gap-1.5">
@@ -116,21 +93,7 @@ export function RecipientsTable({
                   </div>
                 </td>
                 <td className="px-3 py-3.5">
-                  {verified ? (
-                    <span className="inline-flex items-center gap-1.5 p-[6px_10px_6px_6px] h-[24px] rounded-[12px] font-montserrat text-[12px] text-[#0ed000] bg-[#0ED000]/10">
-                      <span className="inline-flex size-4 items-center justify-center rounded-full bg-[#0ed000] text-white">
-                        <IconCheck className="size-2" />
-                      </span>
-                      Verified
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1.5 p-[6px_10px_6px_6px] h-[24px] rounded-[12px] font-montserrat text-[12px] text-[#AAA] bg-[#AAA]/10">
-                      <span className="inline-flex size-4 items-center justify-center rounded-full bg-[#AAAAAA] text-[#fff]">
-                        <IconAlert className="size-2" />
-                      </span>
-                      Unverified
-                    </span>
-                  )}
+                  <RecipientWalletCell employee={emp} />
                 </td>
                 <td className="px-3 py-3.5 last:pr-3">
                   <RecipientRowMenu

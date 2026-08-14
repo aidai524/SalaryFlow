@@ -3,8 +3,8 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import { isAddress, type Address, type Hex } from "viem";
 import { useSendTransaction, useSwitchChain } from "wagmi";
 import { AddRecipientPillButton } from "@/components/AddRecipientPillButton";
+import { BatchPayoutButton } from "@/components/batch-payout/BatchPayoutButton";
 import { IdentityAvatar } from "@/components/IdentityAvatar";
-import { IconLock } from "@/components/icons/lock";
 import { SearchInput } from "@/components/search-input/SearchInput";
 import { TokenNetworkDialog } from "@/components/token-network-dialog/TokenNetworkDialog";
 import {
@@ -13,12 +13,14 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { getChainByNetwork, networkToChainId } from "@/config/chains";
-import { useEvmWalletInfo } from "@/hooks/use-evm-wallet-info";
+import { EstCostRow } from "@/components/you-pay/EstCostRow";
+import { YouPaySection } from "@/components/you-pay/YouPaySection";
+import { usePayOriginToken } from "@/hooks/use-pay-origin-token";
+import { usePaymentWallet } from "@/hooks/use-payment-wallet";
 import { useEmployeesQuery } from "@/hooks/use-pay-api";
-import { useTokenBalance } from "@/hooks/use-token-balances";
 import useToast from "@/hooks/use-toast";
-import { api, ApiError, type QuickPayMode } from "@/lib/api";
-import { isValidEthereumAddress } from "@/lib/erc191";
+import { parsePositiveDecimal } from "@/lib/amount-input";
+import { api, type QuickPayMode } from "@/lib/api";
 import { formatAddress, formatNumber, formatTokenMinor } from "@/lib/format";
 import { chainLogoUrl } from "@/lib/logo";
 import { formatQuoteErrorMessage } from "@/lib/quote-error";
@@ -26,11 +28,9 @@ import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth";
 import { useIntentsTokensStore, type IntentsToken } from "@/stores/intents-tokens";
 import { enqueueQuickPayCommit } from "@/stores/quick-pay-commit-queue";
-import { useQuickPayPrefsStore } from "@/stores/quick-pay-prefs";
 import { useTokenBalancesStore } from "@/stores/token-balances";
-import { useWallet } from "@/wallet";
 import { encodeErc20Transfer } from "@/wallet/evm/transfer";
-import { PRIVATE_BY_DEFAULT_LABEL, PRIVATE_POST_SIGN_DELAY_MS, QUICK_PAY_TOAST } from "./config";
+import { PRIVATE_POST_SIGN_DELAY_MS, QUICK_PAY_TOAST } from "./config";
 import {
   isDryQuoteStale,
   liveQuoteSettleErrorMessage,
@@ -47,11 +47,7 @@ class BalanceGateError extends Error {
 }
 
 function parseCompensationInput(raw: string): string | null {
-  const cleaned = raw.replace(/,/g, "").trim();
-  if (!cleaned) return null;
-  if (!/^(0|[1-9]\d*)(\.\d{0,6})?$/.test(cleaned)) return null;
-  if (Number(cleaned) <= 0) return null;
-  return cleaned;
+  return parsePositiveDecimal(raw, 6);
 }
 
 /**
@@ -97,20 +93,16 @@ export function QuickPayPanel({
   destinationTokenLocked = false,
   onAddRecipient,
 }: QuickPayPanelProps) {
-  const wallet = useWallet("evm");
-  const walletInfo = useEvmWalletInfo();
+  const paymentWallet = usePaymentWallet();
+  const wallet = paymentWallet.wallet;
+  const walletInfo = paymentWallet.walletInfo;
   const queryClient = useQueryClient();
   const toast = useToast();
-  const user = useAuthStore((s) => s.user);
-  const setUser = useAuthStore((s) => s.setUser);
-  const boundAddress = user?.wallet_address || null;
+  const boundAddress = paymentWallet.boundAddress;
   const { data: employees = [] } = useEmployeesQuery();
   const ensureFresh = useIntentsTokensStore((s) => s.ensureFresh);
   const findByChainAndSymbol = useIntentsTokensStore((s) => s.findByChainAndSymbol);
-  const findByAssetId = useIntentsTokensStore((s) => s.findByAssetId);
-  const tokensReady = useIntentsTokensStore((s) => s.tokens.length > 0);
-  const savedOriginAssetId = useQuickPayPrefsStore((s) => s.originAssetId);
-  const setSavedOriginAssetId = useQuickPayPrefsStore((s) => s.setOriginAssetId);
+  const { originToken, setOriginToken } = usePayOriginToken();
 
   const [employeeId, setEmployeeId] = useState<string | null>(initialEmployeeId);
   const [adhocAddress, setAdhocAddress] = useState<string | null>(null);
@@ -118,79 +110,13 @@ export function QuickPayPanel({
   const [memo, setMemo] = useState("");
   const [compensation, setCompensation] = useState("");
   const [destToken, setDestToken] = useState<IntentsToken | null>(null);
-  const [originToken, setOriginToken] = useState<IntentsToken | null>(null);
   const [destDialogOpen, setDestDialogOpen] = useState(false);
-  const [originDialogOpen, setOriginDialogOpen] = useState(false);
   const [phase, setPhase] = useState<"idle" | "quoting" | "signing" | "sending" | "done" | "error">("idle");
-  const [pendingBind, setPendingBind] = useState(false);
-  const [bindingWallet, setBindingWallet] = useState(false);
 
   const { sendTransactionAsync } = useSendTransaction();
   const { switchChainAsync } = useSwitchChain();
-
-  const bindConnectedWallet = async (address: string) => {
-    if (!isValidEthereumAddress(address)) {
-      throw new Error("Connected wallet is not a valid EVM address");
-    }
-    setBindingWallet(true);
-    try {
-      const result = await api.bindPaymentWallet(address);
-      const current = useAuthStore.getState().user;
-      if (current) {
-        setUser({
-          ...current,
-          wallet_address: result.wallet_address,
-          wallet_verified: false,
-        });
-      }
-      return result.wallet_address;
-    } finally {
-      setBindingWallet(false);
-    }
-  };
-
-  const connectAndBindWallet = () => {
-    if (wallet.isConnected && wallet.account?.address) {
-      void bindConnectedWallet(wallet.account.address).catch((cause) => {
-        const msg = cause instanceof ApiError
-          ? cause.message
-          : cause instanceof Error
-            ? cause.message
-            : "Unable to bind wallet";
-        toast.fail({ title: msg });
-      });
-      return;
-    }
-    setPendingBind(true);
-    wallet.connect();
-  };
-
-  useEffect(() => {
-    if (!pendingBind) return;
-    const address = wallet.account?.address;
-    if (!wallet.isConnected || !address) return;
-
-    let cancelled = false;
-    void (async () => {
-      try {
-        await bindConnectedWallet(address);
-      } catch (cause) {
-        if (cancelled) return;
-        const msg = cause instanceof ApiError
-          ? cause.message
-          : cause instanceof Error
-            ? cause.message
-            : "Unable to bind wallet";
-        toast.fail({ title: msg });
-      } finally {
-        if (!cancelled) setPendingBind(false);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [pendingBind, wallet.isConnected, wallet.account?.address]);
+  const bindConnectedWallet = paymentWallet.bindConnectedWallet;
+  const connectAndBindWallet = paymentWallet.connectAndBindWallet;
 
   useEffect(() => {
     void ensureFresh();
@@ -263,18 +189,6 @@ export function QuickPayPanel({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [employee?.id, findByChainAndSymbol]);
 
-  // You Pay origin: restore the locally saved preference once tokens load,
-  // falling back to eth USDT / base USDC / arb USDT.
-  useEffect(() => {
-    if (originToken || !tokensReady) return;
-    const saved = savedOriginAssetId ? findByAssetId(savedOriginAssetId) : undefined;
-    const initial = saved
-      || findByChainAndSymbol("eth", "USDT")
-      || findByChainAndSymbol("base", "USDC")
-      || findByChainAndSymbol("arb", "USDT");
-    if (initial) setOriginToken(initial);
-  }, [originToken, tokensReady, savedOriginAssetId, findByAssetId, findByChainAndSymbol]);
-
   const amountForQuote = parseCompensationInput(compensation);
   const debouncedAmountForQuote = useDebouncedValue(amountForQuote, 900);
 
@@ -340,19 +254,7 @@ export function QuickPayPanel({
     })
     : "—";
 
-  // Balances track the account-bound payment wallet, not browser session alone.
-  const ownerAddress = boundAddress;
   const fetchOneBalance = useTokenBalancesStore((s) => s.fetchOne);
-  const originBalance = useTokenBalance(ownerAddress, originToken?.assetId);
-
-  useEffect(() => {
-    if (!ownerAddress || !originToken?.contractAddress) return;
-    void fetchOneBalance(ownerAddress, originToken);
-    const id = window.setInterval(() => {
-      void fetchOneBalance(ownerAddress, originToken);
-    }, 20_000);
-    return () => window.clearInterval(id);
-  }, [ownerAddress, originToken, fetchOneBalance]);
 
   const resetForm = () => {
     if (!recipientLocked) {
@@ -380,8 +282,7 @@ export function QuickPayPanel({
         if (wallet.isConnected && wallet.account?.address) {
           await bindConnectedWallet(wallet.account.address);
         } else {
-          setPendingBind(true);
-          wallet.connect();
+          connectAndBindWallet();
           throw new Error("Connect your payment wallet first");
         }
       }
@@ -572,8 +473,9 @@ export function QuickPayPanel({
       )}
     >
       {!hideTitle ? (
-        <div className="mb-4">
+        <div className="mb-4 flex items-center justify-between gap-3">
           <h2 className="font-montserrat text-[20px] font-medium capitalize text-black">Quick Pay</h2>
+          <BatchPayoutButton />
         </div>
       ) : null}
 
@@ -761,99 +663,24 @@ export function QuickPayPanel({
       )}
 
       {/* You Pay — show bound account wallet (DB), not browser session alone */}
-      <div className="mb-1 flex items-center justify-between">
-        <p className="font-montserrat text-[14px] font-medium text-[#606060]">You Pay</p>
-        <div className="flex items-center gap-1.5">
-          {boundAddress && wallet.isConnected && walletInfo.icon ? (
-            <img src={walletInfo.icon} alt="" className="size-3 rounded-[2px] object-cover" />
-          ) : null}
-          {boundAddress ? (
-            <p className="font-montserrat text-[12px] text-[#606060]">
-              {formatAddress(boundAddress)}
-            </p>
-          ) : (
-            <button
-              type="button"
-              onClick={connectAndBindWallet}
-              disabled={bindingWallet || pendingBind}
-              className="font-montserrat text-[12px] text-black underline-offset-2 hover:underline disabled:opacity-50"
-            >
-              {bindingWallet || pendingBind ? "Connecting…" : "Connect wallet"}
-            </button>
-          )}
-        </div>
-      </div>
-      <div className="mb-1 flex items-end justify-between gap-3">
-        <p className="font-montserrat text-[16px] font-medium text-black">{amountInDisplay}</p>
-        <button
-          type="button"
-          onClick={() => setOriginDialogOpen(true)}
-          className="inline-flex h-9 shrink-0 items-center gap-2 rounded-[18px] border border-black/10 px-3 font-montserrat text-[14px] font-medium text-black transition-colors hover:bg-black/5"
-        >
-          {originToken ? (
-            <>
-              <span className="relative size-5">
-                <img src={originToken.logo} alt="" className="size-5 rounded-full object-cover" />
-                <img
-                  src={chainLogoUrl(originToken.blockchain)}
-                  alt=""
-                  className="absolute -right-0.5 -bottom-0.5 size-2.5 rounded-[2px] border border-white object-cover"
-                />
-              </span>
-              {originToken.symbol}
-            </>
-          ) : (
-            "Token"
-          )}
-          <img src="/icons/to-down.svg" alt="" className="size-2.5 opacity-60" />
-        </button>
-      </div>
-      <p className="mb-4 font-space-grotesk text-[12px]">
-        <span className="text-[#9fa7ba]">Balance: </span>
-        <span className="text-[#0e3616]">
-          {originBalance?.status === "loading" ? (
-            <span
-              className="inline-block size-3 animate-spin rounded-full border-2 border-[#0e3616] border-r-transparent align-middle"
-              aria-label="Loading balance"
-            />
-          ) : originBalance?.status === "success" && originBalance.formatted != null ? (
-            formatNumber(Number(originBalance.formatted), { maximumFractionDigits: 2 })
-          ) : (
-            "—"
-          )}
-        </span>
-      </p>
+      <YouPaySection
+        amountDisplay={amountInDisplay}
+        originToken={originToken}
+        onOriginTokenChange={setOriginToken}
+        boundAddress={boundAddress}
+        walletConnected={wallet.isConnected}
+        walletIcon={walletInfo.icon}
+        connecting={paymentWallet.bindingWallet || paymentWallet.pendingBind}
+        onConnectWallet={connectAndBindWallet}
+      />
       <div className="mb-4 border-b border-black/10" />
 
-      {/* Est. Cost row */}
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-2 font-montserrat text-[12px]">
-          <span className="text-[#70788a]">Est. Cost</span>
-          <span className="text-[#444c59]">
-            {amountInDisplay !== "—" && originToken
-              ? `${amountInDisplay} ${originToken.symbol}`
-              : "—"}
-          </span>
-          <span className="inline-flex h-[26px] items-center gap-1.5 rounded-[13px] border border-[#d0f348] bg-[rgba(208,243,72,0.2)] px-2.5 font-montserrat text-[12px] font-medium text-[#84a20f]">
-            <IconLock className="size-3" />
-            {PRIVATE_BY_DEFAULT_LABEL}
-          </span>
-        </div>
-        <div className="flex items-center gap-3 font-space-grotesk text-[12px] text-[#444c59]">
-          {feeUsd != null ? (
-            <span className="inline-flex items-center gap-1">
-              <img src="/icons/fee.svg" alt="" className="size-3.5" />
-              ${feeUsd}
-            </span>
-          ) : null}
-          {timeEstimate ? (
-            <span className="inline-flex items-center gap-1">
-              <img src="/icons/duration.svg" alt="" className="size-3.5" />
-              {timeEstimate}
-            </span>
-          ) : null}
-        </div>
-      </div>
+      <EstCostRow
+        amountInDisplay={amountInDisplay}
+        originSymbol={originToken?.symbol}
+        feeUsd={feeUsd}
+        timeEstimate={timeEstimate}
+      />
 
       <div className="mb-6 flex items-center gap-3">
         <div className="flex shrink-0 items-center gap-1.5">
@@ -919,22 +746,6 @@ export function QuickPayPanel({
         initialSymbol={(destToken?.symbol || employee?.token || "USDC") as "USDC" | "USDT"}
         selectedAssetId={destToken?.assetId}
         onSelect={({ token }) => setDestToken(token)}
-      />
-      <TokenNetworkDialog
-        open={originDialogOpen}
-        onOpenChange={setOriginDialogOpen}
-        title="You pay with"
-        initialSymbol={(originToken?.symbol || "USDT") as "USDC" | "USDT"}
-        selectedAssetId={originToken?.assetId}
-        showBalances
-        balanceOwner={boundAddress}
-        onSelect={({ token }) => {
-          setOriginToken(token);
-          setSavedOriginAssetId(token.assetId);
-          if (boundAddress) {
-            void fetchOneBalance(boundAddress, token);
-          }
-        }}
       />
     </section>
   );

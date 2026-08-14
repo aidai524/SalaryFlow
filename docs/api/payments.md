@@ -10,6 +10,7 @@ Parent index: [`docs/api.md`](../api.md)
 | Reconcile / attempt IO | [`api/src/payment-execution.ts`](../../api/src/payment-execution.ts) |
 | 1Click client (internal) | [`api/src/intents.ts`](../../api/src/intents.ts) |
 | Frontend commit queue | [`src/stores/quick-pay-commit-queue.ts`](../../src/stores/quick-pay-commit-queue.ts) |
+| Batch payout | [`api/src/batch-payout.ts`](../../api/src/batch-payout.ts) · [`src/components/batch-payout/`](../../src/components/batch-payout/) |
 | UI | [`src/components/quick-pay/QuickPayPanel.tsx`](../../src/components/quick-pay/QuickPayPanel.tsx) |
 
 ## Domain index
@@ -21,6 +22,9 @@ Parent index: [`docs/api.md`](../api.md)
 | POST | `/api/payments/quick-pay/quote` | `api.quoteQuickPay` / `quoteQuickPayDry` (`employeeId` **or** `destinationAddress`; optional `memo`) |
 | POST | `/api/payments/employees/:employeeId/quote` | `api.quoteEmployeePayment` / `quoteEmployeePaymentDry` (compat wrapper → same handler) |
 | POST | `/api/payments/quick-pay/commit` | `api.commitQuickPay` (persist after on-chain deposit; writes `employee_payments.memo`) |
+| POST | `/api/payments/batch/commit` | `api.commitBatchPayout` |
+| GET | `/api/payments/batches` | `api.listPaymentBatches` |
+| GET | `/api/payments/batches/:id` | `api.getPaymentBatch` |
 | POST | `/api/payments/attempts/:attemptId/intent` | `api.generatePaymentIntent` (**legacy**) |
 | POST | `/api/payments/attempts/:attemptId/submit` | `api.submitPaymentAttempt` (**legacy**) |
 | POST | `/api/payments/attempts/:attemptId/reconcile` | `api.reconcilePaymentAttempt` |
@@ -159,6 +163,34 @@ On funding `SUCCESS`, cron / reconcile auto-calls `submit-intent` with the store
 - **Response** — `200` `{ attempt, reused, mode }` · `202` `{ attempt, outcome: "unknown", … }` if 1Click deposit notify fails but rows are stored
 - **Rules** — Verifies HMAC context (24h) + org/signer match; private verifies ERC-191. Idempotent on `idempotency_key` (`reused: true`). Inserts `employee_payments` + `payment_attempts` + `chain_records` in one batch: standard → `deposit_submitted`, private → `funding_deposit_submitted`. Then notifies 1Click `/v0/deposit/submit` (non-fatal). Quote deadline is **not** a commit reject — reconcile decides confirmed/refunded.
 - **Errors** — `QUICK_PAY_CONTEXT_*` / `QUICK_PAY_SIGNATURE_INVALID` (client: permanent vs hold); 500 `QUICK_PAY_COMMIT_FAILED` (retry); live gate
+
+---
+
+### POST /api/payments/batch/commit
+
+- **Auth** — admin + **verified payment wallet**
+- **Source** — [`api/src/batch-payout.ts`](../../api/src/batch-payout.ts)
+- **Client** — `api.commitBatchPayout` · queued by `src/stores/batch-payout-commit-queue.ts`
+- **Request** — `{ batchId, txHash, contractAddress, originToken, items: [{ context }] }` — `batchId`/`txHash` = `0x` + 64 hex; 1–50 items
+- **Response** — `200` `{ batch, attempts, reused }` · `202` `{ outcome: "unknown" }` if any `/v0/deposit/submit` fails
+- **Rules** — Standard mode only. Verifies every HMAC context (same signer/origin). Origin chain must have a deployed BatchPayout address matching `contractAddress`. Inserts one `payment_batches` row plus **per recipient** `employee_payments` + `payment_attempts` + `chain_records` (shared `deposit_tx_hash`, independent `destination_tx_hash` after reconcile). Idempotent on `(org_id, batch_id)`.
+- **Errors** — `BATCH_CHAIN_NOT_DEPLOYED` · `BATCH_CONTRACT_MISMATCH` · `BATCH_ORIGIN_MISMATCH` · `QUICK_PAY_CONTEXT_*` · `BATCH_COMMIT_FAILED`
+
+---
+
+### GET /api/payments/batches
+
+- **Auth** — admin
+- **Client** — `api.listPaymentBatches({ page, pageSize })`
+- **Response** — `{ batches, total, page, pageSize }` — status aggregated from linked `employee_payments` (`processing` / `partial` / `completed` / `failed`)
+
+---
+
+### GET /api/payments/batches/:id
+
+- **Auth** — admin
+- **Client** — `api.getPaymentBatch(id)`
+- **Response** — `{ batch, items[] }` — each item includes `adminTxHash` (shared origin tx) and `receiveTxHash` (per-person destination tx once reconcile SUCCESS)
 
 ---
 

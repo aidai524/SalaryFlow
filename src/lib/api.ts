@@ -235,6 +235,54 @@ export interface OrgPaymentRow {
   receiveExplorerUrl: string | null;
 }
 
+export type PaymentBatchStatus = "processing" | "partial" | "completed" | "failed";
+
+export interface PaymentBatchSummary {
+  id: string;
+  originAssetId: string;
+  originNetwork: string;
+  originToken: string;
+  contractAddress: string;
+  batchId: string;
+  txHash: string;
+  adminExplorerUrl: string | null;
+  totalAmountIn: string;
+  itemCount: number;
+  status: PaymentBatchStatus;
+  paidCount: number;
+  failedCount: number;
+  processingCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PaymentBatchItemRow {
+  id: string;
+  employeeId: string | null;
+  employeeName: string;
+  amountMinor: number;
+  token: string;
+  network: string;
+  memo: string | null;
+  status: string;
+  adminTxHash: string | null;
+  adminExplorerUrl: string | null;
+  receiveTxHash: string | null;
+  receiveExplorerUrl: string | null;
+}
+
+export interface PaymentBatchListResult {
+  batches: PaymentBatchSummary[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface PaymentBatchDetailResult {
+  batch: PaymentBatchSummary;
+  items: PaymentBatchItemRow[];
+}
+
 export type QuickPayQuoteTarget = {
   originAsset: string;
   amount?: string;
@@ -779,6 +827,34 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+
+  commitBatchPayout: (body: {
+    batchId: string;
+    txHash: string;
+    contractAddress: string;
+    originToken: "USDC" | "USDT";
+    items: Array<{ context: string }>;
+  }) =>
+    request<{
+      batch: PaymentBatchSummary | Record<string, unknown>;
+      attempts?: PaymentAttempt[];
+      reused: boolean;
+      outcome?: "unknown";
+    }>("/payments/batch/commit", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  listPaymentBatches: (params?: { page?: number; pageSize?: number }) => {
+    const search = new URLSearchParams();
+    if (params?.page) search.set("page", String(params.page));
+    if (params?.pageSize) search.set("pageSize", String(params.pageSize));
+    const qs = search.toString();
+    return request<PaymentBatchListResult>(`/payments/batches${qs ? `?${qs}` : ""}`);
+  },
+
+  getPaymentBatch: (id: string) =>
+    request<PaymentBatchDetailResult>(`/payments/batches/${id}`),
 
   listPendingPayments: () =>
     request<{ payments: PendingPaymentRow[] }>("/payments/pending"),

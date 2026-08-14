@@ -3,11 +3,13 @@ import { ToastContainer } from "react-toastify";
 import { GlobalDrawerHost } from "@/components/drawer/GlobalDrawerHost";
 import { AppHeader } from "@/components/layout/AppHeader";
 import { PendingPaymentsDock } from "@/components/pending-payments/PendingPaymentsDock";
+import { useBatchPayoutCommitQueue } from "@/hooks/use-batch-payout-commit-queue";
 import { useQuickPayCommitQueue } from "@/hooks/use-quick-pay-commit-queue";
 import { useAuthStore } from "@/stores/auth";
 
 function AdminQuickPayCommitFlush() {
   useQuickPayCommitQueue();
+  useBatchPayoutCommitQueue();
   return null;
 }
 
