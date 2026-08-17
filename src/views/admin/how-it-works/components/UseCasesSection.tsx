@@ -7,7 +7,7 @@ function ControlCallout() {
             You stay in control
           </h3>
           <p className="mt-2 font-montserrat text-[14px] leading-normal text-black">
-            DeCash is non-custodial. You authorize every payment from your own wallet
+            Stableflow Pay is non-custodial. You authorize every payment from your own wallet
             or Safe.
           </p>
         </div>
@@ -37,14 +37,14 @@ function ControlCallout() {
             aria-hidden
           />
 
-          <div className="flex w-full max-w-[140px] flex-col items-center gap-2 text-center sm:max-w-[116px]">
+          <div className="flex w-full max-w-[140px] flex-col items-center gap-2 text-center sm:max-w-[136px]">
             <img
               src="/howitwork/decash-executes-confidentialy.png"
               alt=""
               className="h-[50px] w-[43px] object-contain"
             />
             <p className="font-montserrat text-[12px] leading-normal text-black">
-              DeCash executes confidentialy
+              Stableflow Pay executes confidentialy
             </p>
           </div>
 

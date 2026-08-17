@@ -95,7 +95,7 @@ export function InviteView() {
             label="Invitation link"
             value={draftToken}
             onChange={setDraftToken}
-            placeholder="https://example.com/invite/…"
+            placeholder="https://pay.stableflow.ai/invite/…"
             autoFocus
           />
           <AuthError message={resolveError} />

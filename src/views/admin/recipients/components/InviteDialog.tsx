@@ -106,7 +106,7 @@ export function InviteDialog({
             Invite
           </DialogTitle>
           <p className="font-montserrat text-[12px] font-normal text-[#909090]">
-            Invite a colleague to create their own DECash account.
+            Invite a colleague to create their own Stableflow Pay account.
           </p>
         </DialogHeader>
 

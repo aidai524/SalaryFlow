@@ -182,11 +182,11 @@ export function AppHeader({
           type="button"
           className="justify-self-start rounded-[25px] bg-primary p-[7px_10px_7px] h-[42px] w-[123px] md:w-[142px] flex justify-center items-center"
           onClick={() => navigate(homePath)}
-          aria-label="DECash home"
+          aria-label="Stableflow Pay home"
         >
           <img
             src="/logo.svg"
-            alt="DECash"
+            alt="Stableflow Pay"
             className="shrink-0 w-full h-full object-center object-contain"
           />
         </button>

@@ -20,7 +20,7 @@ export function MyPayView() {
   const payments = paymentsQuery.data?.payments ?? [];
 
   useEffect(() => {
-    document.title = "DECash · My Pay";
+    document.title = "Stableflow Pay · My Pay";
   }, []);
 
   useEffect(() => {

@@ -77,7 +77,7 @@ export function MeaningSection() {
       </div>
 
       <p className="mt-5 font-montserrat text-[14px] leading-normal text-black">
-        *DeCash is designed to reduce direct public payment linkage, not to promise
+        *Stableflow Pay is designed to reduce direct public payment linkage, not to promise
         anonymity.
       </p>
     </section>

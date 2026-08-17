@@ -1,5 +1,5 @@
 /**
- * Multi-chain wallet abstraction for DECash.
+ * Multi-chain wallet abstraction for Stableflow Pay.
  *
  * Primary use cases:
  * 1. Admin: sign payment intents before payroll submission.

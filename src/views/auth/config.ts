@@ -46,7 +46,7 @@ export const AUTH_BRAND = {
   ],
   howItWorksLabel: "How it works",
   howItWorksHref: "/howitworks",
-  betaLabel: "DeCash is currently in beta.",
+  betaLabel: "Stableflow Pay is currently in beta.",
 } as const;
 
 export const DEFAULT_PAYOUT_TOKEN = "USDC";

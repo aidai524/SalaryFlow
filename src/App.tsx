@@ -15,8 +15,8 @@ export default function App() {
     return (
       <div className="splash-screen">
         <div>
-          <img src="/logo.svg" alt="DECash" className="splash-mark" />
-          <p className="font-rubik-one">Loading DECash…</p>
+          <img src="/logo.svg" alt="Stableflow Pay" className="splash-mark" />
+          <p className="font-rubik-one">Loading Stableflow Pay...</p>
         </div>
       </div>
     );

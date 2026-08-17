@@ -43,7 +43,7 @@ export function AuthShell({
         <div className="relative z-10 flex min-h-0 flex-1 flex-col">
           <img
             src="/logo.svg"
-            alt="DECash"
+            alt="Stableflow Pay"
             className="h-auto w-[188px]"
             width={188}
             height={46}

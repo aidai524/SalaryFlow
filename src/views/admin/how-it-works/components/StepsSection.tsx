@@ -2,7 +2,7 @@ export function StepsSection() {
   return (
     <section id="how-confidential-payments-work-on-decash" className="scroll-mt-6">
       <h2 className="font-montserrat text-[26px] font-semibold leading-tight text-black">
-        How Confidential Payments Work on DeCash
+        How Confidential Payments Work on Stableflow Pay
       </h2>
 
       <div className="mt-5 grid gap-4 md:grid-cols-3">
@@ -25,7 +25,7 @@ export function StepsSection() {
           </h3>
           <div className="mt-4 space-y-3 font-montserrat text-[14px] leading-normal text-black">
             <p>
-              DECASH uses{" "}
+              Stableflow Pay uses{" "}
               <span className="font-semibold">NEAR Confidential Intents</span>, where
               execution happens inside a dedicated NEAR private shard.
             </p>
@@ -54,7 +54,7 @@ export function StepsSection() {
 
       <p className="mt-5 font-montserrat text-[14px] leading-normal text-black">
         *Source and destination networks may still have their own public on-chain
-        activity. DECASH protects the direct payment relationship, not the entire
+        activity. Stableflow Pay protects the direct payment relationship, not the entire
         blockchain.
       </p>
     </section>

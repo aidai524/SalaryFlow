@@ -1,5 +1,5 @@
 /**
- * Chain registry for DECash payments.
+ * Chain registry for Stableflow Pay payments.
  * Phase 1: EVM only. Non-EVM kinds are reserved for later wallet adapters.
  */
 

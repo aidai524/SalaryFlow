@@ -9,7 +9,7 @@ export function HeroSection() {
       </p>
       <div className="mt-5 space-y-4 font-montserrat text-[16px] leading-normal text-black">
         <p>
-          DECASH uses confidential execution to reduce the public link between the
+          Stableflow Pay uses confidential execution to reduce the public link between the
           wallet you pay from and the wallet that receives your payment.
         </p>
         <p>
@@ -20,7 +20,7 @@ export function HeroSection() {
 
       <div className="mt-8 rounded-[20px] border border-white bg-[#fdfdfd] px-4 py-6 shadow-[0px_0px_20px_0px_rgba(0,0,0,0.06)] sm:px-8 sm:py-8">
         <p className="mb-6 font-montserrat text-[16px] font-semibold text-black">
-          How a DeCash Payment Works
+          How a Stableflow Pay Payment Works
         </p>
         <div className="flex flex-col items-center md:items-start gap-6 sm:flex-row sm:justify-center sm:gap-0">
           <div className="flex flex-col items-center gap-2">
