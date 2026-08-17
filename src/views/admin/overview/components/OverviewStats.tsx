@@ -13,8 +13,7 @@ export function OverviewStats({
   isLoading: boolean;
 }) {
   const daysLeft = stats?.daysLeft ?? 0;
-  const daysLabel =
-    daysLeft > 0 ? `${daysLeft} Days Left` : daysLeft === 0 ? "Today" : `${Math.abs(daysLeft)} Days Overdue`;
+  const daysLabel = daysLeft > 0 ? `${daysLeft} Days Left` : null;
 
   return (
     <div className={`mb-5 overflow-hidden ${CARD_CLASS}`}>

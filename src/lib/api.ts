@@ -156,6 +156,8 @@ export interface OrgOverview {
     periodKey: string;
     payday: string;
     paydayDisplay: string;
+    nextPayday: string;
+    nextPaydayDisplay: string;
     cadence: TeamPaymentSchedule;
     monthLabel: string;
     currentPeriodKey: string;

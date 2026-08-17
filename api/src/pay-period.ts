@@ -176,7 +176,7 @@ export function resolveUpcomingPayday(
   return nextWeekdayOnOrAfter(today, weekday);
 }
 
-function shiftPeriod(
+export function shiftPeriod(
   cadence: TeamPaymentSchedule,
   dateKey: TeamPaymentDateKey,
   window: PeriodWindow,

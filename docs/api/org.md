@@ -109,8 +109,8 @@ Employee `status`: `pending` \| `ready` \| `update_required` — set by payout v
   | `periodKey` | Optional. `YYYY-MM` or `YYYY-Www` matching team cadence; default = current natural calendar period |
   | `volumeRange` | `6` \| `12` (default `6`) — number of past periods for Payment Volume |
 
-- **Response** — `period` (includes `currentPeriodKey`), `stats` (`paidMinor`, `paidCount`, `awaitingMinor`, `awaitingCount`, `daysLeft`, `progress`, `recipientsCount`), `volume.bars[]`, `upcoming[]` (current + next 3 unpaid employee payrolls), `recentPayments` (latest 5 paid/processing), `category` (employee vs contractor headcount), `networks` (payout network distribution)
-- **Rules** — `period_key` buckets are natural calendar months/weeks (payment date), not payday roll-forward. Selected period’s `payday` / `daysLeft` use the scheduled date within that period. Dashboard money/progress counts `employee_type = 'employee'` only. Category / networks use full directory.
+- **Response** — `period` (includes `currentPeriodKey`, `nextPayday` / `nextPaydayDisplay`), `stats` (`paidMinor`, `paidCount`, `awaitingMinor`, `awaitingCount`, `daysLeft`, `progress`, `recipientsCount`), `volume.bars[]`, `upcoming[]` (current + next 3 unpaid employee payrolls), `recentPayments` (latest 5 paid/processing), `category` (employee vs contractor headcount), `networks` (payout network distribution)
+- **Rules** — `period_key` buckets are natural calendar months/weeks (payment date), not payday roll-forward. Selected period’s `payday` is the scheduled date within that period. Next Payment Day (`nextPayday` / `nextPaydayDisplay`) is the scheduled payday of the **next** period after the selected one. `daysLeft` is whole UTC days until that next payday; the Overview subtitle shows `"N Days Left"` only when `daysLeft > 0` (hidden for today or past dates). Dashboard money/progress counts `employee_type = 'employee'` only. Category / networks use full directory.
 - **Errors** — 400 invalid `periodKey`; 404 org; 409 `PAYMENT_NOT_CONFIGURED`
 
 ---

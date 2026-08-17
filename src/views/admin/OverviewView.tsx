@@ -59,7 +59,7 @@ export function OverviewView() {
 
       <OverviewStats
         stats={data?.stats}
-        paydayDisplay={data?.period.paydayDisplay}
+        paydayDisplay={data?.period.nextPaydayDisplay}
         isLoading={isLoading}
       />
 

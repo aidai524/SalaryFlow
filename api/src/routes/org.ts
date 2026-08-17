@@ -20,6 +20,7 @@ import {
   resolveCurrentPeriod,
   resolveUpcomingPayday,
   resolvePeriodFromKey,
+  shiftPeriod,
   shortPeriodLabel,
 } from "../pay-period";
 import { normalizePayoutAddress, normalizePayoutNetwork, normalizePayoutToken } from "../payout";
@@ -349,7 +350,8 @@ orgRoutes.get("/overview", requireRole("admin"), async (c) => {
   const recipientsCount = fullTime.length;
   const paidCount = paidIdsSelected.size;
   const progress = Math.round((paidCount / (recipientsCount || 1)) * 100);
-  const daysLeft = daysUntilPayday(selected.payday, now);
+  const nextPeriod = shiftPeriod(cadence, dateKey, selected, 1);
+  const daysLeft = daysUntilPayday(nextPeriod.payday, now);
 
   // Volume: last N periods ending at current (real now), paid amounts for employees only.
   const volumeWindows = listPeriodWindows(cadence, dateKey, {
@@ -483,6 +485,8 @@ orgRoutes.get("/overview", requireRole("admin"), async (c) => {
       periodKey: selected.periodKey,
       payday: selected.payday,
       paydayDisplay: formatPaydayDisplay(selected.payday),
+      nextPayday: nextPeriod.payday,
+      nextPaydayDisplay: formatPaydayDisplay(nextPeriod.payday),
       cadence,
       monthLabel: monthLabelForPayday(selected.payday),
       currentPeriodKey: current.periodKey,
