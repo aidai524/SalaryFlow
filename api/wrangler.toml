@@ -12,6 +12,7 @@ MOCK_EMAIL = "false"
 PAYMENTS_MODE = "live"
 PAYMENTS_EXECUTION_ACK = "mainnet-live"
 REGISTER_INVITE_REQUIRED = "true"
+SENDER_EMAIL = "Stableflow Pay <invites@mailserver.stableflow.ai>"
 
 # Secrets (set via `wrangler secret put`):
 # RESEND_API_KEY, INTENTS_API_KEY, JWT_SECRET
