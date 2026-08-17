@@ -32,8 +32,9 @@ const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
 
 /** Deployed BatchPayout addresses keyed by 1Click blockchain code. */
 export const BATCH_PAYOUT_CONTRACTS: Partial<Record<BatchPayoutBlockchain, BatchPayoutContractConfig>> = {
-  // Fill after Arbitrum mainnet deploy.
   arb: { chainId: 42161, address: "0x5A1D9d70E23F886074Ff29Fcaf241cdb73CF4090" },
+  eth: { chainId: 1, address: "0x5A1D9d70E23F886074Ff29Fcaf241cdb73CF4090" },
+  bsc: { chainId: 56, address: "0x5A1D9d70E23F886074Ff29Fcaf241cdb73CF4090" },
 };
 
 export const BATCH_PAYOUT_MAX_ITEMS = 50;

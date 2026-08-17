@@ -11,6 +11,10 @@ ffi = false
 
 [rpc_endpoints]
 arbitrum = "${ARB_RPC_URL}"
+mainnet = "${ETH_RPC_URL}"
+bsc = "${BSC_RPC_URL}"
 
 [etherscan]
 arbitrum = { key = "${ARBISCAN_API_KEY}", url = "https://api.arbiscan.io/api" }
+mainnet = { key = "${ETHERSCAN_API_KEY}" }
+bsc = { key = "${BSCSCAN_API_KEY}", url = "https://api.bscscan.com/api" }

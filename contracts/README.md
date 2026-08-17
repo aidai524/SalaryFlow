@@ -19,26 +19,35 @@ forge install foundry-rs/forge-std
 forge test -vv
 ```
 
-## Deploy (Arbitrum mainnet only for this release)
+## Deploy
 
 Copy `.env.example` to `.env` in this directory and fill in values. Foundry loads `contracts/.env` automatically.
 
-`PRIVATE_KEY` must be the 32-byte hex secret (66 characters: `0x` + 64 hex chars), not the wallet address. Confirm the signer before broadcasting:
+`PRIVATE_KEY` must be the 32-byte hex secret (66 characters: `0x` + 64 hex chars), not the wallet address. The deployer needs gas on each target chain (ETH on Ethereum / Arbitrum, BNB on BNB Chain). Confirm the signer before broadcasting:
 
 ```bash
 set -a && source .env && set +a
 cast wallet address --private-key "$PRIVATE_KEY"
 ```
 
-Then deploy:
+Then deploy the same script on each origin chain:
 
 ```bash
+# Arbitrum One (chainId 42161)
 forge script script/Deploy.s.sol:Deploy --rpc-url arbitrum --broadcast --verify
+
+# Ethereum mainnet (chainId 1)
+forge script script/Deploy.s.sol:Deploy --rpc-url mainnet --broadcast --verify
+
+# BNB Chain (chainId 56)
+forge script script/Deploy.s.sol:Deploy --rpc-url bsc --broadcast --verify
 ```
 
-Omit `--verify` if `ARBISCAN_API_KEY` is empty.
+Omit `--verify` if the matching `*SCAN_API_KEY` is empty. This script uses CREATE (not CREATE2); the address matches across chains only when the deployer nonce is the same.
 
-Copy the printed address into:
+Copy each printed address into:
 
 - `src/config/batch-payout-chains.ts`
 - `api/src/batch-payout-chains.ts`
+
+Restart the API Worker after changing the backend config.
