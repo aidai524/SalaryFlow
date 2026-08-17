@@ -21,7 +21,7 @@ export function EstCostRow({
             ? `${amountInDisplay} ${originSymbol}`
             : "—"}
         </span>
-        <span className="inline-flex h-[26px] items-center gap-1.5 rounded-[13px] border border-[#d0f348] bg-[rgba(208,243,72,0.2)] px-2.5 font-montserrat text-[12px] font-medium text-[#84a20f]">
+        <span className="inline-flex h-[26px] items-center gap-1.5 rounded-[13px] border border-primary bg-primary/20 px-2.5 font-montserrat text-[12px] font-medium text-primary">
           <IconLock className="size-3" />
           {PRIVATE_BY_DEFAULT_LABEL}
         </span>

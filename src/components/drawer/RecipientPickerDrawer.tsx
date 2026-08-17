@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { IdentityAvatar } from "@/components/IdentityAvatar";
+import { IdentityAvatar, identityAvatarSeed } from "@/components/IdentityAvatar";
 import {
   Sheet,
   SheetContent,
@@ -89,7 +89,7 @@ export function RecipientPickerDrawer() {
                       selected && "bg-[#f6f6f6]",
                     )}
                   >
-                    <IdentityAvatar seed={emp.email || emp.name} size={32} alt="" />
+                    <IdentityAvatar seed={identityAvatarSeed(emp)} src={emp.avatar_url} size={32} alt="" />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate font-montserrat text-[14px] text-black">
                         {emp.name}

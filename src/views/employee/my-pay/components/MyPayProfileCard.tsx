@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { IdentityAvatar } from "@/components/IdentityAvatar";
+import { IdentityAvatar, identityAvatarSeed } from "@/components/IdentityAvatar";
 import { IconAlert } from "@/components/icons/alert";
 import { IconCheck } from "@/components/icons/check";
 import { IconPen } from "@/components/icons/pen";
@@ -40,7 +40,7 @@ export function MyPayProfileCard({
     >
       <div className="flex items-start gap-3 px-5 pt-5 pb-4">
         <IdentityAvatar
-          seed={payout.name || payout.email || payout.id}
+          seed={identityAvatarSeed(payout)}
           src={payout.avatar_url}
           size={60}
           alt=""

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { AddRecipientPillButton } from "@/components/AddRecipientPillButton";
-import { IdentityAvatar } from "@/components/IdentityAvatar";
+import { IdentityAvatar, identityAvatarSeed } from "@/components/IdentityAvatar";
 import { IconAlert } from "@/components/icons/alert";
 import { IconCheck } from "@/components/icons/check";
 import { ConfidentialPaymentsBanner } from "@/components/quick-pay/ConfidentialPaymentsBanner";
@@ -150,7 +150,7 @@ export function PayView() {
                       to={`/recipients?selected=${r.id}`}
                       className="flex items-center gap-3 rounded-[12px] px-2 py-2 transition-colors hover:bg-[#f6f6f6]"
                     >
-                      <IdentityAvatar seed={r.name} src={r.avatar_url} size={32} alt="" />
+                      <IdentityAvatar seed={identityAvatarSeed(r)} src={r.avatar_url} size={32} alt="" />
                       <span className="min-w-0 flex-1">
                         <span className="block truncate font-montserrat text-[14px] font-medium text-black">
                           {r.name}

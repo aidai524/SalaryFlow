@@ -42,17 +42,17 @@ export function AuthShell({
 
         <div className="relative z-10 flex min-h-0 flex-1 flex-col">
           <img
-            src="/logo.svg"
+            src="/logo-white.svg"
             alt="Stableflow Pay"
-            className="h-auto w-[188px]"
-            width={188}
-            height={46}
+            className="h-auto w-[154px]"
+            width={154}
+            height={58}
           />
 
-          <h1 className="mt-10 max-w-[558px] font-montserrat text-[32px] font-semibold capitalize leading-tight text-black md:mt-16 md:text-[46px]">
+          <h1 className="mt-10 max-w-[558px] font-montserrat text-[32px] font-semibold capitalize leading-tight text-white md:mt-16 md:text-[46px]">
             {AUTH_BRAND.headline}
           </h1>
-          <p className="mt-4 max-w-[558px] font-montserrat text-[16px] font-normal leading-[1.5] text-black md:mt-5 md:text-[20px]">
+          <p className="mt-4 max-w-[558px] font-montserrat text-[16px] font-normal leading-[1.5] text-white md:mt-5 md:text-[20px]">
             {AUTH_BRAND.subhead}
           </p>
 
@@ -62,16 +62,16 @@ export function AuthShell({
               return (
                 <li key={feature.title} className="flex max-w-[480px] items-start gap-4">
                   <span
-                    className="grid size-10 shrink-0 place-items-center rounded-[12px] bg-[rgba(0,0,0,0.1)] text-black"
+                    className="grid size-10 shrink-0 place-items-center rounded-[12px] bg-[rgba(0,0,0,0.1)] text-white"
                     aria-hidden
                   >
                     <Icon className="size-5" />
                   </span>
                   <div>
-                    <p className="font-montserrat text-[20px] font-semibold capitalize text-black">
+                    <p className="font-montserrat text-[20px] font-semibold capitalize text-white">
                       {feature.title}
                     </p>
-                    <p className="mt-1 font-montserrat text-[14px] font-normal leading-[1.5] text-black">
+                    <p className="mt-1 font-montserrat text-[14px] font-normal leading-[1.5] text-white">
                       {feature.body}
                     </p>
                   </div>
@@ -82,11 +82,11 @@ export function AuthShell({
 
           <Link
             to={AUTH_BRAND.howItWorksHref}
-            className="mt-8 inline-flex items-center gap-1.5 font-montserrat text-sm font-normal text-black transition-opacity hover:opacity-70 md:mt-auto md:pt-10"
+            className="mt-8 inline-flex items-center gap-1.5 font-montserrat text-sm font-normal text-white transition-opacity hover:opacity-70 md:mt-auto md:pt-10"
           >
             {AUTH_BRAND.howItWorksLabel}
             <svg className="shrink-0" width="13" height="9" viewBox="0 0 13 9" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M0.5 4.5H12M8 8.5L12 4.5L8 0.5" stroke="#606060" stroke-linecap="round" stroke-linejoin="round" />
+              <path d="M0.5 4.5H12M8 8.5L12 4.5L8 0.5" stroke="#fff" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
           </Link>
         </div>

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { isAddress } from "viem";
-import { IdentityAvatar } from "@/components/IdentityAvatar";
+import { IdentityAvatar, identityAvatarSeed } from "@/components/IdentityAvatar";
 import {
   Dialog,
   DialogContent,
@@ -489,7 +489,7 @@ export function AddRecipientDialog({
             >
               {form.avatar_url ? (
                 <IdentityAvatar
-                  seed={form.name || form.email || "avatar"}
+                  seed={identityAvatarSeed({ id: employee?.id, email: form.email, name: form.name })}
                   src={form.avatar_url}
                   size={80}
                   alt=""

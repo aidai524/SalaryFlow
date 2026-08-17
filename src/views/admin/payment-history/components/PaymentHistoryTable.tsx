@@ -1,4 +1,4 @@
-import { IdentityAvatar } from "@/components/IdentityAvatar";
+import { IdentityAvatar, identityAvatarSeed } from "@/components/IdentityAvatar";
 import { IconAlert } from "@/components/icons/alert";
 import { IconCheck } from "@/components/icons/check";
 import { formatDateTime, formatTokenMinor } from "@/lib/format";
@@ -57,7 +57,12 @@ export function PaymentHistoryTable({
                 >
                   <td className="px-5 py-3.5">
                     <div className="flex items-center gap-2.5">
-                      <IdentityAvatar seed={row.name} size={32} alt="" />
+                      <IdentityAvatar
+                        seed={identityAvatarSeed({ id: row.employeeId, name: row.name })}
+                        src={row.avatar_url}
+                        size={32}
+                        alt=""
+                      />
                       <div className="min-w-0">
                         <p className="truncate font-montserrat text-[14px] font-medium text-black">
                           {row.name}

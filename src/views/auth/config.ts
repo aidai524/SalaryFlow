@@ -1,4 +1,4 @@
-export const AUTH_BRAND_BG = "#C8E458";
+export const AUTH_BRAND_BG = "#3F8AFB";
 export const AUTH_PANEL_BG = "#F6F6F6";
 
 /** @deprecated Use AUTH_BRAND_BG — kept for any stray imports. */

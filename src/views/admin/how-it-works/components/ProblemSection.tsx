@@ -57,7 +57,7 @@ export function ProblemSection() {
             Standard payment
           </h3>
           <div className="mt-6 flex flex-col items-center">
-            <div className="inline-flex items-center gap-2 rounded-[12px] border border-[#d0f348] bg-[rgba(208,243,72,0.2)] px-3.5 py-2.5">
+            <div className="inline-flex items-center gap-2 rounded-[12px] border border-primary bg-primary/20 px-3.5 py-2.5">
               <img
                 src="/howitwork/standard-payment-your-wallet.png"
                 alt=""
@@ -76,7 +76,7 @@ export function ProblemSection() {
                 aria-hidden
               />
               <span
-                className="absolute left-1/2 top-1/2 z-20 size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#d0f348]"
+                className="absolute left-1/2 top-1/2 z-20 size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#3F8AFB]"
                 aria-hidden
               />
               <div className="absolute left-[calc(50%+10px)] top-1/2 z-10 flex h-[28px] w-[154px] -translate-y-1/2 items-center justify-center">
@@ -86,13 +86,13 @@ export function ProblemSection() {
                   className="absolute inset-0 size-full object-fill"
                   aria-hidden
                 />
-                <span className="relative z-10 pl-3 font-montserrat text-[14px] font-medium text-black">
+                <span className="relative z-10 pl-3 font-montserrat text-[14px] font-medium text-white">
                   Public transaction
                 </span>
               </div>
             </div>
 
-            <div className="inline-flex items-center gap-2 rounded-[12px] border border-[#d0f348] bg-[rgba(208,243,72,0.2)] px-3.5 py-2.5">
+            <div className="inline-flex items-center gap-2 rounded-[12px] border border-primary bg-primary/20 px-3.5 py-2.5">
               <img
                 src="/howitwork/standard-payment-recipient-wallet.png"
                 alt=""

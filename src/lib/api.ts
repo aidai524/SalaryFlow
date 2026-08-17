@@ -199,6 +199,7 @@ export interface OrgOverview {
     status: "paid" | "processing";
     paid_at: string;
     period_key: string;
+    avatar_url?: string | null;
   }>;
   category: Array<{
     type: EmployeeType;
@@ -220,6 +221,7 @@ export interface OrgPaymentRow {
   name: string;
   role_title: string | null;
   employee_type: EmployeeType;
+  avatar_url?: string | null;
   amount_minor: number;
   token: string;
   network: string;

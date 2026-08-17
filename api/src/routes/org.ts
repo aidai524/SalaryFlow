@@ -305,7 +305,7 @@ orgRoutes.get("/overview", requireRole("admin"), async (c) => {
   const paidRows = await c.env.DB.prepare(
     `SELECT ep.id, ep.employee_id, ep.amount_minor, ep.period_key, ep.status, ep.paid_at, ep.created_at,
             ep.token, ep.network, ep.memo, ep.recipient_name,
-            e.name, e.role_title, e.employee_type
+            e.name, e.role_title, e.employee_type, e.avatar_url
      FROM employee_payments ep
      LEFT JOIN employees e ON e.id = ep.employee_id AND e.org_id = ep.org_id
      WHERE ep.org_id = ?`,
@@ -324,6 +324,7 @@ orgRoutes.get("/overview", requireRole("admin"), async (c) => {
     name: string | null;
     role_title: string | null;
     employee_type: string | null;
+    avatar_url: string | null;
   }>();
 
   const paidIdsSelected = new Set<string>();
@@ -437,6 +438,7 @@ orgRoutes.get("/overview", requireRole("admin"), async (c) => {
       paid_at: r.paid_at || r.created_at,
       period_key: r.period_key,
       memo: r.memo,
+      avatar_url: r.avatar_url || null,
     }));
 
   const totalHeadcount = employees.results.length || 1;
@@ -541,7 +543,7 @@ orgRoutes.get("/payments", requireRole("admin"), async (c) => {
   const rows = await c.env.DB.prepare(
     `SELECT ep.id, ep.employee_id, ep.amount_minor, ep.token, ep.network, ep.status,
             ep.paid_at, ep.created_at, ep.period_key, ep.memo, ep.recipient_name,
-            e.name, e.role_title, e.employee_type,
+            e.name, e.role_title, e.employee_type, e.avatar_url,
             pa.deposit_tx_hash, pa.funding_tx_hash, pa.origin_asset_id,
             pa.destination_tx_hash, pa.destination_tx_explorer_url
      FROM employee_payments ep
@@ -564,6 +566,7 @@ orgRoutes.get("/payments", requireRole("admin"), async (c) => {
     name: string | null;
     role_title: string | null;
     employee_type: string | null;
+    avatar_url: string | null;
     deposit_tx_hash: string | null;
     funding_tx_hash: string | null;
     origin_asset_id: string | null;
@@ -583,6 +586,7 @@ orgRoutes.get("/payments", requireRole("admin"), async (c) => {
         name,
         role_title: r.role_title,
         employee_type: (r.employee_type || "others") as EmployeeType,
+        avatar_url: r.avatar_url || null,
         amount_minor: Number(r.amount_minor || 0),
         token: r.token,
         network: r.network,

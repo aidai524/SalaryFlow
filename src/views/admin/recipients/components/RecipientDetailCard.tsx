@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { IdentityAvatar } from "@/components/IdentityAvatar";
+import { IdentityAvatar, identityAvatarSeed } from "@/components/IdentityAvatar";
 import { IconAlert } from "@/components/icons/alert";
 import { IconCalendar } from "@/components/icons/calendar";
 import { IconCash } from "@/components/icons/cash";
@@ -140,7 +140,7 @@ export function RecipientDetailCard({
     >
       <div className="flex items-start gap-3 px-5 pt-5 pb-4">
         <IdentityAvatar
-          seed={employee.name || employee.email || employee.id}
+          seed={identityAvatarSeed(employee)}
           src={employee.avatar_url}
           size={60}
           alt=""
@@ -326,7 +326,7 @@ export function RecipientDetailCard({
                       href={p.explorerUrl || `https://nearblocks.io/txns/${p.txHash}`}
                       target="_blank"
                       rel="noreferrer"
-                      className="shrink-0 text-[#4da0ff] underline underline-offset-2 hover:opacity-80"
+                      className="shrink-0 text-primary underline underline-offset-2 hover:opacity-80"
                     >
                       Tx
                     </a>
@@ -391,7 +391,7 @@ function DetailRow({
       <span
         className={cn(
           "inline-flex size-8 shrink-0 items-center justify-center rounded-full",
-          filled ? "bg-[#d0f348] text-black" : "bg-[#e3e3e3] text-white",
+          filled ? "bg-primary text-white" : "bg-[#e3e3e3] text-white",
         )}
       >
         {icon}

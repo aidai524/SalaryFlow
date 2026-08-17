@@ -36,7 +36,7 @@ export async function sendInviteEmail(env: Env, input: InviteMailInput): Promise
     return { ok: false, error: "Email delivery is not configured" };
   }
   try {
-    const from = env.SENDER_EMAIL || "SalaryFlow <onboarding@resend.dev>";
+    const from = env.SENDER_EMAIL || "Stableflow Pay <onboarding@resend.dev>";
     const orgName = escapeHtml(input.orgName);
     const inviterName = escapeHtml(input.inviterName);
     const inviteUrl = escapeHtml(input.inviteUrl);
@@ -50,11 +50,11 @@ export async function sendInviteEmail(env: Env, input: InviteMailInput): Promise
       body: JSON.stringify({
         from,
         to: [input.to],
-        subject: `${input.inviterName} invited you to join ${input.orgName} on SalaryFlow`,
+        subject: `${input.inviterName} invited you to join ${input.orgName} on Stableflow Pay`,
         text: [
           "Hi,",
           "",
-          `${input.inviterName} invited you to join ${input.orgName} on SalaryFlow as a ${roleLabel}.`,
+          `${input.inviterName} invited you to join ${input.orgName} on Stableflow Pay as a ${roleLabel}.`,
           "",
           `Accept the invitation: ${input.inviteUrl}`,
           "",
@@ -62,7 +62,7 @@ export async function sendInviteEmail(env: Env, input: InviteMailInput): Promise
         ].join("\n"),
         html: `
           <p>Hi,</p>
-          <p><strong>${inviterName}</strong> invited you to join <strong>${orgName}</strong> on SalaryFlow as a ${roleLabel}.</p>
+          <p><strong>${inviterName}</strong> invited you to join <strong>${orgName}</strong> on Stableflow Pay as a ${roleLabel}.</p>
           <p><a href="${inviteUrl}">Accept the invitation</a></p>
           <p>This link expires in 7 days. If you did not expect this invitation, you can ignore this email.</p>
         `,

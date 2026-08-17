@@ -1,4 +1,4 @@
-import { IdentityAvatar } from "@/components/IdentityAvatar";
+import { IdentityAvatar, identityAvatarSeed } from "@/components/IdentityAvatar";
 import { IconAlert } from "@/components/icons/alert";
 import { IconCheck } from "@/components/icons/check";
 import type { Employee } from "@/lib/api";
@@ -15,7 +15,7 @@ export function RecipientNameCell({ employee }: { employee: Employee }) {
   return (
     <div className="flex min-w-0 items-center gap-3">
       <IdentityAvatar
-        seed={employee.name || employee.email || employee.id}
+        seed={identityAvatarSeed(employee)}
         src={employee.avatar_url}
         size={36}
         alt=""

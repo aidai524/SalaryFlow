@@ -2,7 +2,7 @@ import { KeyRound, LogOut } from "lucide-react";
 import { useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import { EmployeePayoutWalletDialog } from "@/components/EmployeePayoutWalletDialog";
-import { IdentityAvatar } from "@/components/IdentityAvatar";
+import { IdentityAvatar, identityAvatarSeed } from "@/components/IdentityAvatar";
 import { WalletConnectDialog } from "@/components/WalletConnect";
 import {
   DropdownMenu,
@@ -45,9 +45,7 @@ function HeaderWalletChip() {
   const bound = Boolean(displayAddress);
   const label = bound ? formatAddress(displayAddress) : "Connect";
   const payout = payoutQuery.data?.payout;
-  const seed = isAdmin
-    ? (displayAddress || user.email)
-    : (payout?.name || payout?.email || payout?.id || user.name || user.email);
+  const seed = isAdmin ? identityAvatarSeed(user) : identityAvatarSeed(payout ?? user);
   const avatarSrc = isAdmin ? undefined : (payout?.avatar_url || null);
 
   return (
@@ -180,7 +178,7 @@ export function AppHeader({
       {!isOnboarding && (
         <button
           type="button"
-          className="justify-self-start rounded-[25px] bg-primary p-[7px_10px_7px] h-[42px] w-[123px] md:w-[142px] flex justify-center items-center"
+          className="justify-self-start h-[30px] w-[96px] flex justify-center items-center"
           onClick={() => navigate(homePath)}
           aria-label="Stableflow Pay home"
         >

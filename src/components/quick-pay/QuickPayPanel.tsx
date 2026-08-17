@@ -4,7 +4,7 @@ import { isAddress, type Address, type Hex } from "viem";
 import { useSendTransaction, useSwitchChain } from "wagmi";
 import { AddRecipientPillButton } from "@/components/AddRecipientPillButton";
 import { BatchPayoutButton } from "@/components/batch-payout/BatchPayoutButton";
-import { IdentityAvatar } from "@/components/IdentityAvatar";
+import { IdentityAvatar, identityAvatarSeed } from "@/components/IdentityAvatar";
 import { SearchInput } from "@/components/search-input/SearchInput";
 import { TokenNetworkDialog } from "@/components/token-network-dialog/TokenNetworkDialog";
 import {
@@ -483,7 +483,7 @@ export function QuickPayPanel({
         employee ? (
           <div className="mb-5 flex items-center gap-3">
             <IdentityAvatar
-              seed={employee.email || employee.name}
+              seed={identityAvatarSeed(employee)}
               src={employee.avatar_url}
               size={32}
               alt=""
@@ -540,7 +540,7 @@ export function QuickPayPanel({
                     )}
                   >
                     <IdentityAvatar
-                      seed={emp.email || emp.name}
+                      seed={identityAvatarSeed(emp)}
                       src={emp.avatar_url}
                       size={26}
                       alt=""

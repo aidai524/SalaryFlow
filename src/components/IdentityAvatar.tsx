@@ -19,6 +19,14 @@ export function gradientFromSeed(seed: string): string {
   return `linear-gradient(135deg, hsl(${h1} 72% 62%), hsl(${h2} 68% 58%), hsl(${h3} 70% 55%))`;
 }
 
+export function identityAvatarSeed(person: {
+  id?: string | null;
+  email?: string | null;
+  name?: string | null;
+}): string {
+  return String(person.id || person.email || person.name || "avatar").trim() || "avatar";
+}
+
 export function IdentityAvatar({
   src,
   seed,

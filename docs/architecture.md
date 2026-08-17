@@ -256,8 +256,7 @@ ERC-20 deposit helpers live in `src/wallet/evm/transfer.ts`. Prefer those over s
 
 - UI chrome (nav / forms): Montserrat — Regular from `public/fonts/Montserrat-Regular.ttf`; 500/600 still from `@fontsource/montserrat`
 - Address / numeric chips: Space Grotesk — Regular from `public/fonts/SpaceGrotesk-Regular.ttf`; 500 from `@fontsource/space-grotesk`
-- Slogan (Create Team): Rubik One — `public/fonts/RubikOne-Regular.ttf`
-- Tailwind tokens: `font-montserrat`, `font-space-grotesk`, `font-rubik-one` (`--font-*` in `src/styles.css`)
+- Tailwind tokens: `font-montserrat`, `font-space-grotesk` (`--font-*` in `src/styles.css`)
 - Existing Geist variable remains as the default sans fallback
 
 ## Naming conventions

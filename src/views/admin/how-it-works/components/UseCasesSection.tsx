@@ -1,6 +1,6 @@
 function ControlCallout() {
   return (
-    <div className="mt-5 rounded-[12px] border border-[#d0f348] bg-[rgba(208,243,72,0.2)] px-5 py-5 sm:px-6 sm:py-6">
+    <div className="mt-5 rounded-[12px] border border-primary bg-primary/20 px-5 py-5 sm:px-6 sm:py-6">
       <div className="grid gap-6 lg:grid-cols-[minmax(0,314px)_1fr] lg:items-center lg:gap-8">
         <div>
           <h3 className="font-montserrat text-[16px] font-semibold text-black">
