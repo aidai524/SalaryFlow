@@ -17,7 +17,7 @@ import {
   type QuoteRequest,
 } from "../intents";
 import { toIntentsUserId } from "../intents-user-id";
-import { parseTokenAmount } from "../money";
+import { parseHumanTokenAmount } from "../money";
 import { requireRole, type AppEnv } from "../middleware";
 import {
   type TeamPaymentDateKey,
@@ -620,19 +620,6 @@ async function handleQuickPayQuote(
     return c.json({ error: "employeeId or destinationAddress is required", code: "RECIPIENT_REQUIRED" }, 400);
   }
 
-  let amountMinor = defaultAmountMinor;
-  if (body?.amount !== undefined && body?.amount !== null && body?.amount !== "") {
-    const parsed = parseTokenAmount(body.amount);
-    if (parsed === null) return c.json({ error: "Amount must have at most 6 decimal places", code: "INVALID_AMOUNT" }, 422);
-    amountMinor = parsed;
-  }
-  if (amountMinor == null) {
-    return c.json({ error: "Amount is required for address payments", code: "INVALID_AMOUNT" }, 422);
-  }
-  if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) {
-    return c.json({ error: "Amount must be a positive token amount", code: "INVALID_AMOUNT" }, 422);
-  }
-
   let destinationToken = defaultToken;
   let destinationNetwork = defaultNetwork;
   if (body?.destinationToken) {
@@ -664,9 +651,30 @@ async function handleQuickPayQuote(
     return c.json({ error: `No ${destinationToken} asset on ${destinationNetwork}`, code: "UNSUPPORTED_NETWORK" }, 422);
   }
 
-  const providerAmount = tokenMinorToAssetAmount(amountMinor, destination.decimals);
+  let amountMinor = defaultAmountMinor;
+  let providerAmount: string | null = null;
+  if (body?.amount !== undefined && body?.amount !== null && body?.amount !== "") {
+    const parsed = parseHumanTokenAmount(body.amount, destination.decimals);
+    if (parsed === null) {
+      return c.json({
+        error: `Amount must have at most ${destination.decimals} decimal places`,
+        code: "INVALID_AMOUNT",
+      }, 422);
+    }
+    amountMinor = parsed.minor6;
+    providerAmount = parsed.raw;
+  }
+  if (amountMinor == null) {
+    return c.json({ error: "Amount is required for address payments", code: "INVALID_AMOUNT" }, 422);
+  }
+  if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) {
+    return c.json({ error: "Amount must be a positive token amount", code: "INVALID_AMOUNT" }, 422);
+  }
   if (!providerAmount) {
-    return c.json({ error: `Amount cannot be represented with ${destination.decimals} destination decimals`, code: "AMOUNT_PRECISION_UNSUPPORTED" }, 422);
+    providerAmount = tokenMinorToAssetAmount(amountMinor, destination.decimals);
+    if (!providerAmount) {
+      return c.json({ error: `Amount cannot be represented with ${destination.decimals} destination decimals`, code: "AMOUNT_PRECISION_UNSUPPORTED" }, 422);
+    }
   }
 
   if (!user.wallet_address) {

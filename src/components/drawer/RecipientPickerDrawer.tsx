@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { IdentityAvatar, identityAvatarSeed } from "@/components/IdentityAvatar";
 import {
   Sheet,
@@ -6,9 +6,10 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { useEmployeesQuery } from "@/hooks/use-pay-api";
+import { useRecipientsQuery } from "@/hooks/use-recipients-api";
 import { cn } from "@/lib/utils";
 import { useDrawerStore } from "@/stores/drawer";
+import { PAGE_SIZE } from "@/views/admin/recipients/config";
 
 type FilterTab = "all" | "employee" | "contractor" | "others";
 
@@ -25,12 +26,16 @@ export function RecipientPickerDrawer() {
   const close = useDrawerStore((s) => s.close);
   const open = kind === "recipient-picker";
   const [tab, setTab] = useState<FilterTab>(payload?.filter || "all");
-  const { data: employees = [], isLoading } = useEmployeesQuery();
-
-  const filtered = useMemo(() => {
-    if (tab === "all") return employees;
-    return employees.filter((e) => (e.employee_type || "employee") === tab);
-  }, [employees, tab]);
+  const listQuery = useRecipientsQuery(
+    {
+      page: 1,
+      pageSize: PAGE_SIZE,
+      type: tab === "all" ? undefined : tab,
+    },
+    { enabled: open },
+  );
+  const employees = listQuery.data?.employees ?? [];
+  const isLoading = listQuery.isLoading;
 
   return (
     <Sheet open={open} onOpenChange={(next) => !next && close()}>
@@ -70,11 +75,11 @@ export function RecipientPickerDrawer() {
           {isLoading && (
             <p className="px-2 py-6 font-montserrat text-[14px] text-[#606060]">Loading…</p>
           )}
-          {!isLoading && filtered.length === 0 && (
+          {!isLoading && employees.length === 0 && (
             <p className="px-2 py-6 font-montserrat text-[14px] text-[#606060]">No recipients</p>
           )}
           <ul className="flex flex-col gap-1">
-            {filtered.map((emp) => {
+            {employees.map((emp) => {
               const selected = payload?.selectedId === emp.id;
               return (
                 <li key={emp.id}>

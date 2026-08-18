@@ -39,14 +39,11 @@ async function loadWorkspaceContext(user: AuthUser): Promise<{
 }> {
   try {
     const context = await api.orgContext();
-    const attentionCount = user.role === "admin"
-      ? (await api.listEmployees()).employees.filter((employee) => employee.status !== "ready").length
-      : 0;
     return {
       orgId: context.org.id,
       orgName: context.org.name,
       memberCount: context.memberCount,
-      attentionCount,
+      attentionCount: user.role === "admin" ? (context.attentionCount ?? 0) : 0,
       paymentConfigured: context.paymentConfigured,
     };
   } catch {

@@ -19,7 +19,7 @@ Parent index: [`docs/api.md`](../api.md)
 |---|---|---|
 | POST | `/api/payments/quote` | `api.quote` (forces `dry: true`) |
 | POST | `/api/payments/items/:itemId/quote` | `api.quotePaymentItem` (**legacy** payroll-run path) |
-| POST | `/api/payments/quick-pay/quote` | `api.quoteQuickPay` / `quoteQuickPayDry` (`employeeId` **or** `destinationAddress`; optional `memo`) |
+| POST | `/api/payments/quick-pay/quote` | `api.quoteQuickPay` / `quoteQuickPayDry` (`employeeId` **or** `destinationAddress`; optional `memo`). Quote `amount` precision follows destination token decimals. |
 | POST | `/api/payments/employees/:employeeId/quote` | `api.quoteEmployeePayment` / `quoteEmployeePaymentDry` (compat wrapper → same handler) |
 | POST | `/api/payments/quick-pay/commit` | `api.commitQuickPay` (persist after on-chain deposit; writes `employee_payments.memo`) |
 | POST | `/api/payments/batch/commit` | `api.commitBatchPayout` |
@@ -150,7 +150,7 @@ On funding `SUCCESS`, cron / reconcile auto-calls `submit-intent` with the store
 - **Response (dry, private)** — chained dry quotes: payout (`CONFIDENTIAL_INTENTS` → dest) then funding (`ORIGIN_CHAIN` → confidential). `quote.amountIn` is the funding (You Pay) amount.
 - **Response (live, standard)** — `200` `{ mode, context, quote }` — **no DB write**; `context` is HMAC-signed (24h TTL)
 - **Response (live, private)** — `200` `{ mode, context, intent, funding, quote }` — chains payout quote + `generateIntent` + funding quote into `context` (no DB)
-- **Rules** — Cancelling wallet sign/transfer leaves zero rows. Persist only via `/quick-pay/commit` after on-chain deposit. Private confidential origin = selected `originAsset`. Standard uses `INTENTS_CONFIDENTIALITY` (default `advanced`).
+- **Rules** — Cancelling wallet sign/transfer leaves zero rows. Persist only via `/quick-pay/commit` after on-chain deposit. Private confidential origin = selected `originAsset`. Standard uses `INTENTS_CONFIDENTIALITY` (default `advanced`). Quote `amount` fractional precision follows the **destination token decimals** (e.g. BNB USDT 18, Arb USDT 6), not a fixed 6; 1Click receives that precision. Stored `amount_minor` is still 1e6 (extra digits rounded). Same handler as `POST /quick-pay/quote`.
 - **Errors** — 422 payout/token; live gate on non-dry; 503 provider
 
 ---

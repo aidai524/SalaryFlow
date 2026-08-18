@@ -11,6 +11,7 @@ import {
 export { MONTHLY_PAYMENT_DATE_OPTIONS, WEEKLY_PAYMENT_DATE_OPTIONS };
 
 export const PAGE_SIZE = 10;
+export const HISTORY_PAGE_SIZE = 20;
 
 export const ROLE_OPTIONS: Array<{ value: RecipientRoleTitle; label: string }> = [
   { value: "Developer", label: "Developer" },

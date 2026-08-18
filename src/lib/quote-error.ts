@@ -39,7 +39,7 @@ function extractEmbeddedMessage(text: string): string | null {
 
 /**
  * Format a quote / settle error for display. `decimals` should be the
- * origin token decimals (used to humanize raw minimum amounts).
+ * destination token decimals (used to humanize raw EXACT_OUTPUT minimum amounts).
  */
 export function formatQuoteErrorMessage(error: unknown, decimals = 6): string {
   const raw = error instanceof ApiError && error.detail

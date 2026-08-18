@@ -13,6 +13,7 @@ import {
   type ContractorPaymentCadence,
 } from "@/lib/api";
 import { useAuthStore } from "@/stores/auth";
+import { HISTORY_PAGE_SIZE } from "@/views/admin/recipients/config";
 
 export function recipientsQueryKey(
   orgId: string | null | undefined,
@@ -42,12 +43,16 @@ async function invalidateRecipientLists(queryClient: ReturnType<typeof useQueryC
   ]);
 }
 
-export function useRecipientsQuery(params: ListEmployeesParams) {
+export function useRecipientsQuery(
+  params: ListEmployeesParams,
+  options?: { enabled?: boolean },
+) {
   const orgId = useAuthStore((s) => s.orgId);
+  const enabled = options?.enabled ?? true;
   return useQuery({
     queryKey: recipientsQueryKey(orgId, params),
     queryFn: () => api.listEmployees(params),
-    enabled: !!orgId,
+    enabled: !!orgId && enabled,
     placeholderData: (prev) => prev,
   });
 }
@@ -58,7 +63,7 @@ export function useEmployeePaymentsInfiniteQuery(employeeId: string | null | und
     queryKey: employeePaymentsQueryKey(orgId, employeeId),
     queryFn: ({ pageParam }) =>
       api.listEmployeePayments(employeeId!, {
-        limit: 20,
+        limit: HISTORY_PAGE_SIZE,
         cursor: pageParam ?? null,
       }),
     initialPageParam: null as string | null,

@@ -58,6 +58,11 @@ orgRoutes.get("/context", requireRole("admin", "employee"), async (c) => {
   const memberCount = await c.env.DB.prepare(
     "SELECT COUNT(*) AS n FROM users WHERE org_id = ? AND status = 'active'",
   ).bind(user.org_id).first<{ n: number }>();
+  const attentionRow = user.role === "admin"
+    ? await c.env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM employees WHERE org_id = ? AND status != 'ready'",
+    ).bind(user.org_id).first<{ n: number }>()
+    : null;
   return c.json({
     org: {
       id: org.id,
@@ -69,6 +74,7 @@ orgRoutes.get("/context", requireRole("admin", "employee"), async (c) => {
       payment_configured_at: org.payment_configured_at,
     },
     memberCount: Number(memberCount?.n || 0),
+    attentionCount: Number(attentionRow?.n || 0),
     paymentConfigured: !!org.payment_configured_at,
   });
 });
@@ -696,6 +702,7 @@ orgRoutes.get("/employees", requireRole("admin"), async (c) => {
   const paginate = pageRaw !== undefined || pageSizeRaw !== undefined;
   const page = Math.max(1, Number.parseInt(String(pageRaw || "1"), 10) || 1);
   const pageSize = Math.min(100, Math.max(1, Number.parseInt(String(pageSizeRaw || "10"), 10) || 10));
+  const sort = String(c.req.query("sort") || "").trim();
 
   const org = await c.env.DB.prepare(
     `SELECT payment_cadence, payment_date_key, payment_configured_at
@@ -733,6 +740,16 @@ orgRoutes.get("/employees", requireRole("admin"), async (c) => {
       const email = String(e.email || "").toLowerCase();
       const endpoint = String(e.endpoint || "").toLowerCase();
       return name.includes(q) || email.includes(q) || endpoint.includes(q);
+    });
+  }
+  if (sort === "last_paid") {
+    filtered = [...filtered].sort((a, b) => {
+      const at = typeof a.last_paid_at === "string" ? a.last_paid_at : "";
+      const bt = typeof b.last_paid_at === "string" ? b.last_paid_at : "";
+      if (!at && !bt) return 0;
+      if (!at) return 1;
+      if (!bt) return -1;
+      return bt.localeCompare(at);
     });
   }
 

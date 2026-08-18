@@ -10,15 +10,3 @@ export function usePayOverviewQuery() {
     enabled: !!orgId,
   });
 }
-
-export function useEmployeesQuery() {
-  const orgId = useAuthStore((s) => s.orgId);
-  return useQuery({
-    queryKey: ["employees", orgId],
-    queryFn: async () => {
-      const res = await api.listEmployees();
-      return res.employees;
-    },
-    enabled: !!orgId,
-  });
-}

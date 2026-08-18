@@ -17,10 +17,10 @@ import { EstCostRow } from "@/components/you-pay/EstCostRow";
 import { YouPaySection } from "@/components/you-pay/YouPaySection";
 import { usePayOriginToken } from "@/hooks/use-pay-origin-token";
 import { usePaymentWallet } from "@/hooks/use-payment-wallet";
-import { useEmployeesQuery } from "@/hooks/use-pay-api";
+import { useEmployeeQuery, useRecipientsQuery } from "@/hooks/use-recipients-api";
 import useToast from "@/hooks/use-toast";
-import { parsePositiveDecimal } from "@/lib/amount-input";
-import { api, type QuickPayMode } from "@/lib/api";
+import { parsePositiveDecimal, sanitizeDecimalInput } from "@/lib/amount-input";
+import { api, type Employee, type QuickPayMode } from "@/lib/api";
 import { formatAddress, formatNumber, formatTokenMinor } from "@/lib/format";
 import { chainLogoUrl } from "@/lib/logo";
 import { formatQuoteErrorMessage } from "@/lib/quote-error";
@@ -30,7 +30,12 @@ import { useIntentsTokensStore, type IntentsToken } from "@/stores/intents-token
 import { enqueueQuickPayCommit } from "@/stores/quick-pay-commit-queue";
 import { useTokenBalancesStore } from "@/stores/token-balances";
 import { encodeErc20Transfer } from "@/wallet/evm/transfer";
-import { PRIVATE_POST_SIGN_DELAY_MS, QUICK_PAY_TOAST } from "./config";
+import {
+  PRIVATE_POST_SIGN_DELAY_MS,
+  QUICK_PAY_RECIPIENT_PAGE_SIZE,
+  QUICK_PAY_RECIPIENT_SEARCH_DEBOUNCE_MS,
+  QUICK_PAY_TOAST,
+} from "./config";
 import {
   isDryQuoteStale,
   liveQuoteSettleErrorMessage,
@@ -46,8 +51,8 @@ class BalanceGateError extends Error {
   }
 }
 
-function parseCompensationInput(raw: string): string | null {
-  return parsePositiveDecimal(raw, 6);
+function parseCompensationInput(raw: string, maxDecimals: number): string | null {
+  return parsePositiveDecimal(raw, maxDecimals);
 }
 
 /**
@@ -99,12 +104,11 @@ export function QuickPayPanel({
   const queryClient = useQueryClient();
   const toast = useToast();
   const boundAddress = paymentWallet.boundAddress;
-  const { data: employees = [] } = useEmployeesQuery();
   const ensureFresh = useIntentsTokensStore((s) => s.ensureFresh);
   const findByChainAndSymbol = useIntentsTokensStore((s) => s.findByChainAndSymbol);
   const { originToken, setOriginToken } = usePayOriginToken();
 
-  const [employeeId, setEmployeeId] = useState<string | null>(initialEmployeeId);
+  const [pickedEmployee, setPickedEmployee] = useState<Employee | null>(null);
   const [adhocAddress, setAdhocAddress] = useState<string | null>(null);
   const [recipientSearch, setRecipientSearch] = useState("");
   const [memo, setMemo] = useState("");
@@ -112,6 +116,21 @@ export function QuickPayPanel({
   const [destToken, setDestToken] = useState<IntentsToken | null>(null);
   const [destDialogOpen, setDestDialogOpen] = useState(false);
   const [phase, setPhase] = useState<"idle" | "quoting" | "signing" | "sending" | "done" | "error">("idle");
+  const debouncedSearch = useDebouncedValue(recipientSearch.trim(), QUICK_PAY_RECIPIENT_SEARCH_DEBOUNCE_MS);
+
+  const lockedQuery = useEmployeeQuery(initialEmployeeId, {
+    enabled: recipientLocked && !!initialEmployeeId,
+  });
+  const listQuery = useRecipientsQuery(
+    {
+      page: 1,
+      pageSize: QUICK_PAY_RECIPIENT_PAGE_SIZE,
+      q: debouncedSearch || undefined,
+      sort: "last_paid",
+    },
+    { enabled: !recipientLocked },
+  );
+  const employees = listQuery.data?.employees ?? [];
 
   const { sendTransactionAsync } = useSendTransaction();
   const { switchChainAsync } = useSwitchChain();
@@ -122,58 +141,43 @@ export function QuickPayPanel({
     void ensureFresh();
   }, [ensureFresh]);
 
-  useEffect(() => {
-    if (initialEmployeeId) {
-      setEmployeeId(initialEmployeeId);
-      setAdhocAddress(null);
-    }
-  }, [initialEmployeeId]);
-
-  const employee = useMemo(
-    () => employees.find((e) => e.id === employeeId) || null,
-    [employees, employeeId],
-  );
-
-  const filteredEmployees = useMemo(() => {
-    const q = recipientSearch.trim().toLowerCase();
-    if (!q) return employees;
-    return employees.filter((emp) => {
-      const name = (emp.name || "").toLowerCase();
-      const endpoint = (emp.endpoint || "").toLowerCase();
-      return name.includes(q) || endpoint.includes(q);
-    });
-  }, [employees, recipientSearch]);
+  const employee = recipientLocked ? (lockedQuery.data?.employee ?? null) : pickedEmployee;
+  const employeeId = employee?.id ?? null;
 
   const pastedAddress = useMemo(() => {
-    const raw = recipientSearch.trim();
+    const raw = debouncedSearch;
     if (!raw || !isAddress(raw)) return null;
     return raw as Address;
-  }, [recipientSearch]);
+  }, [debouncedSearch]);
 
   const showEmptyRecipientHint = !recipientLocked
-    && recipientSearch.trim().length > 0
-    && filteredEmployees.length === 0;
+    && debouncedSearch.length > 0
+    && employees.length === 0
+    && !listQuery.isFetching;
 
   useEffect(() => {
     if (recipientLocked) return;
-    const raw = recipientSearch.trim();
-    if (!raw) return;
+    if (!debouncedSearch) {
+      setAdhocAddress(null);
+      return;
+    }
     if (!pastedAddress) {
       setAdhocAddress(null);
       return;
     }
+    if (listQuery.isFetching) return;
     const matched = employees.find(
       (emp) => emp.endpoint && emp.endpoint.toLowerCase() === pastedAddress.toLowerCase(),
     );
     if (matched) {
-      setEmployeeId(matched.id);
+      setPickedEmployee(matched);
       setAdhocAddress(null);
       return;
     }
-    setEmployeeId(null);
+    setPickedEmployee(null);
     setAdhocAddress(pastedAddress);
     setPhase("idle");
-  }, [pastedAddress, recipientSearch, employees, recipientLocked]);
+  }, [pastedAddress, debouncedSearch, employees, recipientLocked, listQuery.isFetching]);
 
   const destinationAddress = employee?.endpoint || adhocAddress;
   const canQuoteDestination = !!destinationAddress && (!!employee || !!destToken);
@@ -189,7 +193,13 @@ export function QuickPayPanel({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [employee?.id, findByChainAndSymbol]);
 
-  const amountForQuote = parseCompensationInput(compensation);
+  const destDecimals = destToken?.decimals ?? 6;
+
+  useEffect(() => {
+    setCompensation((prev) => sanitizeDecimalInput(prev, destDecimals));
+  }, [destDecimals]);
+
+  const amountForQuote = parseCompensationInput(compensation, destDecimals);
   const debouncedAmountForQuote = useDebouncedValue(amountForQuote, 900);
 
   // Dry preview is for Est. Cost only — do not include memo in the queryKey / body.
@@ -245,7 +255,7 @@ export function QuickPayPanel({
     isFetching: dryQuoteQuery.isFetching,
   });
   const quoteError = dryQuoteQuery.isError
-    ? formatQuoteErrorMessage(dryQuoteQuery.error, originToken?.decimals ?? 6)
+    ? formatQuoteErrorMessage(dryQuoteQuery.error, destToken?.decimals ?? 6)
     : null;
   const amountInDisplay = quote?.amountIn && originToken
     ? formatNumber(Number(quote.amountIn) / 10 ** originToken.decimals, {
@@ -258,7 +268,7 @@ export function QuickPayPanel({
 
   const resetForm = () => {
     if (!recipientLocked) {
-      setEmployeeId(null);
+      setPickedEmployee(null);
       setAdhocAddress(null);
       setRecipientSearch("");
     }
@@ -432,7 +442,7 @@ export function QuickPayPanel({
       void queryClient.invalidateQueries({ queryKey: ["pay-overview"] });
       void queryClient.invalidateQueries({ queryKey: ["org-overview"] });
       void queryClient.invalidateQueries({ queryKey: ["org-payments"] });
-      void queryClient.invalidateQueries({ queryKey: ["employees"] });
+      void queryClient.invalidateQueries({ queryKey: ["recipients"] });
       setTimeout(() => setPhase("idle"), 1500);
     },
     onError: (err) => {
@@ -442,7 +452,7 @@ export function QuickPayPanel({
       }
       setPhase("error");
       toast.fail({
-        title: formatQuoteErrorMessage(err, originToken?.decimals ?? 6),
+        title: formatQuoteErrorMessage(err, destToken?.decimals ?? 6),
       });
     },
   });
@@ -521,14 +531,14 @@ export function QuickPayPanel({
             </p>
           ) : (
             <div className="mt-3 flex flex-wrap items-center gap-3">
-              {filteredEmployees.map((emp) => {
+              {employees.map((emp) => {
                 const selected = employeeId === emp.id;
                 return (
                   <button
                     key={emp.id}
                     type="button"
                     onClick={() => {
-                      setEmployeeId(emp.id);
+                      setPickedEmployee(emp);
                       setAdhocAddress(null);
                       setPhase("idle");
                     }}
@@ -576,7 +586,7 @@ export function QuickPayPanel({
           <p className="font-montserrat text-[14px] font-medium text-[#606060]">Amount</p>
           <input
             value={compensation}
-            onChange={(e) => setCompensation(e.target.value)}
+            onChange={(e) => setCompensation(sanitizeDecimalInput(e.target.value, destDecimals))}
             inputMode="decimal"
             placeholder="0"
             className="mt-2 w-full bg-transparent text-center font-montserrat text-[26px] font-medium text-black outline-none"
@@ -610,7 +620,7 @@ export function QuickPayPanel({
           <div className="mb-4 flex items-end justify-between gap-3 border-b border-black/10 pb-3">
             <input
               value={compensation}
-              onChange={(e) => setCompensation(e.target.value)}
+              onChange={(e) => setCompensation(sanitizeDecimalInput(e.target.value, destDecimals))}
               inputMode="decimal"
               placeholder="0"
               className="w-full min-w-0 bg-transparent font-montserrat text-[26px] font-medium text-black outline-none"

@@ -119,6 +119,7 @@ export interface ListEmployeesParams {
   type?: EmployeeType | "";
   page?: number;
   pageSize?: number;
+  sort?: "last_paid";
 }
 
 export interface PayOverview {
@@ -538,6 +539,7 @@ export interface OrgContext {
     country: string | null;
   } & OrgPaymentFields;
   memberCount: number;
+  attentionCount: number;
   paymentConfigured: boolean;
 }
 
@@ -644,6 +646,7 @@ export const api = {
     if (params?.type) qs.set("type", params.type);
     if (params?.page !== undefined) qs.set("page", String(params.page));
     if (params?.pageSize !== undefined) qs.set("pageSize", String(params.pageSize));
+    if (params?.sort) qs.set("sort", params.sort);
     const query = qs.toString();
     return request<EmployeeListResult>(`/org/employees${query ? `?${query}` : ""}`);
   },

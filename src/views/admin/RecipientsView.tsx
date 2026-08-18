@@ -4,10 +4,9 @@ import Pagination from "@/components/pagination";
 import { IconLink } from "@/components/icons/link";
 import { periodKeyFromDate } from "@/components/payment-period-picker/PaymentPeriodPicker";
 import { useOrgContextQuery } from "@/hooks/use-org-api";
-import { useRecipientsQuery } from "@/hooks/use-recipients-api";
+import { useEmployeeQuery, useRecipientsQuery } from "@/hooks/use-recipients-api";
 import useToast from "@/hooks/use-toast";
 import {
-  api,
   type Employee,
   type TeamPaymentDateKey,
   type TeamPaymentSchedule,
@@ -93,40 +92,16 @@ export function RecipientsView() {
   const totalPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   const selectedFromList = employees.find((e) => e.id === selectedId) || null;
+  const needDetail = !!selectedId && !recipientsQuery.isLoading && !selectedFromList;
+  const employeeQuery = useEmployeeQuery(selectedId, { enabled: needDetail });
 
-  // Deep-link: if selected id is not on the current page, fetch by id via q fallback once.
-  const [deepLinkEmployee, setDeepLinkEmployee] = useState<Employee | null>(null);
   useEffect(() => {
     const fromUrl = searchParams.get("selected");
     if (!fromUrl) return;
     setSelectedId(fromUrl);
   }, [searchParams]);
 
-  useEffect(() => {
-    if (!selectedId) {
-      setDeepLinkEmployee(null);
-      return;
-    }
-    if (selectedFromList) {
-      setDeepLinkEmployee(null);
-      return;
-    }
-    let cancelled = false;
-    void (async () => {
-      try {
-        const res = await api.listEmployees({ page: 1, pageSize: 100 });
-        const found = res.employees.find((e) => e.id === selectedId) || null;
-        if (!cancelled) setDeepLinkEmployee(found);
-      } catch {
-        if (!cancelled) setDeepLinkEmployee(null);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedId, selectedFromList]);
-
-  const selectedEmployee = selectedFromList || deepLinkEmployee;
+  const selectedEmployee = selectedFromList || employeeQuery.data?.employee || null;
 
   const selectEmployee = (employee: Employee) => {
     setSelectedId(employee.id);
@@ -251,7 +226,7 @@ export function RecipientsView() {
               setAddOpen(true);
             }}
             onPayNow={() => setPayEmployeeId(selectedEmployee.id)}
-            className="xl:sticky xl:top-4 xl:self-start"
+            className="xl:sticky xl:top-4 xl:self-start xl:max-h-[calc(100vh-2rem)]"
           />
         ) : (
           <div className="hidden items-center justify-center rounded-[20px] border border-dashed border-black/10 bg-white/60 px-6 py-16 text-center xl:flex">

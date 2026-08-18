@@ -34,9 +34,9 @@ Employee `status`: `pending` \| `ready` \| `update_required` — set by payout v
 - **Source** — `api/src/routes/org.ts`
 - **Client** — `api.orgContext` · callers: `stores/auth.ts`
 - **Request** — none
-- **Response** — `{ org: { id, name, country, payment_cadence, payment_date_key, reminder_lead_days, payment_configured_at }, memberCount, paymentConfigured }`
+- **Response** — `{ org: { id, name, country, payment_cadence, payment_date_key, reminder_lead_days, payment_configured_at }, memberCount, attentionCount, paymentConfigured }`
 - **Errors** — 404 org missing
-- **Rules** — Minimal workspace context; no member directory. `paymentConfigured` is true when `payment_configured_at` is set (Create Team onboarding complete). Phase 1: single org via `user.org_id`. Column `reminder_lead_days` is legacy (unused; may be null).
+- **Rules** — Minimal workspace context; no member directory. `paymentConfigured` is true when `payment_configured_at` is set (Create Team onboarding complete). `attentionCount` is `COUNT(employees WHERE status != 'ready')` for admin, `0` for employee. Phase 1: single org via `user.org_id`. Column `reminder_lead_days` is legacy (unused; may be null).
 
 ---
 
@@ -143,8 +143,9 @@ Employee `status`: `pending` \| `ready` \| `update_required` — set by payout v
   | Param | Notes |
   |---|---|
   | `q` | Case-insensitive substring on name, email, endpoint |
-  | `type` | `employee` \| `contractor` |
-  | `page` / `pageSize` | When either is set, response is paginated; omit both for full list (Quick Pay / drawers) |
+  | `type` | `employee` \| `contractor` \| `others` |
+  | `page` / `pageSize` | When either is set, response is paginated; omit both for full list |
+  | `sort` | Omit for `created_at DESC`. `last_paid` = `last_paid_at DESC` (nulls last); used by Quick Pay capsules |
 
 - **Response** — `{ employees, total, page, pageSize, counts: { all, employees, contractors } }`
   - Row fields include: `payment_cadence`, `payment_date_key`, `nextPayday`, `nextPaydayDisplay`

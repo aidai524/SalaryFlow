@@ -4,6 +4,9 @@ export const QUICK_PAY_TOAST = {
   COULD_NOT_READ_BALANCE: "Could not read wallet balance",
 } as const;
 
+export const QUICK_PAY_RECIPIENT_PAGE_SIZE = 10;
+export const QUICK_PAY_RECIPIENT_SEARCH_DEBOUNCE_MS = 300;
+
 export const PRIVATE_BY_DEFAULT_LABEL = "Private by default";
 
 /** Pause after intent sign so wallet UIs (e.g. OKX) can tear down before eth_sendTransaction. */

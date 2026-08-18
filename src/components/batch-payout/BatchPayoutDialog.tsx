@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { encodeFunctionData, type Address, type Hex } from "viem";
 import { useSendTransaction, useSwitchChain } from "wagmi";
 import { IconClose } from "@/components/icons/close";
@@ -8,8 +9,7 @@ import {
   enabledBatchPayoutBlockchains,
   getBatchPayoutContract,
 } from "@/config/batch-payout-chains";
-import { networkToChainId } from "@/config/chains";
-import { useEmployeesQuery } from "@/hooks/use-pay-api";
+import { getChainByNetwork, networkToChainId } from "@/config/chains";
 import { usePayOriginToken } from "@/hooks/use-pay-origin-token";
 import { usePaymentWallet } from "@/hooks/use-payment-wallet";
 import useToast from "@/hooks/use-toast";
@@ -20,6 +20,7 @@ import { formatNumber } from "@/lib/format";
 import { formatQuoteErrorMessage } from "@/lib/quote-error";
 import type { Employee } from "@/lib/api";
 import { enqueueBatchPayoutCommit } from "@/stores/batch-payout-commit-queue";
+import { useIntentsTokensStore } from "@/stores/intents-tokens";
 import { useTokenBalancesStore } from "@/stores/token-balances";
 import { encodeErc20Approve, readErc20Allowance } from "@/wallet/evm/transfer";
 import { PRIVATE_POST_SIGN_DELAY_MS, QUICK_PAY_TOAST } from "@/components/quick-pay/config";
@@ -52,8 +53,8 @@ export function BatchPayoutDialog({
   const payWallet = usePaymentWallet();
   const { sendTransactionAsync } = useSendTransaction();
   const { switchChainAsync } = useSwitchChain();
-  const { data: allEmployees = [] } = useEmployeesQuery();
   const fetchOneBalance = useTokenBalancesStore((s) => s.fetchOne);
+  const findByChainAndSymbol = useIntentsTokensStore((s) => s.findByChainAndSymbol);
   const allowedBlockchains = useMemo(() => enabledBatchPayoutBlockchains(), []);
   const { originToken, setOriginToken } = usePayOriginToken(allowedBlockchains);
 
@@ -70,6 +71,24 @@ export function BatchPayoutDialog({
   const [quoteError, setQuoteError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const seededRef = useRef(false);
+  const seedIds = open && initialEmployeeIds?.length ? initialEmployeeIds : [];
+  const seedQuery = useQuery({
+    queryKey: ["employees-by-ids", seedIds],
+    queryFn: async () => {
+      const rows = await Promise.all(
+        seedIds.map(async (id) => {
+          try {
+            const res = await api.getEmployee(id);
+            return res.employee;
+          } catch {
+            return null;
+          }
+        }),
+      );
+      return rows.filter((row): row is Employee => !!row);
+    },
+    enabled: seedIds.length > 0,
+  });
 
   useEffect(() => {
     if (!open) {
@@ -93,15 +112,15 @@ export function BatchPayoutDialog({
   }, [open, initialEmployeeIds]);
 
   useEffect(() => {
-    if (!open || seededRef.current || !initialEmployeeIds?.length || allEmployees.length === 0) return;
+    if (!open || seededRef.current || !initialEmployeeIds?.length) return;
+    if (!seedQuery.data) return;
     const next = new Map<string, Employee>();
-    for (const id of initialEmployeeIds) {
-      const emp = allEmployees.find((row) => row.id === id);
-      if (emp) next.set(emp.id, emp);
+    for (const emp of seedQuery.data) {
+      next.set(emp.id, emp);
     }
     setSelected(next);
     seededRef.current = true;
-  }, [open, initialEmployeeIds, allEmployees]);
+  }, [open, initialEmployeeIds, seedQuery.data]);
 
   const selectedCount = selected.size;
 
@@ -225,7 +244,13 @@ export function BatchPayoutDialog({
     if (failed.length > 0) {
       const first = failed[0];
       const name = first.draft?.employee.name || "Recipient";
-      throw new Error(`${name}: ${formatQuoteErrorMessage(first.result.reason, originToken.decimals)}`);
+      const destChain = first.draft?.employee.network
+        ? getChainByNetwork(first.draft.employee.network)
+        : undefined;
+      const destDecimals = destChain
+        ? findByChainAndSymbol(destChain.blockchain, first.draft!.employee.token)?.decimals
+        : undefined;
+      throw new Error(`${name}: ${formatQuoteErrorMessage(first.result.reason, destDecimals ?? 6)}`);
     }
     return results.map((row) => row.value!);
   }
