@@ -19,7 +19,7 @@
     "test:api:smoke": "node api/scripts/run-smoke.mjs",
     "db:migrate": "npm run db:migrate -w api",
     "deploy:api": "npm run deploy -w api",
-    "deploy:web": "wrangler pages deploy",
+    "deploy:web": "npx --prefix api wrangler pages deploy",
     "deploy": "npm run deploy:api && npm run deploy:web"
   },
   "dependencies": {
