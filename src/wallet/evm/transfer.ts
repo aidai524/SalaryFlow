@@ -30,6 +30,10 @@ import {
 } from "viem/chains";
 import { getChainByNetwork } from "@/config/chains";
 
+const chainRPCs: Record<number, string> = {
+  [scroll.id]: "https://scroll-rpc.publicnode.com",
+};
+
 const chainById: Record<number, Chain> = {
   [mainnet.id]: mainnet,
   [base.id]: base,
@@ -55,9 +59,13 @@ function resolveChain(networkOrBlockchain: string): Chain | null {
 export function getPublicClientForNetwork(networkOrBlockchain: string) {
   const chain = resolveChain(networkOrBlockchain);
   if (!chain) return null;
+  let transport = http();
+  if (chainRPCs[chain.id]) {
+    transport = http(chainRPCs[chain.id]);
+  }
   return createPublicClient({
     chain,
-    transport: http(),
+    transport,
   });
 }
 

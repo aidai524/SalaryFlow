@@ -9,7 +9,6 @@ import {
   enabledBatchPayoutBlockchains,
   getBatchPayoutContract,
 } from "@/config/batch-payout-chains";
-import { getChainByNetwork } from "@/config/chains";
 import { usePayOriginToken } from "@/hooks/use-pay-origin-token";
 import { usePaymentWallet } from "@/hooks/use-payment-wallet";
 import useToast from "@/hooks/use-toast";
@@ -33,9 +32,12 @@ import {
   allDraftsValid,
   asAddress,
   defaultAmountForEmployee,
+  destTokenForEmployee,
+  draftDestination,
   makeBatchId,
   minQuoteDeadlineUnix,
   type BatchDraft,
+  type BatchDraftPatch,
 } from "./utils";
 
 const PAYMENT_MODE = "standard" as const;
@@ -54,7 +56,9 @@ export function BatchPayoutDialog({
   const { sendTransactionAsync } = useSendTransaction();
   const { switchChainAsync } = useSwitchChain();
   const fetchOneBalance = useTokenBalancesStore((s) => s.fetchOne);
+  const ensureFresh = useIntentsTokensStore((s) => s.ensureFresh);
   const findByChainAndSymbol = useIntentsTokensStore((s) => s.findByChainAndSymbol);
+  const tokens = useIntentsTokensStore((s) => s.tokens);
   const allowedBlockchains = useMemo(() => enabledBatchPayoutBlockchains(), []);
   const { originToken, setOriginToken } = usePayOriginToken(allowedBlockchains);
 
@@ -122,6 +126,26 @@ export function BatchPayoutDialog({
     seededRef.current = true;
   }, [open, initialEmployeeIds, seedQuery.data]);
 
+  useEffect(() => {
+    if (!open) return;
+    void ensureFresh();
+  }, [open, ensureFresh]);
+
+  useEffect(() => {
+    if (tokens.length === 0) return;
+    setDrafts((prev) => {
+      let changed = false;
+      const next = prev.map((row) => {
+        if (row.destToken) return row;
+        const dest = destTokenForEmployee(row.employee, findByChainAndSymbol);
+        if (!dest) return row;
+        changed = true;
+        return { ...row, destToken: dest };
+      });
+      return changed ? next : prev;
+    });
+  }, [tokens, findByChainAndSymbol]);
+
   const selectedCount = selected.size;
 
   function toggleEmployee(employee: Employee, next: boolean) {
@@ -184,19 +208,23 @@ export function BatchPayoutDialog({
         employee,
         amount: existing?.amount ?? defaultAmountForEmployee(employee),
         memo: existing?.memo ?? "",
+        destToken: existing?.destToken ?? destTokenForEmployee(employee, findByChainAndSymbol),
       };
     });
     setDrafts(next);
     setStep(2);
   }
 
-  function updateDraft(employeeId: string, patch: Partial<Pick<BatchDraft, "amount" | "memo">>) {
+  function updateDraft(employeeId: string, patch: BatchDraftPatch) {
     setDrafts((prev) => prev.map((row) => (row.employee.id === employeeId ? { ...row, ...patch } : row)));
     setDryReady(false);
   }
 
   const amountsFingerprint = useMemo(
-    () => drafts.map((row) => `${row.employee.id}:${row.amount}:${row.memo}`).join("|"),
+    () => drafts.map((row) => {
+      const dest = draftDestination(row);
+      return `${row.employee.id}:${row.amount}:${row.memo}:${dest.symbol}:${dest.network}`;
+    }).join("|"),
     [drafts],
   );
 
@@ -215,14 +243,15 @@ export function BatchPayoutDialog({
     const results = await mapPoolSettled(
       drafts,
       async (row) => {
-        const amount = parsePositiveDecimal(row.amount);
+        const dest = draftDestination(row);
+        const amount = parsePositiveDecimal(row.amount, dest.decimals);
         if (!amount) throw new Error("Invalid amount");
         const body = {
           employeeId: row.employee.id,
           originAsset: originToken.assetId,
           amount,
-          destinationToken: row.employee.token,
-          destinationNetwork: row.employee.network,
+          destinationToken: dest.symbol,
+          destinationNetwork: dest.network,
           mode: PAYMENT_MODE,
           memo: row.memo.trim() || null,
         };
@@ -244,13 +273,8 @@ export function BatchPayoutDialog({
     if (failed.length > 0) {
       const first = failed[0];
       const name = first.draft?.employee.name || "Recipient";
-      const destChain = first.draft?.employee.network
-        ? getChainByNetwork(first.draft.employee.network)
-        : undefined;
-      const destDecimals = destChain
-        ? findByChainAndSymbol(destChain.blockchain, first.draft!.employee.token)?.decimals
-        : undefined;
-      throw new Error(`${name}: ${formatQuoteErrorMessage(first.result.reason, destDecimals ?? 6)}`);
+      const destDecimals = first.draft ? draftDestination(first.draft).decimals : 6;
+      throw new Error(`${name}: ${formatQuoteErrorMessage(first.result.reason, destDecimals)}`);
     }
     return results.map((row) => row.value!);
   }
