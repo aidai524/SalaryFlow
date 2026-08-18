@@ -17,30 +17,37 @@ import {
   arbitrum,
   avalanche,
   base,
+  berachain,
   bsc,
   gnosis,
   mainnet,
+  monad,
   optimism,
+  plasma,
   polygon,
   scroll,
+  xLayer,
 } from "viem/chains";
-import { getChainByNetwork, networkToChainId } from "@/config/chains";
+import { getChainByNetwork } from "@/config/chains";
 
 const chainById: Record<number, Chain> = {
   [mainnet.id]: mainnet,
   [base.id]: base,
   [arbitrum.id]: arbitrum,
-  [optimism.id]: optimism,
-  [polygon.id]: polygon,
-  [bsc.id]: bsc,
-  [avalanche.id]: avalanche,
   [gnosis.id]: gnosis,
+  [berachain.id]: berachain,
+  [bsc.id]: bsc,
+  [monad.id]: monad,
+  [xLayer.id]: xLayer,
+  [plasma.id]: plasma,
+  [polygon.id]: polygon,
+  [optimism.id]: optimism,
+  [avalanche.id]: avalanche,
   [scroll.id]: scroll,
 };
 
 function resolveChain(networkOrBlockchain: string): Chain | null {
-  const chainId = networkToChainId(networkOrBlockchain)
-    ?? getChainByNetwork(networkOrBlockchain)?.chainId;
+  const chainId = getChainByNetwork(networkOrBlockchain)?.chainId;
   if (!chainId) return null;
   return chainById[chainId] ?? null;
 }

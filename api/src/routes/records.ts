@@ -1,7 +1,6 @@
 // Chain records (admin view) + employee self-service (own payout, records, consents)
 
 import { Hono } from "hono";
-import { verifyMessage, type Address, type Hex } from "viem";
 import { explorerUrlForTx } from "../explorer";
 import { requireRole, type AppEnv } from "../middleware";
 import {
@@ -10,6 +9,14 @@ import {
 } from "../org-payment";
 import { formatPaydayDisplay, resolveUpcomingPayday } from "../pay-period";
 import { normalizePayoutAddress, normalizePayoutNetwork, normalizePayoutToken } from "../payout";
+import { resolveChainKind, sameAddress } from "../address-validation";
+import {
+  countActiveAttemptsForAddress,
+  getAdminWallet,
+  loadAdminWallets,
+  nextActiveFromWallets,
+} from "../admin-wallets";
+import { NEAR_SIGN_RECIPIENT, randomNonceBase64, verifyWalletOwnership } from "../verify-wallet";
 import {
   normalizePresetAvatarUrl,
   resolveRecipientSchedule,
@@ -125,13 +132,20 @@ recordRoutes.get("/", requireRole("admin"), async (c) => {
 // Employee: own payment history (Quick Pay employee_payments)
 recordRoutes.get("/me", requireRole("employee"), async (c) => {
   const user = c.get("user") as AuthUser;
-  if (!user.org_id) return c.json({ payments: [] });
+  if (!user.org_id) return c.json({ payments: [], total: 0, page: 1, pageSize: 10 });
   const emp = await c.env.DB.prepare(
     "SELECT id FROM employees WHERE user_id = ? AND org_id = ?",
   ).bind(user.id, user.org_id).first<{ id: string }>();
-  if (!emp) return c.json({ payments: [] });
+  const page = Math.max(1, Number.parseInt(String(c.req.query("page") || "1"), 10) || 1);
+  const pageSize = Math.min(50, Math.max(1, Number.parseInt(String(c.req.query("pageSize") || c.req.query("limit") || "10"), 10) || 10));
+  if (!emp) return c.json({ payments: [], total: 0, page, pageSize });
 
-  const limit = Math.min(50, Math.max(1, Number.parseInt(String(c.req.query("limit") || "50"), 10) || 50));
+  const offset = (page - 1) * pageSize;
+  const countRow = await c.env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM employee_payments WHERE org_id = ? AND employee_id = ?",
+  ).bind(user.org_id, emp.id).first<{ n: number }>();
+  const total = Number(countRow?.n || 0);
+
   // Privacy: only return destination/receive tx — never admin deposit/funding tx or payer wallet.
   const rows = await c.env.DB.prepare(
     `SELECT ep.id, ep.paid_at, ep.amount_minor, ep.token, ep.network, ep.period_key, ep.status, ep.created_at,
@@ -142,8 +156,8 @@ recordRoutes.get("/me", requireRole("employee"), async (c) => {
      LEFT JOIN payment_attempts pa ON pa.employee_payment_id = ep.id AND pa.state = 'confirmed'
      WHERE ep.org_id = ? AND ep.employee_id = ?
      ORDER BY COALESCE(ep.paid_at, ep.created_at) DESC, ep.id DESC
-     LIMIT ?`,
-  ).bind(user.org_id, emp.id, limit).all<{
+     LIMIT ? OFFSET ?`,
+  ).bind(user.org_id, emp.id, pageSize, offset).all<{
     id: string;
     paid_at: string | null;
     amount_minor: number;
@@ -174,6 +188,9 @@ recordRoutes.get("/me", requireRole("employee"), async (c) => {
         || r.tx_explorer_url
         || null,
     })),
+    total,
+    page,
+    pageSize,
   });
 });
 
@@ -250,15 +267,18 @@ recordRoutes.patch("/me/profile", requireRole("employee"), async (c) => {
   }
   if (body?.network !== undefined) {
     const network = normalizePayoutNetwork(body.network);
-    if (!network) return c.json({ error: "Unsupported EVM payout network" }, 400);
+    if (!network) return c.json({ error: "Unsupported payout network" }, 400);
     if (network !== existing.network) payoutChanged = true;
     fields.push("network = ?");
     values.push(network);
   }
   if (body?.endpoint !== undefined) {
-    const endpoint = normalizePayoutAddress(body.endpoint);
-    if (!endpoint) return c.json({ error: "A valid EVM payout address is required" }, 400);
-    if (endpoint.toLowerCase() !== String(existing.endpoint || "").toLowerCase()) payoutChanged = true;
+    const nextNetwork = body?.network !== undefined
+      ? normalizePayoutNetwork(body.network)
+      : String(existing.network || "");
+    const endpoint = nextNetwork ? normalizePayoutAddress(body.endpoint, nextNetwork) : null;
+    if (!endpoint) return c.json({ error: "A valid payout address is required for the selected network" }, 400);
+    if (!sameAddress(endpoint, String(existing.endpoint || ""), nextNetwork)) payoutChanged = true;
     fields.push("endpoint = ?");
     values.push(endpoint);
   }
@@ -311,11 +331,10 @@ recordRoutes.put("/me/payout", requireRole("employee"), async (c) => {
   if (!emp) return c.json({ error: "No employee profile linked to this account" }, 404);
   const token = normalizePayoutToken(body?.token);
   const network = normalizePayoutNetwork(body?.network);
-  const endpoint = normalizePayoutAddress(body?.endpoint);
+  const endpoint = network ? normalizePayoutAddress(body?.endpoint, network) : null;
   if (!token) return c.json({ error: "Only USDC and USDT are supported" }, 400);
-  if (!network) return c.json({ error: "Unsupported EVM payout network" }, 400);
-  if (!endpoint) return c.json({ error: "A valid EVM payout address is required" }, 400);
-  // changing payout details requires reverification
+  if (!network) return c.json({ error: "Unsupported payout network" }, 400);
+  if (!endpoint) return c.json({ error: "A valid payout address is required for the selected network" }, 400);
   await c.env.DB.prepare(
     "UPDATE employees SET token = ?, network = ?, endpoint = ?, status = 'update_required', payout_verified_at = NULL WHERE id = ?",
   ).bind(token, network, endpoint, emp.id).run();
@@ -327,10 +346,10 @@ recordRoutes.post("/me/payout/challenge", requireRole("employee"), async (c) => 
   const body = await c.req.json().catch(() => null);
   const token = normalizePayoutToken(body?.token);
   const network = normalizePayoutNetwork(body?.network);
-  const address = normalizePayoutAddress(body?.endpoint);
+  const address = network ? normalizePayoutAddress(body?.endpoint, network) : null;
   if (!token) return c.json({ error: "Only USDC and USDT are supported" }, 400);
-  if (!network) return c.json({ error: "Unsupported EVM payout network" }, 400);
-  if (!address) return c.json({ error: "A valid EVM payout address is required" }, 400);
+  if (!network) return c.json({ error: "Unsupported payout network" }, 400);
+  if (!address) return c.json({ error: "A valid payout address is required for the selected network" }, 400);
 
   const employee = await c.env.DB.prepare(
     "SELECT id FROM employees WHERE user_id = ? AND org_id = ?",
@@ -340,8 +359,11 @@ recordRoutes.post("/me/payout/challenge", requireRole("employee"), async (c) => 
   const id = uuid();
   const issuedAt = nowIso();
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+  const chainKind = resolveChainKind(network);
+  const nonce = chainKind === "near" ? randomNonceBase64() : null;
+  const recipient = chainKind === "near" ? NEAR_SIGN_RECIPIENT : null;
   const message = [
-    "SalaryFlow payout wallet verification",
+    "Stableflow Pay payout wallet verification",
     `Challenge: ${id}`,
     `Account: ${user.id}`,
     `Address: ${address}`,
@@ -352,9 +374,9 @@ recordRoutes.post("/me/payout/challenge", requireRole("employee"), async (c) => 
   ].join("\n");
 
   await c.env.DB.prepare(
-    "INSERT INTO payout_verification_challenges (id, org_id, user_id, employee_id, address, token, network, message, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-  ).bind(id, user.org_id, user.id, employee.id, address, token, network, message, expiresAt, issuedAt).run();
-  return c.json({ challengeId: id, message, address, expiresAt });
+    "INSERT INTO payout_verification_challenges (id, org_id, user_id, employee_id, address, token, network, message, nonce, recipient, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  ).bind(id, user.org_id, user.id, employee.id, address, token, network, message, nonce, recipient, expiresAt, issuedAt).run();
+  return c.json({ challengeId: id, message, address, expiresAt, chainKind, nonce, recipient });
 });
 
 recordRoutes.post("/me/payout/verify", requireRole("employee"), async (c) => {
@@ -362,8 +384,8 @@ recordRoutes.post("/me/payout/verify", requireRole("employee"), async (c) => {
   const body = await c.req.json().catch(() => null);
   const challengeId = String(body?.challengeId || "");
   const signature = String(body?.signature || "");
-  if (!challengeId || !/^0x[a-fA-F0-9]{130}$/.test(signature)) {
-    return c.json({ error: "challengeId and a valid EVM signature are required" }, 400);
+  if (!challengeId || !signature) {
+    return c.json({ error: "challengeId and signature are required" }, 400);
   }
 
   const challenge = await c.env.DB.prepare(
@@ -375,16 +397,17 @@ recordRoutes.post("/me/payout/verify", requireRole("employee"), async (c) => {
     return c.json({ error: "Verification challenge has expired" }, 410);
   }
 
-  let valid = false;
-  try {
-    valid = await verifyMessage({
-      address: String(challenge.address) as Address,
-      message: String(challenge.message),
-      signature: signature as Hex,
-    });
-  } catch {
-    valid = false;
-  }
+  const chainKind = resolveChainKind(String(challenge.network));
+  const valid = await verifyWalletOwnership({
+    chainKind,
+    address: String(challenge.address),
+    message: String(challenge.message),
+    signature,
+    publicKey: body?.publicKey ? String(body.publicKey) : null,
+    nonce: challenge.nonce ? String(challenge.nonce) : null,
+    recipient: challenge.recipient ? String(challenge.recipient) : null,
+    accountId: body?.accountId ? String(body.accountId) : null,
+  });
   if (!valid) return c.json({ error: "Wallet signature does not match the payout address" }, 400);
 
   const verifiedAt = nowIso();
@@ -396,8 +419,8 @@ recordRoutes.post("/me/payout/verify", requireRole("employee"), async (c) => {
       "UPDATE employees SET token = ?, network = ?, endpoint = ?, status = 'ready', payout_verified_at = ? WHERE id = ? AND user_id = ? AND org_id = ?",
     ).bind(challenge.token, challenge.network, challenge.address, verifiedAt, challenge.employee_id, user.id, user.org_id),
     c.env.DB.prepare(
-      "UPDATE users SET wallet_address = ?, wallet_verified_at = ?, updated_at = ? WHERE id = ?",
-    ).bind(challenge.address, verifiedAt, verifiedAt, user.id),
+      "UPDATE users SET wallet_address = ?, wallet_chain_kind = ?, wallet_verified_at = ?, updated_at = ? WHERE id = ?",
+    ).bind(challenge.address, chainKind, verifiedAt, verifiedAt, user.id),
     c.env.DB.prepare(
       "INSERT INTO audit_log (id, org_id, actor_id, action, detail) VALUES (?, ?, ?, 'payout.verified', ?)",
     ).bind(uuid(), user.org_id, user.id, `Verified ${String(challenge.address)} for ${String(challenge.token)} on ${String(challenge.network)}`),
@@ -433,13 +456,16 @@ recordRoutes.get("/consents/me", requireRole("employee"), async (c) => {
 recordRoutes.post("/wallet/challenge", requireRole("admin"), async (c) => {
   const user = c.get("user") as AuthUser;
   const body = await c.req.json().catch(() => null);
-  const address = normalizePayoutAddress(body?.address);
-  if (!address) return c.json({ error: "A valid EVM payment wallet address is required" }, 400);
+  const chainKind = resolveChainKind(body?.chainKind || body?.chain_kind);
+  const address = chainKind ? normalizePayoutAddress(body?.address, chainKind) : null;
+  if (!chainKind || !address) return c.json({ error: "A valid payment wallet address is required" }, 400);
   const id = uuid();
   const issuedAt = nowIso();
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+  const nonce = chainKind === "near" ? randomNonceBase64() : null;
+  const recipient = chainKind === "near" ? NEAR_SIGN_RECIPIENT : null;
   const message = [
-    "SalaryFlow payment wallet verification",
+    "Stableflow Pay payment wallet verification",
     `Challenge: ${id}`,
     `Account: ${user.id}`,
     `Organization: ${user.org_id}`,
@@ -449,9 +475,9 @@ recordRoutes.post("/wallet/challenge", requireRole("admin"), async (c) => {
     "Signing verifies wallet ownership. It does not authorize or initiate a payroll payment.",
   ].join("\n");
   await c.env.DB.prepare(
-    "INSERT INTO payment_wallet_challenges (id, org_id, user_id, address, message, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-  ).bind(id, user.org_id, user.id, address, message, expiresAt, issuedAt).run();
-  return c.json({ challengeId: id, message, address, expiresAt });
+    "INSERT INTO payment_wallet_challenges (id, org_id, user_id, address, chain_kind, nonce, recipient, message, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  ).bind(id, user.org_id, user.id, address, chainKind, nonce, recipient, message, expiresAt, issuedAt).run();
+  return c.json({ challengeId: id, message, address, expiresAt, chainKind, nonce, recipient });
 });
 
 recordRoutes.post("/wallet/verify", requireRole("admin"), async (c) => {
@@ -459,8 +485,8 @@ recordRoutes.post("/wallet/verify", requireRole("admin"), async (c) => {
   const body = await c.req.json().catch(() => null);
   const challengeId = String(body?.challengeId || "");
   const signature = String(body?.signature || "");
-  if (!challengeId || !/^0x[a-fA-F0-9]{130}$/.test(signature)) {
-    return c.json({ error: "challengeId and a valid EVM signature are required" }, 400);
+  if (!challengeId || !signature) {
+    return c.json({ error: "challengeId and signature are required" }, 400);
   }
   const challenge = await c.env.DB.prepare(
     "SELECT * FROM payment_wallet_challenges WHERE id = ? AND user_id = ? AND org_id = ?",
@@ -469,93 +495,131 @@ recordRoutes.post("/wallet/verify", requireRole("admin"), async (c) => {
   if (challenge.used_at) return c.json({ error: "Wallet challenge has already been used" }, 409);
   if (new Date(String(challenge.expires_at)).getTime() < Date.now()) return c.json({ error: "Wallet challenge has expired" }, 410);
 
-  let valid = false;
-  try {
-    valid = await verifyMessage({
-      address: String(challenge.address) as Address,
-      message: String(challenge.message),
-      signature: signature as Hex,
-    });
-  } catch {
-    valid = false;
-  }
+  const chainKind = resolveChainKind(String(challenge.chain_kind || "evm"));
+  if (!chainKind) return c.json({ error: "Wallet challenge is missing a chain" }, 400);
+  const valid = await verifyWalletOwnership({
+    chainKind,
+    address: String(challenge.address),
+    message: String(challenge.message),
+    signature,
+    publicKey: body?.publicKey ? String(body.publicKey) : null,
+    nonce: challenge.nonce ? String(challenge.nonce) : null,
+    recipient: challenge.recipient ? String(challenge.recipient) : null,
+    accountId: body?.accountId ? String(body.accountId) : null,
+  });
   if (!valid) return c.json({ error: "Wallet signature does not match the payment address" }, 400);
 
-  if (user.wallet_address && user.wallet_address.toLowerCase() !== String(challenge.address).toLowerCase()) {
-    const active = await c.env.DB.prepare(
-      `SELECT COUNT(*) AS n FROM payment_attempts
-       WHERE org_id = ? AND LOWER(signer_id) = LOWER(?)
-         AND state IN ('created', 'quoting', 'quoted', 'generating', 'awaiting_signature', 'submitting', 'submitted', 'processing')`,
-    ).bind(user.org_id, user.wallet_address).first<{ n: number }>();
-    if (Number(active?.n || 0) > 0) {
+  const challengeAddress = String(challenge.address);
+  const existing = await getAdminWallet(c.env.DB, user.id, chainKind);
+  if (existing && !sameAddress(existing.address, challengeAddress, chainKind)) {
+    const active = await countActiveAttemptsForAddress(c.env.DB, String(user.org_id), existing.address);
+    if (active > 0) {
       return c.json({ error: "Complete or resolve active payment attempts before changing the payment wallet", code: "ACTIVE_PAYMENT_ATTEMPTS" }, 409);
     }
   }
 
   const verifiedAt = nowIso();
-  // Persist the Intents-canonical form (lowercased EVM) so confidential refundTo/signerId match 1Click.
-  const walletAddress = String(challenge.address).toLowerCase();
+  const walletAddress = challengeAddress;
   const results = await c.env.DB.batch([
     c.env.DB.prepare(
       "UPDATE payment_wallet_challenges SET used_at = ? WHERE id = ? AND used_at IS NULL",
     ).bind(verifiedAt, challengeId),
     c.env.DB.prepare(
-      "UPDATE users SET wallet_address = ?, wallet_verified_at = ?, updated_at = ? WHERE id = ? AND org_id = ?",
-    ).bind(walletAddress, verifiedAt, verifiedAt, user.id, user.org_id),
+      `INSERT INTO admin_wallets (user_id, chain_kind, address, verified_at, updated_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(user_id, chain_kind) DO UPDATE SET
+         address = excluded.address,
+         verified_at = excluded.verified_at,
+         updated_at = excluded.updated_at`,
+    ).bind(user.id, chainKind, walletAddress, verifiedAt, verifiedAt),
+    c.env.DB.prepare(
+      "UPDATE users SET wallet_address = ?, wallet_chain_kind = ?, wallet_verified_at = ?, updated_at = ? WHERE id = ? AND org_id = ?",
+    ).bind(walletAddress, chainKind, verifiedAt, verifiedAt, user.id, user.org_id),
     c.env.DB.prepare(
       "INSERT INTO audit_log (id, org_id, actor_id, action, detail) VALUES (?, ?, ?, 'payment_wallet.verified', ?)",
     ).bind(uuid(), user.org_id, user.id, `Verified payment wallet ${walletAddress}`),
   ]);
   if (Number(results[0].meta.changes || 0) !== 1) return c.json({ error: "Wallet challenge has already been used" }, 409);
-  return c.json({ ok: true, wallet_address: walletAddress, wallet_verified_at: verifiedAt });
+  const wallets = await loadAdminWallets(c.env.DB, user.id);
+  return c.json({ ok: true, wallet_address: walletAddress, wallet_chain_kind: chainKind, wallet_verified_at: verifiedAt, wallet_verified: true, wallets });
 });
 
 recordRoutes.put("/wallet", requireRole("admin"), async (c) => {
   const user = c.get("user") as AuthUser;
   const body = await c.req.json().catch(() => null);
-  const address = normalizePayoutAddress(body?.address);
-  if (!address) return c.json({ error: "A valid EVM payment wallet address is required" }, 400);
+  const chainKind = resolveChainKind(body?.chainKind || body?.chain_kind);
+  const address = chainKind ? normalizePayoutAddress(body?.address, chainKind) : null;
+  if (!chainKind || !address) return c.json({ error: "A valid payment wallet address is required" }, 400);
 
-  if (user.wallet_address && user.wallet_address.toLowerCase() !== address.toLowerCase()) {
-    const active = await c.env.DB.prepare(
-      `SELECT COUNT(*) AS n FROM payment_attempts
-       WHERE org_id = ? AND LOWER(signer_id) = LOWER(?)
-         AND state IN ('created', 'quoting', 'quoted', 'generating', 'awaiting_signature', 'submitting', 'submitted', 'processing')`,
-    ).bind(user.org_id, user.wallet_address).first<{ n: number }>();
-    if (Number(active?.n || 0) > 0) {
+  const existing = await getAdminWallet(c.env.DB, user.id, chainKind);
+  const sameBinding = Boolean(existing && sameAddress(existing.address, address, chainKind));
+  if (existing && !sameBinding) {
+    const active = await countActiveAttemptsForAddress(c.env.DB, String(user.org_id), existing.address);
+    if (active > 0) {
       return c.json({ error: "Complete or resolve active payment attempts before changing the payment wallet", code: "ACTIVE_PAYMENT_ATTEMPTS" }, 409);
     }
   }
 
   const now = nowIso();
-  const walletAddress = address.toLowerCase();
+  const verifiedAt = sameBinding ? existing?.verifiedAt ?? null : null;
   await c.env.DB.batch([
     c.env.DB.prepare(
-      "UPDATE users SET wallet_address = ?, wallet_verified_at = NULL, updated_at = ? WHERE id = ? AND org_id = ?",
-    ).bind(walletAddress, now, user.id, user.org_id),
+      `INSERT INTO admin_wallets (user_id, chain_kind, address, verified_at, updated_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(user_id, chain_kind) DO UPDATE SET
+         address = excluded.address,
+         verified_at = excluded.verified_at,
+         updated_at = excluded.updated_at`,
+    ).bind(user.id, chainKind, address, verifiedAt, now),
+    c.env.DB.prepare(
+      "UPDATE users SET wallet_address = ?, wallet_chain_kind = ?, wallet_verified_at = ?, updated_at = ? WHERE id = ? AND org_id = ?",
+    ).bind(address, chainKind, verifiedAt, now, user.id, user.org_id),
     c.env.DB.prepare(
       "INSERT INTO audit_log (id, org_id, actor_id, action, detail) VALUES (?, ?, ?, 'payment_wallet.bound', ?)",
-    ).bind(uuid(), user.org_id, user.id, `Bound payment wallet ${walletAddress}`),
+    ).bind(uuid(), user.org_id, user.id, `Bound payment wallet ${address}`),
   ]);
-  return c.json({ ok: true, wallet_address: walletAddress, wallet_verified: false });
+  const wallets = await loadAdminWallets(c.env.DB, user.id);
+  return c.json({
+    ok: true,
+    wallet_address: address,
+    wallet_chain_kind: chainKind,
+    wallet_verified: Boolean(verifiedAt),
+    wallets,
+  });
 });
 
 recordRoutes.delete("/wallet", requireRole("admin"), async (c) => {
   const user = c.get("user") as AuthUser;
-  const active = await c.env.DB.prepare(
-    `SELECT COUNT(*) AS n FROM payment_attempts
-     WHERE org_id = ? AND LOWER(signer_id) = LOWER(?)
-       AND state IN ('created', 'quoting', 'quoted', 'generating', 'awaiting_signature', 'submitting', 'submitted', 'processing')`,
-  ).bind(user.org_id, user.wallet_address || "").first<{ n: number }>();
-  if (Number(active?.n || 0) > 0) {
-    return c.json({ error: "Complete or resolve active payment attempts before removing the payment wallet", code: "ACTIVE_PAYMENT_ATTEMPTS" }, 409);
+  const requestedKind = resolveChainKind(c.req.query("chainKind") || user.wallet_chain_kind);
+  if (!requestedKind) return c.json({ error: "A payment wallet chain is required" }, 400);
+
+  const existing = await getAdminWallet(c.env.DB, user.id, requestedKind);
+  if (existing) {
+    const active = await countActiveAttemptsForAddress(c.env.DB, String(user.org_id), existing.address);
+    if (active > 0) {
+      return c.json({ error: "Complete or resolve active payment attempts before removing the payment wallet", code: "ACTIVE_PAYMENT_ATTEMPTS" }, 409);
+    }
   }
+
+  const now = nowIso();
+  await c.env.DB.prepare(
+    "DELETE FROM admin_wallets WHERE user_id = ? AND chain_kind = ?",
+  ).bind(user.id, requestedKind).run();
+  const wallets = await loadAdminWallets(c.env.DB, user.id);
+  const next = nextActiveFromWallets(wallets);
   await c.env.DB.batch([
-    c.env.DB.prepare("UPDATE users SET wallet_address = NULL, wallet_verified_at = NULL, updated_at = ? WHERE id = ?")
-      .bind(nowIso(), user.id),
     c.env.DB.prepare(
-      "INSERT INTO audit_log (id, org_id, actor_id, action, detail) VALUES (?, ?, ?, 'payment_wallet.removed', 'Removed payment wallet binding')",
-    ).bind(uuid(), user.org_id, user.id),
+      "UPDATE users SET wallet_address = ?, wallet_chain_kind = ?, wallet_verified_at = ?, updated_at = ? WHERE id = ?",
+    ).bind(next?.binding.address ?? null, next?.kind ?? null, next?.binding.verified ? now : null, now, user.id),
+    c.env.DB.prepare(
+      "INSERT INTO audit_log (id, org_id, actor_id, action, detail) VALUES (?, ?, ?, 'payment_wallet.removed', ?)",
+    ).bind(uuid(), user.org_id, user.id, `Removed ${requestedKind} payment wallet binding`),
   ]);
-  return c.json({ ok: true });
+  return c.json({
+    ok: true,
+    wallet_address: next?.binding.address ?? null,
+    wallet_chain_kind: next?.kind ?? null,
+    wallet_verified: Boolean(next?.binding.verified),
+    wallets,
+  });
 });

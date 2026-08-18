@@ -49,6 +49,8 @@ const CHAIN_LOGO_ALIAS: Record<string, string> = {
   bera: "berachain",
   berachain: "berachain",
   near: "near",
+  sol: "solana",
+  solana: "solana",
 };
 
 export function chainLogoUrl(blockchainOrNetwork: string): string {

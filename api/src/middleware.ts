@@ -2,6 +2,7 @@
 
 import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { verifyToken } from "./crypto";
+import { loadAdminWallets, withWallets } from "./admin-wallets";
 import type { AuthUser, Env, JwtPayload } from "./types";
 
 export const COOKIE_NAME = "sf_token";
@@ -59,19 +60,23 @@ export async function loadUser(c: Ctx): Promise<AuthUser | null> {
   const jwt = c.get("jwt");
   if (!jwt) return null;
   const row = await c.env.DB.prepare(
-    "SELECT id, email, name, role, status, org_id, wallet_address, wallet_verified_at, must_change_password, created_at FROM users WHERE id = ?",
+    "SELECT id, email, name, role, status, org_id, wallet_address, wallet_chain_kind, wallet_verified_at, must_change_password, created_at FROM users WHERE id = ?",
   ).bind(jwt.sub).first<Record<string, unknown>>();
   if (!row || row.status === "disabled") return null;
-  return {
+  const base: Omit<AuthUser, "wallets"> = {
     id: String(row.id),
     email: String(row.email),
     name: String(row.name),
     role: row.role as "admin" | "employee",
     org_id: row.org_id ? String(row.org_id) : null,
     wallet_address: row.wallet_address ? String(row.wallet_address) : null,
+    wallet_chain_kind: row.wallet_chain_kind ? String(row.wallet_chain_kind) as AuthUser["wallet_chain_kind"] : (row.wallet_address ? "evm" : null),
     wallet_verified: !!row.wallet_verified_at,
     must_change_password: !!row.must_change_password,
   };
+  if (base.role !== "admin") return { ...base, wallets: {} };
+  const wallets = await loadAdminWallets(c.env.DB, base.id);
+  return withWallets(base, wallets);
 }
 
 export function requireRole(...roles: string[]): MiddlewareHandler {

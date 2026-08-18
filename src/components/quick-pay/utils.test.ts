@@ -137,6 +137,35 @@ describe("validateLiveQuoteForSettle", () => {
     })).toEqual({ ok: false, reason: "expired" });
   });
 
+  it("accepts a Near deposit address when chainKind is near", () => {
+    const result = validateLiveQuoteForSettle({
+      context: "ctx",
+      quote: {
+        depositAddress: "alice.near",
+        amountIn: "1000000",
+        deadline: new Date(Date.now() + 60_000).toISOString(),
+      },
+    }, Date.now(), "near");
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.depositAddress).toBe("alice.near");
+  });
+
+  it("accepts a Solana deposit address when chainKind is solana", () => {
+    const result = validateLiveQuoteForSettle({
+      context: "ctx",
+      quote: {
+        depositAddress: "11111111111111111111111111111111",
+        amountIn: "1000000",
+        deadline: new Date(Date.now() + 60_000).toISOString(),
+      },
+    }, Date.now(), "solana");
+    expect(result.ok).toBe(true);
+  });
+
+  it("rejects an EVM deposit address on Near origin", () => {
+    expect(validateLiveQuoteForSettle(valid, Date.now(), "near").ok).toBe(false);
+  });
+
   it("maps reasons to settle error messages", () => {
     expect(liveQuoteSettleErrorMessage("expired")).toMatch(/expired/i);
     expect(liveQuoteSettleErrorMessage("missing_context")).toMatch(/context/i);

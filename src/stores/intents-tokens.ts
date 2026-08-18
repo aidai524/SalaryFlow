@@ -1,5 +1,5 @@
 /**
- * Cached 1Click supported tokens (USDT/USDC on phase-1 EVM chains).
+ * Cached 1Click supported tokens (USDT/USDC on registered chains).
  * Refresh every 30 minutes; persist to localStorage.
  */
 
@@ -46,7 +46,7 @@ function filterTokens(raw: ProviderToken[]): IntentsToken[] {
   const out: IntentsToken[] = [];
   for (const t of raw) {
     const chain = chainByCode.get(t.blockchain);
-    if (!chain || chain.chainKind !== "evm") continue;
+    if (!chain || chain.chainKind === "other") continue;
     const symbol = normalizeSymbol(t.symbol);
     if (!symbol) continue;
     if (!Number.isInteger(t.decimals) || t.decimals < 0) continue;

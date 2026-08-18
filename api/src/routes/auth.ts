@@ -3,6 +3,7 @@
 import { Hono } from "hono";
 import { hashPassword, signToken, verifyPassword } from "../crypto";
 import { authMiddleware, clearAuthCookie, loadUser, setAuthCookie, type AppEnv } from "../middleware";
+import { loadAdminWallets, withWallets } from "../admin-wallets";
 import { nowIso, uuid } from "../types";
 
 export const authRoutes = new Hono<AppEnv>();
@@ -78,7 +79,9 @@ authRoutes.post("/register", async (c) => {
         role: "admin",
         org_id: orgId,
         wallet_address: null,
+        wallet_chain_kind: null,
         wallet_verified: false,
+        wallets: {},
         must_change_password: false,
       },
     },
@@ -92,7 +95,7 @@ authRoutes.post("/login", async (c) => {
   const password = String(body?.password || "");
 
   const row = await c.env.DB.prepare(
-    "SELECT id, email, name, password_hash, role, status, org_id, wallet_address, wallet_verified_at, must_change_password FROM users WHERE email = ?",
+    "SELECT id, email, name, password_hash, role, status, org_id, wallet_address, wallet_chain_kind, wallet_verified_at, must_change_password FROM users WHERE email = ?",
   ).bind(email).first<Record<string, unknown>>();
   if (!row) return c.json({ error: "Invalid email or password" }, 401);
   if (row.status === "disabled") return c.json({ error: "This account is disabled" }, 403);
@@ -106,9 +109,17 @@ authRoutes.post("/login", async (c) => {
     role: row.role as "admin" | "employee",
     org_id: row.org_id ? String(row.org_id) : null,
     wallet_address: row.wallet_address ? String(row.wallet_address) : null,
+    wallet_chain_kind: row.wallet_chain_kind
+      ? String(row.wallet_chain_kind) as "evm" | "near" | "solana"
+      : (row.wallet_address ? "evm" as const : null),
     wallet_verified: !!row.wallet_verified_at,
+    wallets: {},
     must_change_password: !!row.must_change_password,
   };
+  if (user.role === "admin") {
+    const wallets = await loadAdminWallets(c.env.DB, user.id);
+    Object.assign(user, withWallets(user, wallets));
+  }
   const token = await signToken({ sub: user.id, org: user.org_id, role: user.role }, c.env);
   setAuthCookie(c, token, c.env);
   await c.env.DB.prepare("UPDATE users SET updated_at = ? WHERE id = ?").bind(nowIso(), user.id).run();

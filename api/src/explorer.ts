@@ -11,6 +11,8 @@ type ChainExplorer = {
   txUrlPrefix: string;
   /** Extra lowercase aliases matched via includes / exact. */
   aliases?: string[];
+  /** EVM explorers expect 0x-prefixed hashes; Near/Solana do not. */
+  hashKind?: "hex" | "raw";
 };
 
 const PHASE1_EXPLORERS: ChainExplorer[] = [
@@ -100,6 +102,20 @@ const PHASE1_EXPLORERS: ChainExplorer[] = [
     txUrlPrefix: "https://berascan.com/tx/",
     aliases: ["berachain"],
   },
+  {
+    blockchain: "near",
+    chainName: "Near",
+    txUrlPrefix: "https://nearblocks.io/txns/",
+    aliases: ["near"],
+    hashKind: "raw",
+  },
+  {
+    blockchain: "sol",
+    chainName: "Solana",
+    txUrlPrefix: "https://solscan.io/tx/",
+    aliases: ["solana", "sol"],
+    hashKind: "raw",
+  },
 ];
 
 const byBlockchain = new Map(PHASE1_EXPLORERS.map((c) => [c.blockchain, c]));
@@ -107,7 +123,8 @@ const byChainId = new Map(
   PHASE1_EXPLORERS.filter((c) => c.chainId != null).map((c) => [c.chainId!, c]),
 );
 
-function normalizeHash(txHash: string): string {
+function normalizeHash(txHash: string, hashKind: "hex" | "raw" = "hex"): string {
+  if (hashKind === "raw") return txHash;
   return txHash.startsWith("0x") ? txHash : `0x${txHash}`;
 }
 
@@ -147,7 +164,7 @@ function resolveExplorer(networkOrCode: string): ChainExplorer | null {
 export function explorerUrlForTx(networkOrCode: string, txHash: string): string | null {
   const chain = resolveExplorer(networkOrCode);
   if (!chain || !txHash) return null;
-  return `${chain.txUrlPrefix}${normalizeHash(txHash)}`;
+  return `${chain.txUrlPrefix}${normalizeHash(txHash, chain.hashKind ?? "hex")}`;
 }
 
 /**
@@ -181,6 +198,8 @@ export function networkHintFromOriginAssetId(
   if (id.includes("avalanche")) return "Avalanche";
   if (id.includes("berachain")) return "Berachain";
   if (id.includes("ethereum")) return "Ethereum";
+  if (id.includes("solana") || /\bsol\b/.test(id)) return "Solana";
+  if (id.includes("near")) return "Near";
 
   return null;
 }

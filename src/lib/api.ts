@@ -1,5 +1,14 @@
 // Frontend API client — calls same-origin /api (proxied to Worker in dev)
 
+export type WalletChainKind = "evm" | "near" | "solana";
+
+export interface ChainWalletBinding {
+  address: string;
+  verified: boolean;
+}
+
+export type AdminWallets = Partial<Record<WalletChainKind, ChainWalletBinding>>;
+
 export interface AuthUser {
   id: string;
   email: string;
@@ -7,7 +16,9 @@ export interface AuthUser {
   role: "admin" | "employee";
   org_id: string | null;
   wallet_address: string | null;
+  wallet_chain_kind: WalletChainKind | null;
   wallet_verified: boolean;
+  wallets?: AdminWallets;
   must_change_password: boolean;
 }
 
@@ -714,11 +725,18 @@ export const api = {
 
   // records
   listRecords: () => request<{ records: ChainRecord[] }>("/records"),
-  myRecords: (params?: { limit?: number }) => {
+  myRecords: (params?: { page?: number; pageSize?: number; limit?: number }) => {
     const q = new URLSearchParams();
-    if (params?.limit != null) q.set("limit", String(params.limit));
+    if (params?.page != null) q.set("page", String(params.page));
+    if (params?.pageSize != null) q.set("pageSize", String(params.pageSize));
+    else if (params?.limit != null) q.set("pageSize", String(params.limit));
     const qs = q.toString();
-    return request<{ payments: MyPaymentHistoryItem[] }>(`/records/me${qs ? `?${qs}` : ""}`);
+    return request<{
+      payments: MyPaymentHistoryItem[];
+      total: number;
+      page: number;
+      pageSize: number;
+    }>(`/records/me${qs ? `?${qs}` : ""}`);
   },
   myPayout: () => request<{ payout: MyPayout | null }>("/records/me/payout"),
   updateMyProfile: (body: {
@@ -736,18 +754,63 @@ export const api = {
   updatePayout: (body: { token: string; network: string; endpoint: string }) =>
     request<{ ok: boolean }>("/records/me/payout", { method: "PUT", body: JSON.stringify(body) }),
   createPayoutChallenge: (body: { token: string; network: string; endpoint: string }) =>
-    request<{ challengeId: string; message: string; address: string; expiresAt: string }>("/records/me/payout/challenge", { method: "POST", body: JSON.stringify(body) }),
-  verifyPayout: (body: { challengeId: string; signature: string }) =>
+    request<{
+      challengeId: string;
+      message: string;
+      address: string;
+      expiresAt: string;
+      chainKind?: "evm" | "near" | "solana";
+      nonce?: string | null;
+      recipient?: string | null;
+    }>("/records/me/payout/challenge", { method: "POST", body: JSON.stringify(body) }),
+  verifyPayout: (body: {
+    challengeId: string;
+    signature: string;
+    publicKey?: string;
+    accountId?: string;
+  }) =>
     request<{ ok: boolean; payout: MyPayout }>("/records/me/payout/verify", { method: "POST", body: JSON.stringify(body) }),
   signConsent: (payload: unknown) => request<{ ok: boolean; signedAt: string }>("/records/consents", { method: "POST", body: JSON.stringify(payload) }),
   myConsent: () => request<{ signed: boolean; signedAt: string | null }>("/records/consents/me"),
-  createPaymentWalletChallenge: (address: string) =>
-    request<{ challengeId: string; message: string; address: string; expiresAt: string }>("/records/wallet/challenge", { method: "POST", body: JSON.stringify({ address }) }),
-  verifyPaymentWallet: (body: { challengeId: string; signature: string }) =>
-    request<{ ok: boolean; wallet_address: string; wallet_verified_at: string }>("/records/wallet/verify", { method: "POST", body: JSON.stringify(body) }),
-  bindPaymentWallet: (address: string) =>
-    request<{ ok: boolean; wallet_address: string; wallet_verified: boolean }>("/records/wallet", { method: "PUT", body: JSON.stringify({ address }) }),
-  unbindWallet: () => request<{ ok: boolean }>("/records/wallet", { method: "DELETE" }),
+  createPaymentWalletChallenge: (address: string, chainKind: "evm" | "near" | "solana") =>
+    request<{
+      challengeId: string;
+      message: string;
+      address: string;
+      expiresAt: string;
+      chainKind?: "evm" | "near" | "solana";
+      nonce?: string | null;
+      recipient?: string | null;
+    }>("/records/wallet/challenge", { method: "POST", body: JSON.stringify({ address, chainKind }) }),
+  verifyPaymentWallet: (body: {
+    challengeId: string;
+    signature: string;
+    publicKey?: string;
+    accountId?: string;
+  }) =>
+    request<{
+      ok: boolean;
+      wallet_address: string;
+      wallet_chain_kind?: WalletChainKind;
+      wallet_verified_at: string;
+      wallets?: AdminWallets;
+    }>("/records/wallet/verify", { method: "POST", body: JSON.stringify(body) }),
+  bindPaymentWallet: (address: string, chainKind: WalletChainKind) =>
+    request<{
+      ok: boolean;
+      wallet_address: string;
+      wallet_chain_kind?: WalletChainKind;
+      wallet_verified: boolean;
+      wallets?: AdminWallets;
+    }>("/records/wallet", { method: "PUT", body: JSON.stringify({ address, chainKind }) }),
+  unbindWallet: (chainKind?: WalletChainKind) =>
+    request<{
+      ok: boolean;
+      wallet_address: string | null;
+      wallet_chain_kind: WalletChainKind | null;
+      wallet_verified: boolean;
+      wallets?: AdminWallets;
+    }>(chainKind ? `/records/wallet?chainKind=${encodeURIComponent(chainKind)}` : "/records/wallet", { method: "DELETE" }),
 
   // payments: dry-run readiness + live 1Click attempts
   quote: (body: { runId: string; dry: true }) => request<{ dry: true; mode: "dry-run"; executionAllowed: false; itemCount: number; validatedItemCount: number; checkedAt: string; totals: { usdcMinor: number; usdtMinor: number } }>("/payments/quote", { method: "POST", body: JSON.stringify(body) }),

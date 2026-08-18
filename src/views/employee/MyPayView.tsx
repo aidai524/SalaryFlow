@@ -13,11 +13,13 @@ export function MyPayView() {
   const mustChangePassword = user?.must_change_password;
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  const [historyPage, setHistoryPage] = useState(1);
 
   const payoutQuery = useMyPayoutQuery();
-  const paymentsQuery = useMyPaymentsQuery();
+  const paymentsQuery = useMyPaymentsQuery(historyPage);
   const payout = payoutQuery.data?.payout ?? null;
   const payments = paymentsQuery.data?.payments ?? [];
+  const paymentsTotal = paymentsQuery.data?.total ?? 0;
 
   useEffect(() => {
     document.title = "Stableflow Pay · My Pay";
@@ -49,6 +51,9 @@ export function MyPayView() {
           <MyPayHistoryTable
             payments={payments}
             isLoading={paymentsQuery.isLoading}
+            page={historyPage}
+            total={paymentsTotal}
+            onPageChange={setHistoryPage}
           />
         </div>
       </div>

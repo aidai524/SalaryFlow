@@ -24,6 +24,7 @@ import {
   shortPeriodLabel,
 } from "../pay-period";
 import { normalizePayoutAddress, normalizePayoutNetwork, normalizePayoutToken } from "../payout";
+import { sameAddress } from "../address-validation";
 import {
   normalizeEmployeeType,
   normalizePresetAvatarUrl,
@@ -644,6 +645,7 @@ type EmployeeRow = Record<string, unknown> & {
   created_at: string;
   payment_cadence: string | null;
   payment_date_key: string | null;
+  last_paid_at: string | null;
 };
 
 function enrichEmployeeRow(
@@ -921,8 +923,8 @@ orgRoutes.post("/employees", requireRole("admin"), async (c) => {
   const network = normalizePayoutNetwork(body?.network ?? "Base");
   if (!token || !network) return c.json({ error: "Unsupported payout token or network" }, 400);
   const endpointInput = String(body?.endpoint || "").trim();
-  const endpoint = endpointInput ? normalizePayoutAddress(endpointInput) : "";
-  if (endpoint === null) return c.json({ error: "A valid EVM payout address is required" }, 400);
+  const endpoint = endpointInput ? normalizePayoutAddress(endpointInput, network) : "";
+  if (endpoint === null) return c.json({ error: "A valid payout address is required for the selected network" }, 400);
   if (!isEmployee && !endpoint) {
     return c.json({ error: "A wallet address is required for non-employee recipients" }, 400);
   }
@@ -1068,18 +1070,20 @@ orgRoutes.patch("/employees/:id", requireRole("admin"), async (c) => {
     fields.push("token = ?");
     values.push(token);
   }
+  const nextNetwork = body?.network !== undefined
+    ? normalizePayoutNetwork(body.network)
+    : String(existing.network || "");
   if (body?.network !== undefined) {
-    const network = normalizePayoutNetwork(body.network);
-    if (!network) return c.json({ error: "Unsupported EVM payout network" }, 400);
-    if (network !== existing.network) payoutChanged = true;
+    if (!nextNetwork) return c.json({ error: "Unsupported payout network" }, 400);
+    if (nextNetwork !== existing.network) payoutChanged = true;
     fields.push("network = ?");
-    values.push(network);
+    values.push(nextNetwork);
   }
   if (body?.endpoint !== undefined) {
     const endpointInput = String(body.endpoint).trim();
-    const endpoint = endpointInput ? normalizePayoutAddress(endpointInput) : "";
-    if (endpoint === null) return c.json({ error: "A valid EVM payout address is required" }, 400);
-    if (String(endpoint).toLowerCase() !== String(existing.endpoint || "").toLowerCase()) {
+    const endpoint = endpointInput ? normalizePayoutAddress(endpointInput, nextNetwork) : "";
+    if (endpoint === null) return c.json({ error: "A valid payout address is required for the selected network" }, 400);
+    if (!sameAddress(String(endpoint), String(existing.endpoint || ""), nextNetwork)) {
       payoutChanged = true;
     }
     fields.push("endpoint = ?");
@@ -1094,12 +1098,12 @@ orgRoutes.patch("/employees/:id", requireRole("admin"), async (c) => {
   const resolvedEndpoint = body?.endpoint !== undefined
     ? (() => {
         const endpointInput = String(body.endpoint).trim();
-        const normalized = endpointInput ? normalizePayoutAddress(endpointInput) : "";
+        const normalized = endpointInput ? normalizePayoutAddress(endpointInput, nextNetwork) : "";
         return normalized === null ? null : normalized;
       })()
     : String(existing.endpoint || "");
   if (resolvedEndpoint === null) {
-    return c.json({ error: "A valid EVM payout address is required" }, 400);
+    return c.json({ error: "A valid payout address is required for the selected network" }, 400);
   }
   if (nextType !== "employee" && !resolvedEndpoint) {
     return c.json({ error: "A wallet address is required for non-employee recipients" }, 400);

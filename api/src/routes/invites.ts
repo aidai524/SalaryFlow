@@ -391,7 +391,9 @@ inviteRoutes.post("/accept", async (c) => {
     role,
     org_id: String(invite.org_id),
     wallet_address: null,
+    wallet_chain_kind: null,
     wallet_verified: false,
+    wallets: {},
     must_change_password: true,
   };
   const sessionToken = await signToken({ sub: userId, org: authUser.org_id, role }, c.env);

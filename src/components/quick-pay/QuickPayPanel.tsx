@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { isAddress, type Address, type Hex } from "viem";
+import { type Address, type Hex } from "viem";
 import { useSendTransaction, useSwitchChain } from "wagmi";
 import { AddRecipientPillButton } from "@/components/AddRecipientPillButton";
 import { BatchPayoutButton } from "@/components/batch-payout/BatchPayoutButton";
@@ -12,7 +12,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { getChainByNetwork, networkToChainId } from "@/config/chains";
+import { chainKindForNetwork, getChainByNetwork } from "@/config/chains";
 import { EstCostRow } from "@/components/you-pay/EstCostRow";
 import { YouPaySection } from "@/components/you-pay/YouPaySection";
 import { usePayOriginToken } from "@/hooks/use-pay-origin-token";
@@ -20,6 +20,8 @@ import { usePaymentWallet } from "@/hooks/use-payment-wallet";
 import { useEmployeeQuery, useRecipientsQuery } from "@/hooks/use-recipients-api";
 import useToast from "@/hooks/use-toast";
 import { parsePositiveDecimal, sanitizeDecimalInput } from "@/lib/amount-input";
+import { isAddressValid, resolveChainKind, sameAddress } from "@/lib/address-validation";
+import { bindingForKind } from "@/lib/admin-wallets";
 import { api, type Employee, type QuickPayMode } from "@/lib/api";
 import { formatAddress, formatNumber, formatTokenMinor } from "@/lib/format";
 import { chainLogoUrl } from "@/lib/logo";
@@ -30,6 +32,8 @@ import { useIntentsTokensStore, type IntentsToken } from "@/stores/intents-token
 import { enqueueQuickPayCommit } from "@/stores/quick-pay-commit-queue";
 import { useTokenBalancesStore } from "@/stores/token-balances";
 import { encodeErc20Transfer } from "@/wallet/evm/transfer";
+import { sendOriginDeposit } from "@/wallet/send-origin-deposit";
+import type { ChainKind } from "@/wallet";
 import {
   PRIVATE_POST_SIGN_DELAY_MS,
   QUICK_PAY_RECIPIENT_PAGE_SIZE,
@@ -39,7 +43,6 @@ import {
 import {
   isDryQuoteStale,
   liveQuoteSettleErrorMessage,
-  sameEthereumAddress,
   validateLiveQuoteForSettle,
 } from "./utils";
 
@@ -98,15 +101,19 @@ export function QuickPayPanel({
   destinationTokenLocked = false,
   onAddRecipient,
 }: QuickPayPanelProps) {
-  const paymentWallet = usePaymentWallet();
-  const wallet = paymentWallet.wallet;
-  const walletInfo = paymentWallet.walletInfo;
   const queryClient = useQueryClient();
   const toast = useToast();
-  const boundAddress = paymentWallet.boundAddress;
   const ensureFresh = useIntentsTokensStore((s) => s.ensureFresh);
   const findByChainAndSymbol = useIntentsTokensStore((s) => s.findByChainAndSymbol);
   const { originToken, setOriginToken } = usePayOriginToken();
+  const originKind: ChainKind = originToken?.chain.chainKind === "near" || originToken?.chain.chainKind === "solana"
+    ? originToken.chain.chainKind
+    : "evm";
+  const paymentWallet = usePaymentWallet(originKind);
+  const wallet = paymentWallet.wallet;
+  const walletInfo = paymentWallet.walletInfo;
+  const boundAddress = paymentWallet.boundAddress;
+  const boundMatchesOrigin = Boolean(boundAddress);
 
   const [pickedEmployee, setPickedEmployee] = useState<Employee | null>(null);
   const [adhocAddress, setAdhocAddress] = useState<string | null>(null);
@@ -146,9 +153,11 @@ export function QuickPayPanel({
 
   const pastedAddress = useMemo(() => {
     const raw = debouncedSearch;
-    if (!raw || !isAddress(raw)) return null;
-    return raw as Address;
-  }, [debouncedSearch]);
+    if (!raw) return null;
+    if (destToken) return isAddressValid(raw, destToken.chain.chainKind) ? raw : null;
+    if (isAddressValid(raw, "evm") || isAddressValid(raw, "near") || isAddressValid(raw, "solana")) return raw;
+    return null;
+  }, [debouncedSearch, destToken]);
 
   const showEmptyRecipientHint = !recipientLocked
     && debouncedSearch.length > 0
@@ -167,7 +176,7 @@ export function QuickPayPanel({
     }
     if (listQuery.isFetching) return;
     const matched = employees.find(
-      (emp) => emp.endpoint && emp.endpoint.toLowerCase() === pastedAddress.toLowerCase(),
+      (emp) => emp.endpoint && sameAddress(emp.endpoint, pastedAddress, chainKindForNetwork(emp.network) || "evm"),
     );
     if (matched) {
       setPickedEmployee(matched);
@@ -180,7 +189,25 @@ export function QuickPayPanel({
   }, [pastedAddress, debouncedSearch, employees, recipientLocked, listQuery.isFetching]);
 
   const destinationAddress = employee?.endpoint || adhocAddress;
+  const destLockChainKind = employee
+    ? resolveChainKind(employee.network)
+    : adhocAddress
+      ? (isAddressValid(adhocAddress, "evm")
+        ? "evm"
+        : isAddressValid(adhocAddress, "solana")
+          ? "solana"
+          : isAddressValid(adhocAddress, "near")
+            ? "near"
+            : resolveChainKind(destToken?.chain.chainKind))
+      : null;
   const canQuoteDestination = !!destinationAddress && (!!employee || !!destToken);
+
+  useEffect(() => {
+    if (!destToken || !destLockChainKind) return;
+    if (destToken.chain.chainKind !== destLockChainKind) {
+      setDestToken(null);
+    }
+  }, [destLockChainKind, destToken]);
 
   useEffect(() => {
     if (!employee) return;
@@ -238,7 +265,7 @@ export function QuickPayPanel({
       }
       throw new Error("Missing quote inputs");
     },
-    enabled: !!originToken && !!debouncedAmountForQuote && canQuoteDestination,
+    enabled: !!originToken && !!debouncedAmountForQuote && canQuoteDestination && boundMatchesOrigin,
     placeholderData: keepPreviousData,
     refetchInterval: 60_000,
     retry: 1,
@@ -288,9 +315,9 @@ export function QuickPayPanel({
       if (!employee && (!adhocAddress || !destToken)) {
         throw new Error("Missing payment inputs");
       }
-      if (!useAuthStore.getState().user?.wallet_address) {
+      if (!bindingForKind(useAuthStore.getState().user, originKind)?.address) {
         if (wallet.isConnected && wallet.account?.address) {
-          await bindConnectedWallet(wallet.account.address);
+          await bindConnectedWallet(wallet.account.address, originKind);
         } else {
           connectAndBindWallet();
           throw new Error("Connect your payment wallet first");
@@ -300,11 +327,11 @@ export function QuickPayPanel({
         wallet.connect();
         throw new Error("Connect your payment wallet first");
       }
-      const paymentWallet = useAuthStore.getState().user?.wallet_address;
-      if (!paymentWallet) {
+      const paymentWalletAddress = bindingForKind(useAuthStore.getState().user, originKind)?.address;
+      if (!paymentWalletAddress) {
         throw new Error("Connect your payment wallet first");
       }
-      if (!sameEthereumAddress(paymentWallet, wallet.account.address)) {
+      if (!sameAddress(paymentWalletAddress, wallet.account.address, originKind)) {
         toast.fail({ title: QUICK_PAY_TOAST.SWITCH_BOUND_WALLET });
         throw new BalanceGateError("Wallet mismatch");
       }
@@ -336,7 +363,7 @@ export function QuickPayPanel({
           mode: PAYMENT_MODE,
           memo: memoValue,
         });
-      const chainId = networkToChainId(originToken.chain.chainName) ?? originToken.chain.chainId;
+      const chainId = originToken.chain.chainId;
       const amountLabel = `${amountForQuote} ${destSymbol}`;
       const recipientLabel = employee?.name || formatAddress(adhocAddress || destinationAddress);
 
@@ -357,7 +384,7 @@ export function QuickPayPanel({
         }
         const amountIn = BigInt(amountInRaw);
 
-        const privateBalance = await fetchOneBalance(paymentWallet, originToken);
+        const privateBalance = await fetchOneBalance(paymentWalletAddress, originToken);
         if (!privateBalance || privateBalance.status !== "success" || privateBalance.raw == null) {
           toast.fail({ title: QUICK_PAY_TOAST.COULD_NOT_READ_BALANCE });
           throw new BalanceGateError("Could not read wallet balance");
@@ -399,12 +426,12 @@ export function QuickPayPanel({
         return { mode: "private" as const };
       }
 
-      const settled = validateLiveQuoteForSettle(live);
+      const settled = validateLiveQuoteForSettle(live, Date.now(), originKind);
       if (!settled.ok) {
         throw new Error(liveQuoteSettleErrorMessage(settled.reason));
       }
 
-      const balance = await fetchOneBalance(paymentWallet, originToken);
+      const balance = await fetchOneBalance(paymentWalletAddress, originToken);
       if (!balance || balance.status !== "success" || balance.raw == null) {
         toast.fail({ title: QUICK_PAY_TOAST.COULD_NOT_READ_BALANCE });
         throw new BalanceGateError("Could not read wallet balance");
@@ -415,15 +442,24 @@ export function QuickPayPanel({
       }
 
       setPhase("sending");
-      if (chainId && wallet.account.chainId !== chainId) {
-        await switchChainAsync({ chainId });
-      }
-      const data = encodeErc20Transfer(settled.depositAddress as Address, settled.amountIn);
-      const hash = await sendTransactionAsync({
-        to: originToken.contractAddress as Address,
-        data: data as Hex,
-        value: 0n,
-        chainId: chainId || undefined,
+      const hash = await sendOriginDeposit({
+        chainKind: originKind,
+        contractAddress: originToken.contractAddress,
+        depositAddress: settled.depositAddress,
+        amount: settled.amountIn,
+        memo: live.quote.depositMemo,
+        chainId,
+        sendEvmTransaction: async ({ to, data, chainId: txChainId }) => {
+          if (txChainId && wallet.account?.chainId !== txChainId) {
+            await switchChainAsync({ chainId: txChainId });
+          }
+          return sendTransactionAsync({
+            to: to as Address,
+            data: data as Hex,
+            value: 0n,
+            chainId: txChainId,
+          });
+        },
       });
       enqueueQuickPayCommit({
         context: settled.context,
@@ -565,7 +601,7 @@ export function QuickPayPanel({
                   className="inline-flex h-10 items-center gap-2 rounded-[26px] border border-black bg-black px-2.5 pr-3 font-montserrat text-[14px] font-medium text-white"
                 >
                   <span className="inline-flex size-[26px] items-center justify-center rounded-full bg-white/20 text-[11px]">
-                    {adhocAddress.slice(2, 3).toUpperCase()}
+                    {(adhocAddress.replace(/^0x/i, "").match(/[a-z0-9]/i)?.[0] || "?").toUpperCase()}
                   </span>
                   <span className="max-w-[140px] truncate">{formatAddress(adhocAddress)}</span>
                 </button>
@@ -677,11 +713,12 @@ export function QuickPayPanel({
         amountDisplay={amountInDisplay}
         originToken={originToken}
         onOriginTokenChange={setOriginToken}
-        boundAddress={boundAddress}
-        walletConnected={wallet.isConnected}
-        walletIcon={walletInfo.icon}
-        connecting={paymentWallet.bindingWallet || paymentWallet.pendingBind}
+        boundAddress={boundMatchesOrigin ? boundAddress : null}
+        walletConnected={wallet.isConnected && boundMatchesOrigin}
+        walletIcon={originKind === "evm" ? walletInfo.icon : undefined}
+        connecting={wallet.isConnecting || paymentWallet.bindingWallet}
         onConnectWallet={connectAndBindWallet}
+        onUseDifferentWallet={() => void paymentWallet.unbindAndDisconnect()}
       />
       <div className="mb-4 border-b border-black/10" />
 
@@ -755,6 +792,7 @@ export function QuickPayPanel({
         title="Recipient token"
         initialSymbol={(destToken?.symbol || employee?.token || "USDC") as "USDC" | "USDT"}
         selectedAssetId={destToken?.assetId}
+        lockChainKind={destLockChainKind}
         onSelect={({ token }) => setDestToken(token)}
       />
     </section>

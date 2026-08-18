@@ -1,11 +1,11 @@
 // Stablecoin / chain allowlists for NEAR Intents 1Click.
-// Phase 1: EVM chains only. Non-EVM kinds are reserved for later adapters.
+// Registered chains: phase-1 EVM plus Near / Solana. Token list still comes from /v0/tokens.
 
 export type ChainKind = "evm" | "near" | "solana" | "other";
 
 export type StableSymbol = "USDC" | "USDT";
 
-/** 1Click blockchain codes allowed in phase 1 (EVM). */
+/** 1Click blockchain codes allowed for EVM origin/destination. */
 export const PHASE1_EVM_BLOCKCHAINS = new Set([
   "eth",
   "base",
@@ -20,6 +20,13 @@ export const PHASE1_EVM_BLOCKCHAINS = new Set([
   "xlayer",
   "plasma",
   "bera",
+]);
+
+/** Registered 1Click blockchain codes (EVM + Near + Solana). */
+export const PHASE1_BLOCKCHAINS = new Set([
+  ...PHASE1_EVM_BLOCKCHAINS,
+  "near",
+  "sol",
 ]);
 
 /** Display network name (legacy payout enum) → 1Click blockchain code. */
@@ -37,6 +44,8 @@ export const NETWORK_TO_BLOCKCHAIN: Record<string, string> = {
   "X Layer": "xlayer",
   Plasma: "plasma",
   Berachain: "bera",
+  Near: "near",
+  Solana: "sol",
 };
 
 /** 1Click blockchain code → display network name. */
@@ -49,6 +58,17 @@ export function chainKindForBlockchain(blockchain: string): ChainKind {
   if (blockchain === "near") return "near";
   if (blockchain === "sol") return "solana";
   return "other";
+}
+
+export function chainKindForNetwork(network: string): ChainKind | null {
+  const blockchain = NETWORK_TO_BLOCKCHAIN[network] || (PHASE1_BLOCKCHAINS.has(network) ? network : null);
+  if (!blockchain) return null;
+  const kind = chainKindForBlockchain(blockchain);
+  return kind === "other" ? null : kind;
+}
+
+export function isPhase1Blockchain(blockchain: string): boolean {
+  return PHASE1_BLOCKCHAINS.has(blockchain);
 }
 
 /** Normalize provider symbols: USDT0 → USDT. */
@@ -83,15 +103,17 @@ export interface ResolvedStableAsset {
   chainKind: ChainKind;
 }
 
-/** Filter 1Click tokens to phase-1 EVM USDT/USDC (USDT0 counted as USDT). */
+/** Filter 1Click tokens to registered-chain USDT/USDC (USDT0 counted as USDT). */
 export function filterPhase1StableTokens(tokens: ProviderTokenMeta[]): ResolvedStableAsset[] {
   const resolved: ResolvedStableAsset[] = [];
   for (const token of tokens) {
-    if (!isPhase1EvmBlockchain(token.blockchain)) continue;
+    if (!isPhase1Blockchain(token.blockchain)) continue;
     const symbol = normalizeStableSymbol(token.symbol);
     if (!symbol) continue;
     const network = BLOCKCHAIN_TO_NETWORK[token.blockchain];
     if (!network) continue;
+    const chainKind = chainKindForBlockchain(token.blockchain);
+    if (chainKind === "other") continue;
     resolved.push({
       assetId: token.assetId,
       decimals: token.decimals,
@@ -100,7 +122,7 @@ export function filterPhase1StableTokens(tokens: ProviderTokenMeta[]): ResolvedS
       symbol,
       providerSymbol: token.symbol,
       contractAddress: token.contractAddress ?? null,
-      chainKind: "evm",
+      chainKind,
     });
   }
   return resolved;

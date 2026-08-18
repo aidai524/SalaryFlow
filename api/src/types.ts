@@ -1,4 +1,15 @@
+import type { WalletChainKind } from "./address-validation";
+
 // Shared request/response types and D1 binding types
+
+export type { WalletChainKind };
+
+export interface ChainWalletBinding {
+  address: string;
+  verified: boolean;
+}
+
+export type AdminWallets = Partial<Record<WalletChainKind, ChainWalletBinding>>;
 
 export interface Env {
   DB: D1Database;
@@ -34,6 +45,7 @@ export interface UserRow {
   status: UserStatus;
   org_id: string | null;
   wallet_address: string | null;
+  wallet_chain_kind: WalletChainKind | null;
   wallet_verified_at: string | null;
   must_change_password: number;
   created_at: string;
@@ -46,7 +58,10 @@ export interface AuthUser {
   role: Role;
   org_id: string | null;
   wallet_address: string | null;
+  wallet_chain_kind: WalletChainKind | null;
   wallet_verified: boolean;
+  /** Admin payment wallets persisted per chain. Employees omit bindings. */
+  wallets: AdminWallets;
   must_change_password: boolean;
 }
 
@@ -66,7 +81,9 @@ export function toAuthUser(u: UserRow): AuthUser {
     role: u.role,
     org_id: u.org_id,
     wallet_address: u.wallet_address,
+    wallet_chain_kind: u.wallet_chain_kind,
     wallet_verified: !!u.wallet_verified_at,
+    wallets: {},
     must_change_password: !!u.must_change_password,
   };
 }

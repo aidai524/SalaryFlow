@@ -18,6 +18,7 @@ import {
   verifyQuickPayContext,
   type QuickPayContextPayload,
 } from "./quick-pay-context";
+import { paymentAddressForKind } from "./admin-wallets";
 import { nowIso, uuid, type AuthUser, type Env } from "./types";
 
 const D1_BATCH_LIMIT = 40;
@@ -68,7 +69,7 @@ export async function commitBatchPayout(
   user: AuthUser,
   body: BatchCommitBody,
 ): Promise<{ status: number; json: Record<string, unknown> }> {
-  if (!user.wallet_address) {
+  if (!user.wallet_address && !paymentAddressForKind(user, "evm")) {
     return { status: 422, json: { error: "An admin payment wallet is required", code: "PAYMENT_WALLET_REQUIRED" } };
   }
 
@@ -107,7 +108,10 @@ export async function commitBatchPayout(
     try {
       const ctx = await verifyQuickPayContext(env, contextToken, {
         orgId: String(user.org_id),
-        signerId: user.wallet_address,
+        signerId: [
+          paymentAddressForKind(user, "evm"),
+          user.wallet_address,
+        ].filter((value): value is string => Boolean(value)),
       });
       contexts.push(ctx);
     } catch (error) {

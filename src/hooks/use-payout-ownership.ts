@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { useAccount, useSignMessage } from "wagmi";
-import { useOpenWalletModal } from "@/hooks/use-open-wallet-modal";
+import { chainKindForNetwork } from "@/config/chains";
+import { isAddressValid, sameAddress } from "@/lib/address-validation";
 import { api, ApiError, type MyPayout } from "@/lib/api";
-import { isValidEthereumAddress } from "@/lib/erc191";
+import { useWallet, type ChainKind } from "@/wallet";
 
 type SavedPayout = Pick<
   MyPayout,
@@ -26,21 +26,21 @@ export function usePayoutOwnership({
   onVerified?: (payout: MyPayout) => void | Promise<void>;
   onDirty?: () => void;
 }) {
-  const { openWalletModal, isConnected } = useOpenWalletModal();
-  const { address } = useAccount();
-  const { signMessageAsync } = useSignMessage();
+  const chainKind = (chainKindForNetwork(network) || "evm") as ChainKind;
+  const wallet = useWallet(chainKind);
+  const address = wallet.account?.address;
   const [verifying, setVerifying] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
   const connectedAddressMatches = Boolean(
-    address && address.toLowerCase() === endpoint.trim().toLowerCase(),
+    address && sameAddress(address, endpoint.trim(), chainKind),
   );
   const payoutConfigurationMatches = Boolean(
     savedPayout
     && savedPayout.token === token
     && savedPayout.network === network
-    && savedPayout.endpoint.trim().toLowerCase() === endpoint.trim().toLowerCase(),
+    && sameAddress(savedPayout.endpoint.trim(), endpoint.trim(), chainKind),
   );
   const ownershipVerified = Boolean(
     payoutConfigurationMatches
@@ -48,7 +48,6 @@ export function usePayoutOwnership({
     && savedPayout.payout_verified_at,
   );
 
-  // Drop stale "verified / ready" copy when the form no longer matches a verified payout.
   useEffect(() => {
     if (ownershipVerified) return;
     setNotice((prev) => {
@@ -62,14 +61,14 @@ export function usePayoutOwnership({
     setError("");
     setNotice("");
     onDirty?.();
-    openWalletModal();
+    wallet.connect();
   };
 
   const changeConnectedWallet = () => {
     setError("");
     setNotice("");
     onDirty?.();
-    openWalletModal();
+    wallet.connect();
   };
 
   const useConnectedAddress = () => {
@@ -82,7 +81,7 @@ export function usePayoutOwnership({
       && savedPayout.payout_verified_at
       && savedPayout.token === token
       && savedPayout.network === network
-      && savedPayout.endpoint.trim().toLowerCase() === address.toLowerCase(),
+      && sameAddress(savedPayout.endpoint.trim(), address, chainKind),
     );
     setNotice(alreadyVerified
       ? "This connected wallet is already verified."
@@ -93,8 +92,8 @@ export function usePayoutOwnership({
     if (ownershipVerified) return;
     setError("");
     setNotice("");
-    if (!isValidEthereumAddress(endpoint.trim())) {
-      setError("Enter a valid EVM payout address first.");
+    if (!isAddressValid(endpoint.trim(), chainKind)) {
+      setError("Enter a valid payout address for the selected network first.");
       return;
     }
     if (!address || !connectedAddressMatches) {
@@ -109,14 +108,19 @@ export function usePayoutOwnership({
         network,
         endpoint: endpoint.trim(),
       });
-      const signature = await signMessageAsync({ message: challenge.message });
+      const signed = await wallet.signMessage({
+        message: challenge.message,
+        nonce: challenge.nonce || undefined,
+        recipient: challenge.recipient || undefined,
+      });
       const result = await api.verifyPayout({
         challengeId: challenge.challengeId,
-        signature,
+        signature: signed.signature,
+        publicKey: signed.publicKey,
+        accountId: signed.address,
       });
       setEndpoint(result.payout.endpoint);
       await onVerified?.(result.payout);
-      // Only show success after parent has accepted the verified payout.
       setNotice("Wallet ownership verified. This payout method is ready.");
     } catch (cause) {
       setError(
@@ -133,7 +137,7 @@ export function usePayoutOwnership({
 
   return {
     address,
-    isConnected,
+    isConnected: wallet.isConnected,
     verifying,
     error,
     notice,

@@ -1,10 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { TokenNetworkDialog } from "@/components/token-network-dialog/TokenNetworkDialog";
+import { ownersByKind } from "@/lib/admin-wallets";
 import { formatAddress, formatNumber } from "@/lib/format";
 import { chainLogoUrl } from "@/lib/logo";
+import { useAuthStore } from "@/stores/auth";
 import type { IntentsToken } from "@/stores/intents-tokens";
 import { useTokenBalance } from "@/hooks/use-token-balances";
 import { useTokenBalancesStore } from "@/stores/token-balances";
+import { LogOut } from "lucide-react";
 
 export interface YouPaySectionProps {
   amountDisplay: string;
@@ -15,6 +18,7 @@ export interface YouPaySectionProps {
   walletIcon?: string | null;
   connecting: boolean;
   onConnectWallet: () => void;
+  onUseDifferentWallet?: () => void;
   allowedBlockchains?: string[] | null;
 }
 
@@ -27,9 +31,12 @@ export function YouPaySection({
   walletIcon,
   connecting,
   onConnectWallet,
+  onUseDifferentWallet,
   allowedBlockchains = null,
 }: YouPaySectionProps) {
   const [originDialogOpen, setOriginDialogOpen] = useState(false);
+  const user = useAuthStore((s) => s.user);
+  const balanceOwners = useMemo(() => ownersByKind(user), [user]);
   const fetchOneBalance = useTokenBalancesStore((s) => s.fetchOne);
   const originBalance = useTokenBalance(boundAddress, originToken?.assetId);
 
@@ -51,9 +58,20 @@ export function YouPaySection({
             <img src={walletIcon} alt="" className="size-3 rounded-[2px] object-cover" />
           ) : null}
           {boundAddress ? (
-            <p className="font-montserrat text-[12px] text-[#606060]">
-              {formatAddress(boundAddress)}
-            </p>
+            <div className="flex items-center gap-1.5">
+              <p className="font-montserrat text-[12px] text-[#606060]">
+                {formatAddress(boundAddress)}
+              </p>
+              {onUseDifferentWallet ? (
+                <button
+                  type="button"
+                  onClick={onUseDifferentWallet}
+                  className="font-montserrat text-[12px] text-[#606060] underline-offset-2 hover:underline"
+                >
+                  <LogOut className="size-3" />
+                </button>
+              ) : null}
+            </div>
           ) : (
             <button
               type="button"
@@ -113,12 +131,16 @@ export function YouPaySection({
         initialSymbol={(originToken?.symbol || "USDT") as "USDC" | "USDT"}
         selectedAssetId={originToken?.assetId}
         showBalances
-        balanceOwner={boundAddress}
+        balanceOwners={balanceOwners}
         allowedBlockchains={allowedBlockchains}
         onSelect={({ token }) => {
           onOriginTokenChange(token);
-          if (boundAddress) {
-            void fetchOneBalance(boundAddress, token);
+          const kind = token.chain.chainKind;
+          const owner = kind === "evm" || kind === "near" || kind === "solana"
+            ? balanceOwners[kind]
+            : undefined;
+          if (owner) {
+            void fetchOneBalance(owner, token);
           }
         }}
       />

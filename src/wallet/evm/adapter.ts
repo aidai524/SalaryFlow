@@ -49,7 +49,9 @@ export function useEvmWallet(): UseWalletResult {
     [address, signMessageAsync],
   );
 
-  return {
+  const isAddressValidFn = useCallback((value: string) => isAddress(value), []);
+
+  return useMemo<UseWalletResult>(() => ({
     kind: "evm",
     account,
     isConnected: Boolean(isConnected && address),
@@ -57,6 +59,16 @@ export function useEvmWallet(): UseWalletResult {
     connect: openWalletModal,
     disconnect,
     signMessage,
-    isAddressValid: (value) => isAddress(value),
-  };
+    isAddressValid: isAddressValidFn,
+  }), [
+    account,
+    address,
+    disconnect,
+    isAddressValidFn,
+    isConnected,
+    isConnecting,
+    isReconnecting,
+    openWalletModal,
+    signMessage,
+  ]);
 }

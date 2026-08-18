@@ -15,6 +15,7 @@ export function ReviewPayStep({
   walletIcon,
   connecting,
   onConnectWallet,
+  onUseDifferentWallet,
   allowedBlockchains,
   amountInDisplay,
   feeUsd,
@@ -29,6 +30,7 @@ export function ReviewPayStep({
   walletIcon?: string | null;
   connecting: boolean;
   onConnectWallet: () => void;
+  onUseDifferentWallet?: () => void;
   allowedBlockchains: string[];
   amountInDisplay: string;
   feeUsd?: string | null;
@@ -52,6 +54,7 @@ export function ReviewPayStep({
         walletIcon={walletIcon}
         connecting={connecting}
         onConnectWallet={onConnectWallet}
+        onUseDifferentWallet={onUseDifferentWallet}
         allowedBlockchains={allowedBlockchains}
       />
 

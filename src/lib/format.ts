@@ -142,9 +142,11 @@ export function formatDateTime(value: string): string {
   return dateTimeFmt.format(d);
 }
 
-/** Truncate an address: 0x541…8dc1 */
+/** Truncate an address: 0x541…8dc1. Named Near accounts stay readable. */
 export function formatAddress(address: string, left = 5, right = 5): string {
   const value = String(address || "");
+  if (!value) return "";
+  if (!value.startsWith("0x") && value.length <= 32) return value;
   if (value.length <= left + right + 1) return value;
   return `${value.slice(0, left)}...${value.slice(-right)}`;
 }

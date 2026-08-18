@@ -1,12 +1,16 @@
-import { getAddress, isAddress } from "viem";
+import { NETWORK_TO_BLOCKCHAIN } from "./assets";
+import { normalizeAddress, resolveChainKind, type WalletChainKind } from "./address-validation";
 
 export const PAYOUT_TOKENS = new Set(["USDC", "USDT"]);
-export const EVM_PAYOUT_NETWORKS = new Set(["Base", "Arbitrum", "Polygon", "Optimism", "Ethereum", "BNB Chain"]);
+export const PAYOUT_NETWORKS = new Set(Object.keys(NETWORK_TO_BLOCKCHAIN));
+/** @deprecated Use PAYOUT_NETWORKS. Kept for existing imports. */
+export const EVM_PAYOUT_NETWORKS = PAYOUT_NETWORKS;
 
-export function normalizePayoutAddress(value: unknown): string | null {
-  const address = String(value ?? "").trim();
-  if (!isAddress(address)) return null;
-  return getAddress(address);
+export function normalizePayoutAddress(
+  value: unknown,
+  networkOrKind: string | null | undefined,
+): string | null {
+  return normalizeAddress(value, networkOrKind);
 }
 
 export function normalizePayoutToken(value: unknown): "USDC" | "USDT" | null {
@@ -16,5 +20,9 @@ export function normalizePayoutToken(value: unknown): "USDC" | "USDT" | null {
 
 export function normalizePayoutNetwork(value: unknown): string | null {
   const network = String(value ?? "");
-  return EVM_PAYOUT_NETWORKS.has(network) ? network : null;
+  return PAYOUT_NETWORKS.has(network) ? network : null;
+}
+
+export function payoutChainKind(networkOrKind: string | null | undefined): WalletChainKind | null {
+  return resolveChainKind(networkOrKind);
 }

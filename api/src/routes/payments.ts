@@ -16,6 +16,8 @@ import {
   verifyOneClickQuote,
   type QuoteRequest,
 } from "../intents";
+import { resolveChainKind } from "../address-validation";
+import { matchesAnyAdminWallet, paymentAddressForKind } from "../admin-wallets";
 import { toIntentsUserId } from "../intents-user-id";
 import { parseHumanTokenAmount } from "../money";
 import { requireRole, type AppEnv } from "../middleware";
@@ -33,7 +35,7 @@ import {
   tokenMinorToAssetAmount,
   validatePaymentAssetMapping,
 } from "../payment-state";
-import { EVM_PAYOUT_NETWORKS, normalizePayoutAddress, PAYOUT_TOKENS } from "../payout";
+import { PAYOUT_NETWORKS, normalizePayoutAddress, PAYOUT_TOKENS } from "../payout";
 import {
   QuickPayContextError,
   signQuickPayContext,
@@ -75,10 +77,12 @@ function validatePayableItem(item: PayableItem): PaymentIssue[] {
   if (!item.employee_id) add("UNLINKED_EMPLOYEE", "Payment must be linked to an employee profile");
   if (item.employee_status !== "ready") add("PAYOUT_NOT_READY", "Employee payout method is not verified");
   if (!item.payout_verified_at) add("PAYOUT_NOT_VERIFIED", "Employee wallet ownership has not been verified");
-  if (!/^0x[a-fA-F0-9]{40}$/.test(String(item.payout_endpoint || ""))) add("INVALID_PAYOUT_ADDRESS", "A verified EVM payout address is required");
+  if (!normalizePayoutAddress(item.payout_endpoint, String(item.payout_network || item.network))) {
+    add("INVALID_PAYOUT_ADDRESS", "A verified payout address is required for the selected network");
+  }
   if (item.token !== item.payout_token || item.network !== item.payout_network) add("PAYOUT_DETAILS_CHANGED", "Payroll token or network no longer matches the employee payout method");
   if (!PAYOUT_TOKENS.has(String(item.token))) add("UNSUPPORTED_TOKEN", "Only USDC and USDT are supported");
-  if (!EVM_PAYOUT_NETWORKS.has(String(item.network))) add("UNSUPPORTED_NETWORK", "The payout network is not enabled");
+  if (!PAYOUT_NETWORKS.has(String(item.network))) add("UNSUPPORTED_NETWORK", "The payout network is not enabled");
   if (!Number.isSafeInteger(Number(item.amount_minor)) || Number(item.amount_minor) <= 0) add("INVALID_AMOUNT", "Amount must be a positive integer in token minor units");
   return issues;
 }
@@ -170,7 +174,8 @@ paymentRoutes.post("/items/:itemId/quote", requireRole("admin"), async (c) => {
   const blocked = liveGateResponse(c);
   if (blocked) return blocked;
   const user = c.get("user") as AuthUser;
-  if (!user.wallet_address) {
+  const evmWallet = paymentAddressForKind(user, "evm") || user.wallet_address;
+  if (!evmWallet) {
     return c.json({ error: "An admin payment wallet is required", code: "PAYMENT_WALLET_REQUIRED" }, 422);
   }
   const body = await c.req.json().catch(() => null);
@@ -214,7 +219,7 @@ paymentRoutes.post("/items/:itemId/quote", requireRole("admin"), async (c) => {
   // not ORIGIN_CHAIN / EOA.
   let intentsAccountId: string;
   try {
-    intentsAccountId = toIntentsUserId(user.wallet_address);
+    intentsAccountId = toIntentsUserId(evmWallet);
   } catch {
     return c.json({ error: "Payment wallet is not a valid EVM address", code: "PAYMENT_WALLET_INVALID" }, 422);
   }
@@ -343,7 +348,7 @@ paymentRoutes.post("/attempts/:attemptId/intent", requireRole("admin"), async (c
   const attemptId = c.req.param("attemptId");
   let attempt = await getPaymentAttempt(c.env.DB, attemptId, user.org_id);
   if (!attempt) return c.json({ error: "Payment attempt not found" }, 404);
-  if (!user.wallet_address || user.wallet_address.toLowerCase() !== attempt.signer_id.toLowerCase()) {
+  if (!matchesAnyAdminWallet(user, attempt.signer_id)) {
     return c.json({ error: "The payment wallet no longer matches this attempt", code: "PAYMENT_WALLET_CHANGED" }, 409);
   }
   if (attempt.intent_payload && ["awaiting_signature", "submitting", "submitted", "processing", "confirmed"].includes(attempt.state)) {
@@ -406,7 +411,7 @@ paymentRoutes.post("/attempts/:attemptId/submit", requireRole("admin"), async (c
   if (attempt.state !== "awaiting_signature" || !attempt.intent_payload) {
     return c.json({ error: `Cannot submit an attempt from state ${attempt.state}` }, 409);
   }
-  if (!user.wallet_address || user.wallet_address.toLowerCase() !== attempt.signer_id.toLowerCase()) {
+  if (!matchesAnyAdminWallet(user, attempt.signer_id)) {
     return c.json({ error: "The payment wallet no longer matches this attempt", code: "PAYMENT_WALLET_CHANGED" }, 409);
   }
   const body = await c.req.json().catch(() => null);
@@ -602,7 +607,7 @@ async function handleQuickPayQuote(
       created_at: string;
     }>();
     if (!employee) return c.json({ error: "Employee not found" }, 404);
-    const normalized = normalizePayoutAddress(employee.endpoint);
+    const normalized = normalizePayoutAddress(employee.endpoint, employee.network);
     if (!normalized) return c.json({ error: "Invalid employee payout address", code: "INVALID_PAYOUT_ADDRESS" }, 422);
     resolvedEmployeeId = employee.id;
     employeeName = employee.name;
@@ -611,7 +616,10 @@ async function handleQuickPayQuote(
     defaultToken = employee.token as StableSymbol;
     defaultNetwork = employee.network;
   } else if (destinationAddressRaw) {
-    const normalized = normalizePayoutAddress(destinationAddressRaw);
+    const destNetworkHint = String(body?.destinationNetwork || "").trim();
+    const normalized = destNetworkHint
+      ? normalizePayoutAddress(destinationAddressRaw, destNetworkHint)
+      : null;
     if (!normalized) return c.json({ error: "Invalid destination address", code: "INVALID_PAYOUT_ADDRESS" }, 422);
     recipient = normalized;
     employeeName = shortRecipientLabel(normalized);
@@ -645,7 +653,7 @@ async function handleQuickPayQuote(
   }
 
   const origin = findStableAsset(supportedTokens, { assetId: originAssetId });
-  if (!origin) return c.json({ error: "originAsset is not a supported phase-1 EVM stablecoin", code: "UNSUPPORTED_TOKEN" }, 422);
+  if (!origin) return c.json({ error: "originAsset is not a supported stablecoin", code: "UNSUPPORTED_TOKEN" }, 422);
   const destination = findStableAssetByNetwork(supportedTokens, destinationNetwork, destinationToken);
   if (!destination) {
     return c.json({ error: `No ${destinationToken} asset on ${destinationNetwork}`, code: "UNSUPPORTED_NETWORK" }, 422);
@@ -677,17 +685,19 @@ async function handleQuickPayQuote(
     }
   }
 
-  if (!user.wallet_address) {
-    return c.json({ error: "An admin payment wallet is required", code: "PAYMENT_WALLET_REQUIRED" }, 422);
+  const originKind = resolveChainKind(origin.chainKind);
+  const paymentWallet = originKind ? paymentAddressForKind(user, originKind) : null;
+  if (!paymentWallet) {
+    return c.json({ error: "An admin payment wallet is required for the selected origin network", code: "PAYMENT_WALLET_REQUIRED" }, 422);
   }
-  const refundTo = normalizePayoutAddress(user.wallet_address);
-  if (!refundTo) return c.json({ error: "Payment wallet is not a valid EVM address", code: "PAYMENT_WALLET_INVALID" }, 422);
+  const refundTo = normalizePayoutAddress(paymentWallet, origin.chainKind);
+  if (!refundTo) return c.json({ error: "Payment wallet is not valid for the selected origin network", code: "PAYMENT_WALLET_INVALID" }, 422);
 
   let intentsAccountId: string;
   try {
-    intentsAccountId = toIntentsUserId(user.wallet_address);
+    intentsAccountId = toIntentsUserId(paymentWallet, origin.chainKind);
   } catch {
-    return c.json({ error: "Payment wallet is not a valid EVM address", code: "PAYMENT_WALLET_INVALID" }, 422);
+    return c.json({ error: "Payment wallet is not valid for the selected origin network", code: "PAYMENT_WALLET_INVALID" }, 422);
   }
 
   const confidentiality = mode === "private" ? "advanced" : resolveConfidentiality(c.env);
@@ -1059,7 +1069,11 @@ paymentRoutes.post("/quick-pay/commit", requireRole("admin"), async (c) => {
   const blocked = liveGateResponse(c);
   if (blocked) return blocked;
   const user = c.get("user") as AuthUser;
-  if (!user.wallet_address) {
+  const signerCandidates = [
+    user.wallet_address,
+    ...Object.values(user.wallets || {}).map((binding) => binding?.address),
+  ].filter((value): value is string => Boolean(value));
+  if (signerCandidates.length === 0) {
     return c.json({ error: "An admin payment wallet is required", code: "PAYMENT_WALLET_REQUIRED" }, 422);
   }
 
@@ -1068,15 +1082,11 @@ paymentRoutes.post("/quick-pay/commit", requireRole("admin"), async (c) => {
   const txHash = String(body?.txHash || "").trim();
   const signature = body?.signature != null ? String(body.signature) : "";
 
-  if (!/^0x[a-fA-F0-9]{64}$/.test(txHash)) {
-    return c.json({ error: "A valid EVM transaction hash is required" }, 400);
-  }
-
   let ctx: QuickPayContextPayload;
   try {
     ctx = await verifyQuickPayContext(c.env, contextToken, {
       orgId: String(user.org_id),
-      signerId: user.wallet_address,
+      signerId: signerCandidates,
     });
   } catch (error) {
     if (error instanceof QuickPayContextError) {
@@ -1092,6 +1102,14 @@ paymentRoutes.post("/quick-pay/commit", requireRole("admin"), async (c) => {
       return c.json({ error: error.message, code: error.code }, status);
     }
     throw error;
+  }
+
+  const originKind = resolveChainKind(ctx.originNetwork);
+  const txHashOk = originKind === "solana" || originKind === "near"
+    ? txHash.length >= 32 && txHash.length <= 128
+    : /^0x[a-fA-F0-9]{64}$/.test(txHash);
+  if (!txHashOk) {
+    return c.json({ error: "A valid deposit transaction hash is required" }, 400);
   }
 
   // Idempotent reuse for frontend queue retries.

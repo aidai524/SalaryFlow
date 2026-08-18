@@ -1,15 +1,20 @@
 import { useEffect } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { chainKindForNetwork } from "@/config/chains";
+import { api, type MyPayout } from "@/lib/api";
 import { PAYOUT_UPDATED_EVENT } from "@/lib/payout-events";
 import { useAuthStore } from "@/stores/auth";
+import { HISTORY_PAGE_SIZE } from "@/views/employee/my-pay/config";
+import type { ChainKind } from "@/wallet";
 
 export function myPayoutQueryKey(orgId: string | null | undefined) {
   return ["my-payout", orgId ?? "none"] as const;
 }
 
-export function myPaymentsQueryKey(orgId: string | null | undefined) {
-  return ["my-payments", orgId ?? "none"] as const;
+export function myPaymentsQueryKey(orgId: string | null | undefined, page?: number) {
+  return page == null
+    ? (["my-payments", orgId ?? "none"] as const)
+    : (["my-payments", orgId ?? "none", page] as const);
 }
 
 export function useMyPayoutQuery() {
@@ -32,20 +37,25 @@ export function useMyPayoutQuery() {
   });
 }
 
-export function useMyPaymentsQuery() {
+export function useMyPaymentsQuery(page = 1) {
   const orgId = useAuthStore((s) => s.orgId);
   return useQuery({
-    queryKey: myPaymentsQueryKey(orgId),
-    queryFn: () => api.myRecords({ limit: 50 }),
+    queryKey: myPaymentsQueryKey(orgId, page),
+    queryFn: () => api.myRecords({ page, pageSize: HISTORY_PAGE_SIZE }),
     enabled: !!orgId,
+    placeholderData: keepPreviousData,
   });
+}
+
+function payoutChainKind(network: string | null | undefined): ChainKind {
+  const kind = chainKindForNetwork(network || "");
+  return kind === "near" || kind === "solana" ? kind : "evm";
 }
 
 export function useUpdateMyProfileMutation() {
   const orgId = useAuthStore((s) => s.orgId);
   const queryClient = useQueryClient();
   const setUser = useAuthStore((s) => s.setUser);
-  const user = useAuthStore((s) => s.user);
 
   return useMutation({
     mutationFn: (body: {
@@ -57,19 +67,22 @@ export function useUpdateMyProfileMutation() {
       avatar_url?: string | null;
     }) => api.updateMyProfile(body),
     onSuccess: async (result) => {
+      if (result.payout) {
+        queryClient.setQueryData<{ payout: MyPayout | null }>(myPayoutQueryKey(orgId), { payout: result.payout });
+      }
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: myPayoutQueryKey(orgId) }),
         queryClient.invalidateQueries({ queryKey: myPaymentsQueryKey(orgId) }),
       ]);
-      if (user && result.payout) {
+      const current = useAuthStore.getState().user;
+      if (current && result.payout) {
         setUser({
-          ...user,
-          name: result.payout.name || user.name,
-          email: result.payout.email || user.email,
-          wallet_address: result.payoutChanged
-            ? user.wallet_address
-            : (result.payout.endpoint || user.wallet_address),
-          wallet_verified: result.payoutChanged ? false : user.wallet_verified,
+          ...current,
+          name: result.payout.name || current.name,
+          email: result.payout.email || current.email,
+          wallet_address: result.payout.endpoint || current.wallet_address,
+          wallet_chain_kind: payoutChainKind(result.payout.network),
+          wallet_verified: result.payoutChanged ? false : current.wallet_verified,
         });
       }
     },

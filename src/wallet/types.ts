@@ -24,12 +24,19 @@ export interface WalletAccount {
 export interface SignMessageParams {
   /** UTF-8 message or pre-encoded bytes, depending on chain adapter. */
   message: string | Uint8Array;
+  /** NEP-413 nonce (32 bytes). Near only. */
+  nonce?: Uint8Array | string;
+  /** NEP-413 recipient / app identifier. Near only. */
+  recipient?: string;
 }
 
 export interface SignMessageResult {
   signature: string;
   address: string;
   chainKind: ChainKind;
+  publicKey?: string;
+  nonce?: string;
+  recipient?: string;
 }
 
 /**
@@ -57,6 +64,8 @@ export interface UseWalletResult {
   disconnect: () => void;
   signMessage: (params: SignMessageParams) => Promise<SignMessageResult>;
   isAddressValid: (address: string) => boolean;
+  /** True while a chain-specific connect modal is open (Solana / Near). */
+  isModalOpen?: boolean;
 }
 
 /**

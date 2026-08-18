@@ -2,6 +2,7 @@
 // client can complete wallet signing / deposit before any DB row is created.
 // Commit verifies the token and persists in one shot.
 
+import { resolveChainKind, sameAddress } from "./address-validation";
 import type { QuoteRequest, QuoteResponse } from "./intents";
 import type { Env } from "./types";
 
@@ -127,7 +128,7 @@ export async function signQuickPayContext(
 export async function verifyQuickPayContext(
   env: Env,
   token: string,
-  expected: { orgId: string; signerId: string },
+  expected: { orgId: string; signerId: string | string[] },
 ): Promise<QuickPayContextPayload> {
   const parts = String(token || "").split(".");
   if (parts.length !== 2 || !parts[0] || !parts[1]) {
@@ -169,7 +170,11 @@ export async function verifyQuickPayContext(
       "Quick Pay context belongs to another organization",
     );
   }
-  if (String(payload.signerId || "").toLowerCase() !== String(expected.signerId || "").toLowerCase()) {
+  const candidates = (Array.isArray(expected.signerId) ? expected.signerId : [expected.signerId])
+    .filter((value): value is string => Boolean(value));
+  const kind = resolveChainKind(payload.originNetwork) || resolveChainKind(payload.signerId) || "evm";
+  const signerMatches = candidates.some((id) => sameAddress(payload.signerId, id, kind));
+  if (!signerMatches) {
     throw new QuickPayContextError(
       "QUICK_PAY_CONTEXT_SIGNER_MISMATCH",
       "Quick Pay context belongs to another payment wallet",

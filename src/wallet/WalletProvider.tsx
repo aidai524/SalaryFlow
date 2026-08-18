@@ -1,19 +1,8 @@
 /**
  * Root wallet provider tree.
  *
- * Current: EVM via WagmiProvider + RainbowKitProvider.
- * Future: nest NEAR / Solana providers here without changing page components.
- *
- * Example extension:
- *   <WagmiProvider>
- *     <RainbowKitProvider>
- *       <NearWalletProvider>      // TODO
- *         <SolanaWalletProvider>  // TODO
- *           {children}
- *         </SolanaWalletProvider>
- *       </NearWalletProvider>
- *     </RainbowKitProvider>
- *   </WagmiProvider>
+ * Wagmi/RainbowKit (EVM) wraps Solana and Near adapters so UI can connect
+ * any of the three without page-level provider changes.
  */
 
 import { RainbowKitProvider } from "@rainbow-me/rainbowkit";
@@ -21,11 +10,17 @@ import "@rainbow-me/rainbowkit/styles.css";
 import type { ReactNode } from "react";
 import { WagmiProvider } from "wagmi";
 import { wagmiConfig } from "./evm/config";
+import { NearWalletProvider } from "./near/provider";
+import { SolanaWalletProvider } from "./solana/provider";
 
 export function WalletProvider({ children }: { children: ReactNode }) {
   return (
     <WagmiProvider config={wagmiConfig}>
-      <RainbowKitProvider>{children}</RainbowKitProvider>
+      <RainbowKitProvider>
+        <SolanaWalletProvider>
+          <NearWalletProvider>{children}</NearWalletProvider>
+        </SolanaWalletProvider>
+      </RainbowKitProvider>
     </WagmiProvider>
   );
 }

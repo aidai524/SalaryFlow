@@ -9,7 +9,7 @@ import {
   enabledBatchPayoutBlockchains,
   getBatchPayoutContract,
 } from "@/config/batch-payout-chains";
-import { getChainByNetwork, networkToChainId } from "@/config/chains";
+import { getChainByNetwork } from "@/config/chains";
 import { usePayOriginToken } from "@/hooks/use-pay-origin-token";
 import { usePaymentWallet } from "@/hooks/use-payment-wallet";
 import useToast from "@/hooks/use-toast";
@@ -336,7 +336,7 @@ export function BatchPayoutDialog({
         throw new Error(BATCH_PAYOUT_TOAST.INSUFFICIENT_BALANCE);
       }
 
-      const chainId = originToken.chain.chainId ?? networkToChainId(originToken.chain.chainName);
+      const chainId = originToken.chain.chainId;
       if (chainId && payWallet.wallet.account.chainId !== chainId) {
         await switchChainAsync({ chainId });
       }
@@ -442,8 +442,9 @@ export function BatchPayoutDialog({
                 boundAddress={payWallet.boundAddress}
                 walletConnected={payWallet.wallet.isConnected}
                 walletIcon={payWallet.walletInfo.icon}
-                connecting={payWallet.bindingWallet || payWallet.pendingBind}
+                connecting={payWallet.wallet.isConnecting || payWallet.bindingWallet}
                 onConnectWallet={payWallet.connectAndBindWallet}
+                onUseDifferentWallet={() => void payWallet.unbindAndDisconnect()}
                 allowedBlockchains={allowedBlockchains}
                 amountInDisplay={amountInDisplay}
                 feeUsd={feeUsd}

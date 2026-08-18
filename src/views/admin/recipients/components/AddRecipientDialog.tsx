@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { isAddress } from "viem";
 import { IdentityAvatar, identityAvatarSeed } from "@/components/IdentityAvatar";
 import {
   Dialog,
@@ -15,7 +14,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { PHASE1_CHAINS } from "@/config/chains";
+import { PHASE1_CHAINS, chainKindForNetwork } from "@/config/chains";
 import {
   myPayoutQueryKey,
   useUpdateMyProfileMutation,
@@ -35,6 +34,7 @@ import {
   type TeamPaymentDateKey,
   type TeamPaymentSchedule,
 } from "@/lib/api";
+import { getAddressPlaceholder, isAddressValid } from "@/lib/address-validation";
 import { formatTokenMinor } from "@/lib/format";
 import { notifyPayoutUpdated } from "@/lib/payout-events";
 import { preventRainbowKitDialogDismiss } from "@/lib/rainbowkit-overlay";
@@ -143,7 +143,6 @@ export function AddRecipientDialog({
 }: AddRecipientDialogProps) {
   const toast = useToast();
   const queryClient = useQueryClient();
-  const setUser = useAuthStore((s) => s.setUser);
   const user = useAuthStore((s) => s.user);
   const orgId = useAuthStore((s) => s.orgId);
   const createMutation = useCreateEmployeeMutation();
@@ -330,6 +329,10 @@ export function AddRecipientDialog({
       toast.fail({ title: "Wallet address is required" });
       return;
     }
+    if (!isAddressValid(form.endpoint.trim(), chainKindForNetwork(form.network))) {
+      toast.fail({ title: "Enter a valid wallet address for the selected network" });
+      return;
+    }
 
     try {
       const result = await selfUpdateMutation.mutateAsync({
@@ -342,14 +345,6 @@ export function AddRecipientDialog({
       });
       if (result.payout) {
         notifyPayoutUpdated();
-        if (user) {
-          setUser({
-            ...user,
-            name: result.payout.name || user.name,
-            email: result.payout.email || user.email,
-            wallet_address: result.payout.endpoint || user.wallet_address,
-          });
-        }
       }
       toast.success({ title: "Profile updated" });
       onOpenChange(false);
@@ -392,12 +387,12 @@ export function AddRecipientDialog({
         toast.fail({ title: "Wallet address is required" });
         return;
       }
-      if (!isAddress(wallet)) {
-        toast.fail({ title: "Enter a valid EVM wallet address" });
+      if (!isAddressValid(wallet, chainKindForNetwork(form.network))) {
+        toast.fail({ title: "Enter a valid wallet address for the selected network" });
         return;
       }
-    } else if (form.endpoint.trim() && !isAddress(form.endpoint.trim())) {
-      toast.fail({ title: "Enter a valid EVM wallet address" });
+    } else if (form.endpoint.trim() && !isAddressValid(form.endpoint.trim(), chainKindForNetwork(form.network))) {
+      toast.fail({ title: "Enter a valid wallet address for the selected network" });
       return;
     }
 
@@ -696,7 +691,7 @@ export function AddRecipientDialog({
                 value={form.endpoint}
                 onChange={(e) => setField("endpoint", e.target.value)}
                 className={fieldInputClass}
-                placeholder="0x…"
+                placeholder={getAddressPlaceholder(chainKindForNetwork(form.network))}
                 required={walletRequired}
               />
             </Field>

@@ -1,20 +1,29 @@
+import Pagination from "@/components/pagination";
 import { IconCheck } from "@/components/icons/check";
 import type { MyPaymentHistoryItem } from "@/lib/api";
 import { formatDateTime, formatTokenMinor } from "@/lib/format";
 import { tokenLogoUrl } from "@/lib/logo";
 import { cn } from "@/lib/utils";
-import { CARD_CLASS, HISTORY_COLUMNS } from "../config";
+import { CARD_CLASS, HISTORY_COLUMNS, HISTORY_PAGE_SIZE } from "../config";
 import { statusLabel } from "../utils";
 
 export function MyPayHistoryTable({
   payments,
   isLoading,
+  page,
+  total,
+  onPageChange,
   className,
 }: {
   payments: MyPaymentHistoryItem[];
   isLoading: boolean;
+  page: number;
+  total: number;
+  onPageChange: (page: number) => void;
   className?: string;
 }) {
+  const totalPage = Math.max(1, Math.ceil(total / HISTORY_PAGE_SIZE));
+
   return (
     <section className={cn("flex min-h-[420px] flex-col overflow-hidden", CARD_CLASS, className)}>
       <div className="min-h-0 flex-1 overflow-x-auto">
@@ -96,6 +105,17 @@ export function MyPayHistoryTable({
           </tbody>
         </table>
       </div>
+      {total > 0 ? (
+        <div className="flex items-center justify-end border-t border-black/5 px-5 py-3">
+          <Pagination
+            page={page}
+            pageSize={HISTORY_PAGE_SIZE}
+            totalPage={totalPage}
+            onPageChange={onPageChange}
+            className="!font-montserrat !text-[#606060] [&_path]:stroke-[#606060]"
+          />
+        </div>
+      ) : null}
     </section>
   );
 }

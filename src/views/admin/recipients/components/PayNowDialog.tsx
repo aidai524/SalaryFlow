@@ -6,6 +6,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { preventWalletOverlayDialogDismiss } from "@/lib/rainbowkit-overlay";
 
 export interface PayNowDialogProps {
   open: boolean;
@@ -23,6 +24,9 @@ export function PayNowDialog({
       <DialogContent
         showCloseButton={false}
         className="max-h-[90vh] max-w-[560px] gap-0 overflow-y-auto rounded-[24px] border-none bg-transparent p-0 shadow-none ring-0 sm:max-w-[560px]"
+        onPointerDownOutside={preventWalletOverlayDialogDismiss}
+        onInteractOutside={preventWalletOverlayDialogDismiss}
+        onFocusOutside={preventWalletOverlayDialogDismiss}
       >
         <div className="rounded-[24px] bg-[#fdfdfd] shadow-[0px_0px_20px_0px_rgba(0,0,0,0.06)]">
           <DialogHeader className="flex flex-row items-center justify-between space-y-0 px-5 pt-5 pb-2">

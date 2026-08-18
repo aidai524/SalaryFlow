@@ -9,9 +9,4 @@ export {
   type WalletAccount,
   type WalletAdapter,
 } from "./types";
-export {
-  chainIdToNetwork,
-  networkToChainId,
-  SUPPORTED_CHAINS,
-  wagmiConfig,
-} from "./evm/config";
+export { wagmiConfig } from "./evm/config";

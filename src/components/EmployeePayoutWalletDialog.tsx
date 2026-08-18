@@ -18,7 +18,7 @@ export function EmployeePayoutWalletDialog({
   onBound,
 }: {
   onClose: () => void;
-  onBound: (address: string) => void;
+  onBound: (payout: MyPayout) => void;
 }) {
   const [payout, setPayout] = useState<MyPayout | null>(null);
   const [endpoint, setEndpoint] = useState("");
@@ -57,7 +57,7 @@ export function EmployeePayoutWalletDialog({
     onVerified: async (next) => {
       setPayout(next);
       notifyPayoutUpdated();
-      onBound(next.endpoint);
+      onBound(next);
     },
   });
 
@@ -75,7 +75,7 @@ export function EmployeePayoutWalletDialog({
             Wallet
           </DialogTitle>
           <p className="mt-1 font-montserrat text-[13px] leading-5 text-[#606060]">
-            Verify the EVM wallet that receives your pay. Ownership is proven by a one-time message that cannot move funds.
+            Verify the wallet that receives your pay. Ownership is proven by a one-time message that cannot move funds.
           </p>
         </DialogHeader>
 

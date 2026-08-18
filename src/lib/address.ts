@@ -4,6 +4,7 @@ export function formatAddress(
   suffix = 5,
 ): string {
   if (!address) return "";
+  if (!address.startsWith("0x") && address.length <= 32) return address;
   if (address.length <= prefix + suffix) return address;
   return `${address.slice(0, prefix)}...${address.slice(-suffix)}`;
 }

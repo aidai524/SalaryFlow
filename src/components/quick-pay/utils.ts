@@ -1,4 +1,4 @@
-import { isValidEthereumAddress } from "@/lib/erc191";
+import { isAddressValid, sameAddress } from "@/lib/address-validation";
 
 export function isDryQuoteStale(input: {
   amountForQuote: string | null;
@@ -20,9 +20,10 @@ export function sameEthereumAddress(
   a: string | null | undefined,
   b: string | null | undefined,
 ): boolean {
-  if (!a || !b) return false;
-  return a.toLowerCase() === b.toLowerCase();
+  return sameAddress(a, b, "evm");
 }
+
+export { sameAddress };
 
 export type LiveQuoteSettleInput = {
   context?: unknown;
@@ -42,13 +43,14 @@ const POSITIVE_INT_STRING = /^[1-9]\d*$/;
 export function validateLiveQuoteForSettle(
   live: LiveQuoteSettleInput,
   nowMs = Date.now(),
+  chainKind: string = "evm",
 ): LiveQuoteSettleResult {
   if (typeof live.context !== "string" || !live.context) {
     return { ok: false, reason: "missing_context" };
   }
 
   const depositAddress = live.quote.depositAddress?.trim() || "";
-  if (!isValidEthereumAddress(depositAddress)) {
+  if (!isAddressValid(depositAddress, chainKind)) {
     return { ok: false, reason: "invalid_deposit" };
   }
 

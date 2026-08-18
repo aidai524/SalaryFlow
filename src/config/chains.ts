@@ -1,6 +1,6 @@
 /**
  * Chain registry for Stableflow Pay payments.
- * Phase 1: EVM only. Non-EVM kinds are reserved for later wallet adapters.
+ * EVM plus Near / Solana. Token availability still comes from 1Click /v0/tokens.
  */
 
 import { chainLogoUrl } from "@/lib/logo";
@@ -18,7 +18,7 @@ export interface ChainConfig {
   logo: string;
 }
 
-/** Phase-1 EVM chains supporting USDT/USDC via 1Click. */
+/** Registered chains supporting USDT/USDC via 1Click. */
 export const PHASE1_CHAINS: ChainConfig[] = [
   { blockchain: "eth", chainName: "Ethereum", chainKind: "evm", chainId: 1, logo: chainLogoUrl("eth") },
   { blockchain: "base", chainName: "Base", chainKind: "evm", chainId: 8453, logo: chainLogoUrl("base") },
@@ -31,9 +31,17 @@ export const PHASE1_CHAINS: ChainConfig[] = [
   { blockchain: "scroll", chainName: "Scroll", chainKind: "evm", chainId: 534352, logo: chainLogoUrl("scroll") },
   { blockchain: "monad", chainName: "Monad", chainKind: "evm", chainId: 143, logo: chainLogoUrl("monad") },
   { blockchain: "xlayer", chainName: "X Layer", chainKind: "evm", chainId: 196, logo: chainLogoUrl("xlayer") },
-  { blockchain: "plasma", chainName: "Plasma", chainKind: "evm", logo: chainLogoUrl("plasma") },
+  { blockchain: "plasma", chainName: "Plasma", chainKind: "evm", chainId: 9745, logo: chainLogoUrl("plasma") },
   { blockchain: "bera", chainName: "Berachain", chainKind: "evm", chainId: 80094, logo: chainLogoUrl("bera") },
+  { blockchain: "near", chainName: "Near", chainKind: "near", logo: chainLogoUrl("near") },
+  { blockchain: "sol", chainName: "Solana", chainKind: "solana", logo: chainLogoUrl("sol") },
 ];
+
+export const PAYOUT_NETWORKS = new Set(PHASE1_CHAINS.map((c) => c.chainName));
+
+export function chainKindForNetwork(network: string): ChainKind | null {
+  return getChainByNetwork(network)?.chainKind ?? null;
+}
 
 const byBlockchain = new Map(PHASE1_CHAINS.map((c) => [c.blockchain, c]));
 const byChainName = new Map(PHASE1_CHAINS.map((c) => [c.chainName.toLowerCase(), c]));

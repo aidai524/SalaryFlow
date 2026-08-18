@@ -126,8 +126,12 @@
   }
 }
 
-/* Radix Dialog sets body { pointer-events: none }; RainbowKit portals need clicks. */
-[data-rk] {
+/* Radix Dialog sets body { pointer-events: none }; wallet portals need clicks. */
+[data-rk],
+.wallet-adapter-modal,
+#near-wallet-selector-modal,
+.nws-modal,
+.nws-modal-wrapper {
   pointer-events: auto !important;
 }
 

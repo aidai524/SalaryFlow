@@ -1,9 +1,12 @@
 import { KeyRound, LogOut } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import { EmployeePayoutWalletDialog } from "@/components/EmployeePayoutWalletDialog";
 import { IdentityAvatar, identityAvatarSeed } from "@/components/IdentityAvatar";
 import { WalletConnectDialog } from "@/components/WalletConnect";
+import { IconAlert } from "@/components/icons/alert";
+import { IconCheck } from "@/components/icons/check";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -12,11 +15,17 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { useMyPayoutQuery } from "@/hooks/use-employee-api";
+import { chainKindForNetwork } from "@/config/chains";
+import { myPayoutQueryKey, useMyPayoutQuery } from "@/hooks/use-employee-api";
 import { formatAddress } from "@/lib/address";
+import { sameAddress } from "@/lib/address-validation";
+import { bindingForKind } from "@/lib/admin-wallets";
+import type { MyPayout } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth";
 import { ChangePasswordDialog } from "@/views/auth/ChangePasswordDialog";
+import { isVerified } from "@/views/admin/recipients/utils";
+import { useWallet, type ChainKind } from "@/wallet";
 
 const ADMIN_NAV = [
   { to: "/pay", label: "Pay" },
@@ -28,25 +37,41 @@ const EMPLOYEE_NAV = [
   { to: "/my-pay", label: "My Pay" },
 ] as const;
 
+function walletKindFromNetwork(network: string | null | undefined): ChainKind {
+  const kind = chainKindForNetwork(network || "");
+  return kind === "near" || kind === "solana" ? kind : "evm";
+}
+
 function HeaderWalletChip() {
   const user = useAuthStore((state) => state.user);
   const setUser = useAuthStore((state) => state.setUser);
+  const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const isAdmin = user?.role === "admin";
   const payoutQuery = useMyPayoutQuery();
+  const payout = payoutQuery.data?.payout;
+  const activeKind = (user?.wallet_chain_kind || "evm") as ChainKind;
+  const employeeKind = walletKindFromNetwork(payout?.network);
+  const wallet = useWallet(isAdmin ? activeKind : employeeKind);
 
   if (!user) return null;
 
   // Show bound address even when ownership is not verified.
-  // Employees store the receive address on payout.endpoint; admins on users.wallet_address.
+  // Employees store the receive address on payout.endpoint; admins on the active chain wallet.
   const displayAddress = isAdmin
-    ? (user.wallet_address || null)
-    : (payoutQuery.data?.payout?.endpoint || user.wallet_address || null);
+    ? (bindingForKind(user, activeKind)?.address || null)
+    : (payout?.endpoint || user.wallet_address || null);
   const bound = Boolean(displayAddress);
   const label = bound ? formatAddress(displayAddress) : "Connect";
-  const payout = payoutQuery.data?.payout;
   const seed = isAdmin ? identityAvatarSeed(user) : identityAvatarSeed(payout ?? user);
   const avatarSrc = isAdmin ? undefined : (payout?.avatar_url || null);
+  const verified = Boolean(payout && isVerified(payout));
+  const connected = Boolean(
+    !isAdmin
+    && displayAddress
+    && wallet.account?.address
+    && sameAddress(wallet.account.address, displayAddress, employeeKind),
+  );
 
   return (
     <>
@@ -57,17 +82,48 @@ function HeaderWalletChip() {
         aria-label={bound ? `Wallet ${label}` : "Connect wallet"}
       >
         <IdentityAvatar seed={seed} src={avatarSrc} size={30} alt="" />
-        <span className="hidden font-[family-name:var(--font-space-grotesk)] text-sm text-black sm:inline">
+        <span
+          className={cn(
+            "hidden font-[family-name:var(--font-space-grotesk)] text-sm sm:inline",
+            !isAdmin && bound && !connected ? "text-[#909090]" : "text-black",
+          )}
+        >
           {label}
         </span>
+        {!isAdmin && bound ? (
+          verified ? (
+            <span
+              className="hidden size-3 shrink-0 items-center justify-center rounded-full bg-[#0ED000] sm:inline-flex"
+              title="Verified"
+            >
+              <IconCheck className="size-1.5 text-white" />
+            </span>
+          ) : (
+            <span
+              className="hidden size-3 shrink-0 items-center justify-center rounded-full bg-[#AAA] sm:inline-flex"
+              title="Unverified"
+            >
+              <IconAlert className="size-1.5 text-white" />
+            </span>
+          )
+        ) : null}
       </button>
 
       {open && !isAdmin && (
         <EmployeePayoutWalletDialog
           onClose={() => setOpen(false)}
-          onBound={(address) => {
+          onBound={(next: MyPayout) => {
             setOpen(false);
-            setUser({ ...user, wallet_address: address, wallet_verified: true });
+            const current = useAuthStore.getState().user;
+            if (current) {
+              setUser({
+                ...current,
+                wallet_address: next.endpoint,
+                wallet_chain_kind: walletKindFromNetwork(next.network),
+                wallet_verified: true,
+              });
+            }
+            queryClient.setQueryData(myPayoutQueryKey(current?.org_id ?? user.org_id), { payout: next });
           }}
         />
       )}
@@ -75,12 +131,13 @@ function HeaderWalletChip() {
         <WalletConnectDialog
           user={user}
           onClose={() => setOpen(false)}
-          onBound={(address, verified) => {
-            setOpen(false);
-            setUser({ ...user, wallet_address: address, wallet_verified: verified });
+          onBound={(update) => {
+            const current = useAuthStore.getState().user;
+            if (current) setUser({ ...current, ...update });
           }}
-          onUnbound={() => {
-            setUser({ ...user, wallet_address: null, wallet_verified: false });
+          onUnbound={(update) => {
+            const current = useAuthStore.getState().user;
+            if (current) setUser({ ...current, ...update });
           }}
         />
       )}

@@ -1,12 +1,13 @@
-/**
- * Multi-chain ERC-20 balances keyed by owner + assetId.
- * Used by TokenNetworkDialog sorting and Quick Pay balance gates.
- */
-
-import { create } from "zustand";
+import { formatUnits } from "viem";
 import type { Address } from "viem";
+import { isAddressValid } from "@/lib/address-validation";
+import type { ChainOwners } from "@/lib/admin-wallets";
 import type { IntentsToken } from "@/stores/intents-tokens";
+import type { ChainKind } from "@/wallet";
 import { getPublicClientForNetwork, readErc20Balance } from "@/wallet/evm/transfer";
+import { readNearFtBalance } from "@/wallet/near/transfer";
+import { readSplBalance } from "@/wallet/solana/transfer";
+import { create } from "zustand";
 
 export type TokenBalanceStatus = "idle" | "loading" | "success" | "error";
 
@@ -19,16 +20,30 @@ export interface TokenBalanceEntry {
 }
 
 interface TokenBalancesState {
-  owner: string | null;
   balances: Record<string, TokenBalanceEntry>;
-  fetchAll: (owner: string, tokens: IntentsToken[]) => Promise<void>;
+  fetchAll: (owners: ChainOwners, tokens: IntentsToken[]) => Promise<void>;
   fetchOne: (owner: string, token: IntentsToken) => Promise<TokenBalanceEntry | null>;
   getBalance: (owner: string | null | undefined, assetId: string | null | undefined) => TokenBalanceEntry | undefined;
   clear: () => void;
 }
 
-function balanceKey(owner: string, assetId: string): string {
-  return `${owner.toLowerCase()}:${assetId}`;
+function ownerKey(owner: string, chainKind: string): string {
+  return chainKind === "solana" ? owner : owner.toLowerCase();
+}
+
+function balanceKey(owner: string, assetId: string, chainKind = "evm"): string {
+  return `${ownerKey(owner, chainKind)}:${assetId}`;
+}
+
+function tokenChainKind(token: IntentsToken): ChainKind | null {
+  const kind = token.chain.chainKind;
+  if (kind === "evm" || kind === "near" || kind === "solana") return kind;
+  return null;
+}
+
+function ownerForToken(owners: ChainOwners, token: IntentsToken): string | undefined {
+  const kind = tokenChainKind(token);
+  return kind ? owners[kind] : undefined;
 }
 
 function loadingEntry(): TokenBalanceEntry {
@@ -41,69 +56,74 @@ function loadingEntry(): TokenBalanceEntry {
   };
 }
 
-function unsupportedEntry(): TokenBalanceEntry {
+function errorEntry(error: string): TokenBalanceEntry {
   return {
-    raw: 0n,
-    formatted: "0",
+    raw: null,
+    formatted: null,
     status: "error",
     updatedAt: Date.now(),
-    error: "Unsupported network",
+    error,
   };
 }
 
 async function readOne(owner: string, token: IntentsToken): Promise<TokenBalanceEntry> {
-  if (!token.contractAddress) {
-    return {
-      raw: null,
-      formatted: null,
-      status: "error",
-      updatedAt: Date.now(),
-      error: "Missing contract address",
-    };
+  const kind = tokenChainKind(token);
+  if (!kind || !isAddressValid(owner, kind)) {
+    return errorEntry("Wallet address does not match this chain");
   }
-  if (!getPublicClientForNetwork(token.blockchain)) {
-    return unsupportedEntry();
+  if (!token.contractAddress) {
+    return errorEntry("Missing contract address");
   }
   try {
-    const result = await readErc20Balance({
-      network: token.blockchain,
-      tokenAddress: token.contractAddress as Address,
-      owner: owner as Address,
-      decimals: token.decimals,
-    });
+    let raw = 0n;
+    if (kind === "near") {
+      raw = await readNearFtBalance({ tokenContract: token.contractAddress, owner });
+    } else if (kind === "solana") {
+      raw = await readSplBalance({ tokenMint: token.contractAddress, owner });
+    } else {
+      if (!getPublicClientForNetwork(token.blockchain)) {
+        return {
+          raw: 0n,
+          formatted: "0",
+          status: "error",
+          updatedAt: Date.now(),
+          error: "Unsupported network",
+        };
+      }
+      const result = await readErc20Balance({
+        network: token.blockchain,
+        tokenAddress: token.contractAddress as Address,
+        owner: owner as Address,
+        decimals: token.decimals,
+      });
+      raw = result.raw;
+    }
     return {
-      raw: result.raw,
-      formatted: result.formatted,
+      raw,
+      formatted: formatUnits(raw, token.decimals),
       status: "success",
       updatedAt: Date.now(),
       error: null,
     };
   } catch (cause) {
-    return {
-      raw: null,
-      formatted: null,
-      status: "error",
-      updatedAt: Date.now(),
-      error: cause instanceof Error ? cause.message : "Failed to read balance",
-    };
+    return errorEntry(cause instanceof Error ? cause.message : "Failed to read balance");
   }
 }
 
 export const useTokenBalancesStore = create<TokenBalancesState>((set, get) => ({
-  owner: null,
   balances: {},
 
   getBalance: (owner, assetId) => {
     if (!owner || !assetId) return undefined;
-    return get().balances[balanceKey(owner, assetId)];
+    return get().balances[`${owner}:${assetId}`]
+      || get().balances[`${owner.toLowerCase()}:${assetId}`];
   },
 
-  clear: () => set({ owner: null, balances: {} }),
+  clear: () => set({ balances: {} }),
 
   fetchOne: async (owner, token) => {
-    const key = balanceKey(owner, token.assetId);
+    const key = balanceKey(owner, token.assetId, token.chain.chainKind);
     set((state) => ({
-      owner: owner.toLowerCase(),
       balances: {
         ...state.balances,
         [key]: {
@@ -120,41 +140,43 @@ export const useTokenBalancesStore = create<TokenBalancesState>((set, get) => ({
     return entry;
   },
 
-  fetchAll: async (owner, tokens) => {
+  fetchAll: async (owners, tokens) => {
     const unique = new Map<string, IntentsToken>();
     for (const token of tokens) {
       if (!unique.has(token.assetId)) unique.set(token.assetId, token);
     }
-    const list = Array.from(unique.values());
+    const list = Array.from(unique.values()).filter((token) => ownerForToken(owners, token));
     if (list.length === 0) return;
 
-    const ownerLower = owner.toLowerCase();
     set((state) => {
       const next = { ...state.balances };
       for (const token of list) {
-        const key = balanceKey(owner, token.assetId);
+        const owner = ownerForToken(owners, token);
+        if (!owner) continue;
+        const key = balanceKey(owner, token.assetId, token.chain.chainKind);
         next[key] = {
           ...(next[key] || loadingEntry()),
           status: "loading",
           error: null,
         };
       }
-      return { owner: ownerLower, balances: next };
+      return { balances: next };
     });
 
     const results = await Promise.allSettled(
       list.map(async (token) => {
+        const owner = ownerForToken(owners, token)!;
         const entry = await readOne(owner, token);
-        return { assetId: token.assetId, entry };
+        return { token, owner, entry };
       }),
     );
 
     set((state) => {
       const next = { ...state.balances };
       for (const result of results) {
-        if (result.status === "fulfilled") {
-          next[balanceKey(owner, result.value.assetId)] = result.value.entry;
-        }
+        if (result.status !== "fulfilled") continue;
+        const { token, owner, entry } = result.value;
+        next[balanceKey(owner, token.assetId, token.chain.chainKind)] = entry;
       }
       return { balances: next };
     });
